@@ -104,6 +104,47 @@ appear in script output, log lines, or HTTP responses.
 
 `pnpm test` covers the helpers via mocked `fetch` — no live CouchDB required.
 
+## Recipe / Feedback API
+
+PR4 adds the JSON API for recipes and feedback. All endpoints require CouchDB to
+be running and bootstrapped (`pnpm db:bootstrap`).
+
+```bash
+# Create a recipe
+curl -X POST http://localhost:5173/api/recipes \
+  -H 'content-type: application/json' \
+  -d '{
+    "method": "v60",
+    "title": "Test V60",
+    "params": { "doseG": 15, "waterG": 240, "tempC": 92 },
+    "steps": [{ "atSec": 0, "waterG": 40, "note": "Bloom" }]
+  }'
+
+# List recipes (newest first, default limit 20, max 100)
+curl http://localhost:5173/api/recipes
+curl 'http://localhost:5173/api/recipes?limit=5'
+
+# Get one recipe by code
+curl http://localhost:5173/api/recipes/COF-0001
+
+# Add feedback for a recipe
+curl -X POST http://localhost:5173/api/feedback \
+  -H 'content-type: application/json' \
+  -d '{
+    "recipeCode": "COF-0001",
+    "ratings": { "overall": 4, "sweetness": 3, "burnt": 1 },
+    "comment": "Sweetness was good; no burnt taste."
+  }'
+
+# List feedback for a recipe
+curl 'http://localhost:5173/api/feedback?recipeCode=COF-0001'
+```
+
+Recipe codes are minted by a CouchDB counter document (`counter:recipe`) and
+formatted as `COF-NNNN` (zero-padded to 4 digits). Feedback document IDs are of
+the form `feedback:<recipeCode>:<timestamp-suffix>`. CouchDB credentials are
+never echoed in API responses or logs.
+
 ## License
 
 TBD.

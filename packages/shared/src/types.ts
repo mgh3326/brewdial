@@ -91,4 +91,13 @@ export interface PreferenceDoc {
   updatedAt: string;
 }
 
-export type BrewDialDoc = RecipeDoc | FeedbackDoc | PreferenceDoc;
+export interface CounterDoc {
+  _id: `counter:${string}`;
+  _rev?: string;
+  type: 'counter';
+  next: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BrewDialDoc = RecipeDoc | FeedbackDoc | PreferenceDoc | CounterDoc;

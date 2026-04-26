@@ -4,7 +4,8 @@ import {
   couchRequest,
   createCouchHeaders,
   ensureDatabase,
-  getDocument
+  getDocument,
+  getAllDocuments
 } from './couch';
 import type { CouchConfig } from './config';
 
@@ -84,5 +85,59 @@ describe('couchRequest', () => {
       body: { error: 'internal_server_error' }
     });
     await expect(couchRequest(baseConfig, '/coffee', { method: 'GET' }, fetchImpl)).rejects.toBeInstanceOf(CouchError);
+  });
+});
+
+describe('getAllDocuments', () => {
+  it('builds a _all_docs URL with startkey/endkey/include_docs/limit and returns rows.doc', async () => {
+    const captured: { url?: string; method?: string } = {};
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      captured.url = url;
+      captured.method = init?.method ?? 'GET';
+      return new Response(
+        JSON.stringify({
+          total_rows: 2,
+          offset: 0,
+          rows: [
+            { id: 'recipe:COF-0001', key: 'recipe:COF-0001', value: { rev: '1-x' }, doc: { _id: 'recipe:COF-0001', _rev: '1-x', type: 'recipe' } },
+            { id: 'recipe:COF-0002', key: 'recipe:COF-0002', value: { rev: '1-y' }, doc: { _id: 'recipe:COF-0002', _rev: '1-y', type: 'recipe' } }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const docs = await getAllDocuments<{ _id: string; _rev: string; type: string }>(
+      baseConfig,
+      { startkey: 'recipe:', endkey: 'recipe:￰', includeDocs: true, limit: 50 },
+      fetchImpl
+    );
+
+    expect(docs).toHaveLength(2);
+    expect(docs[0]._id).toBe('recipe:COF-0001');
+    expect(captured.method).toBe('GET');
+    expect(captured.url).toContain('/coffee/_all_docs');
+    expect(captured.url).toContain('include_docs=true');
+    expect(captured.url).toContain('limit=50');
+    // startkey and endkey must be JSON-encoded strings, then URL-encoded
+    expect(captured.url).toContain('startkey=' + encodeURIComponent('"recipe:"'));
+    expect(captured.url).toContain('endkey=' + encodeURIComponent('"recipe:￰"'));
+  });
+
+  it('skips rows whose doc is missing when includeDocs is true', async () => {
+    const fetchImpl = mockFetch({
+      status: 200,
+      body: {
+        total_rows: 1,
+        offset: 0,
+        rows: [{ id: 'recipe:COF-0001', key: 'recipe:COF-0001', value: { rev: '1-x' } }]
+      }
+    });
+    const docs = await getAllDocuments<{ _id: string }>(
+      baseConfig,
+      { startkey: 'recipe:', endkey: 'recipe:￰', includeDocs: true },
+      fetchImpl
+    );
+    expect(docs).toEqual([]);
   });
 });
