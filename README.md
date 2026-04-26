@@ -64,6 +64,44 @@ curl http://localhost:5173/api/health
 # {"ok":true,"service":"brewdial-web","version":"0.1.0"}
 ```
 
+## CouchDB foundation
+
+PR2 wires the SvelteKit server to CouchDB via plain `fetch` (no SDK). The web
+app, the bootstrap script, and the health probe all read configuration from
+these environment variables:
+
+```bash
+COUCHDB_URL=http://127.0.0.1:5984
+COUCHDB_DATABASE=coffee
+COUCHDB_USERNAME=
+COUCHDB_PASSWORD=
+BREWDIAL_API_TOKEN=
+```
+
+`COUCHDB_URL` and `COUCHDB_DATABASE` have safe localhost defaults; the other
+three are intentionally blank in `.env.example`. Copy that file to `.env` and
+fill in real values for local CouchDB experiments — never commit the result.
+
+If CouchDB is already installed locally (e.g. via Homebrew), start it:
+
+```bash
+brew services start couchdb
+```
+
+Then, from the repo root:
+
+```bash
+pnpm db:health      # prints safe status; exits non-zero if unreachable
+pnpm db:bootstrap   # creates the database if missing, seeds preference:global
+pnpm db:health      # confirms the database is reachable and lists docCount
+```
+
+The runtime equivalent is `GET /api/db/health` — it returns either a 200 JSON
+status or a safe 503 response if CouchDB is unreachable. Credentials never
+appear in script output, log lines, or HTTP responses.
+
+`pnpm test` covers the helpers via mocked `fetch` — no live CouchDB required.
+
 ## License
 
 TBD.
