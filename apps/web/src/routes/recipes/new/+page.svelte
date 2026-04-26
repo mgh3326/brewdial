@@ -7,7 +7,7 @@
   }
   let { form }: Props = $props();
 
-  const v = form?.values ?? {};
+  const v = $derived(form?.values ?? {});
 </script>
 
 <svelte:head>

@@ -8,7 +8,7 @@
   }
   let { name, label, min = 0, max = 4, value = undefined }: Props = $props();
 
-  const options = Array.from({ length: max - min + 1 }, (_, i) => String(min + i));
+  const options = $derived(Array.from({ length: max - min + 1 }, (_, i) => String(min + i)));
 </script>
 
 <fieldset class="rating">
