@@ -1,0 +1,151 @@
+import type { CouchConfig } from './config';
+
+export interface CouchRequestOptions extends RequestInit {
+  expectedStatuses?: number[];
+}
+
+export interface CouchInfo {
+  couchdb?: string;
+  version?: string;
+  vendor?: unknown;
+}
+
+export interface DatabaseInfo {
+  db_name: string;
+  doc_count: number;
+  update_seq: string | number;
+}
+
+export class CouchError extends Error {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown, message?: string) {
+    super(message ?? `CouchDB request failed with status ${status}`);
+    this.name = 'CouchError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+export function createCouchHeaders(config: CouchConfig, extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+  if (config.username && config.password) {
+    const token = Buffer.from(`${config.username}:${config.password}`).toString('base64');
+    headers.set('Authorization', `Basic ${token}`);
+  }
+  return headers;
+}
+
+function buildUrl(config: CouchConfig, path: string): string {
+  const base = config.url.replace(/\/+$/, '');
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${suffix}`;
+}
+
+async function parseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return undefined;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+  return text;
+}
+
+export async function couchRequest<T>(
+  config: CouchConfig,
+  path: string,
+  options: CouchRequestOptions = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<T> {
+  const { expectedStatuses = [200, 201, 202], headers: optHeaders, ...init } = options;
+  const headers = createCouchHeaders(config, optHeaders);
+  const response = await fetchImpl(buildUrl(config, path), { ...init, headers });
+  const body = await parseBody(response);
+  if (!expectedStatuses.includes(response.status)) {
+    throw new CouchError(response.status, body);
+  }
+  return body as T;
+}
+
+export async function getCouchInfo(
+  config: CouchConfig,
+  fetchImpl: typeof fetch = fetch
+): Promise<CouchInfo> {
+  return couchRequest<CouchInfo>(config, '/', { method: 'GET' }, fetchImpl);
+}
+
+export async function getDatabaseInfo(
+  config: CouchConfig,
+  fetchImpl: typeof fetch = fetch
+): Promise<DatabaseInfo> {
+  return couchRequest<DatabaseInfo>(
+    config,
+    `/${encodeURIComponent(config.database)}`,
+    { method: 'GET' },
+    fetchImpl
+  );
+}
+
+export async function ensureDatabase(
+  config: CouchConfig,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ created: boolean }> {
+  const path = `/${encodeURIComponent(config.database)}`;
+  try {
+    await couchRequest<unknown>(
+      config,
+      path,
+      { method: 'PUT', expectedStatuses: [201, 202] },
+      fetchImpl
+    );
+    return { created: true };
+  } catch (err) {
+    if (err instanceof CouchError && err.status === 412) {
+      return { created: false };
+    }
+    throw err;
+  }
+}
+
+export async function getDocument<T>(
+  config: CouchConfig,
+  id: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<T | null> {
+  try {
+    return await couchRequest<T>(
+      config,
+      `/${encodeURIComponent(config.database)}/${encodeURIComponent(id)}`,
+      { method: 'GET' },
+      fetchImpl
+    );
+  } catch (err) {
+    if (err instanceof CouchError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function putDocument<T extends { _id: string; _rev?: string }>(
+  config: CouchConfig,
+  doc: T,
+  fetchImpl: typeof fetch = fetch
+): Promise<T & { _rev: string }> {
+  const response = await couchRequest<{ ok: boolean; id: string; rev: string }>(
+    config,
+    `/${encodeURIComponent(config.database)}/${encodeURIComponent(doc._id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(doc),
+      expectedStatuses: [201, 202]
+    },
+    fetchImpl
+  );
+  return { ...doc, _rev: response.rev };
+}
