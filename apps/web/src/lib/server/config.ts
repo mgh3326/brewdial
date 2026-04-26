@@ -31,6 +31,17 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+function redactUrlUserInfo(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    return trimTrailingSlash(url.toString());
+  } catch {
+    return value.replace(/\/\/[^/@]+@/, '//');
+  }
+}
+
 export function getServerConfig(env: Record<string, string | undefined>): BrewDialServerConfig {
   const url = trimTrailingSlash(nonEmpty(env.COUCHDB_URL) ?? DEFAULT_COUCHDB_URL);
   const database = nonEmpty(env.COUCHDB_DATABASE) ?? DEFAULT_COUCHDB_DATABASE;
@@ -45,7 +56,7 @@ export function getServerConfig(env: Record<string, string | undefined>): BrewDi
 
 export function getSafeConfigStatus(config: BrewDialServerConfig): SafeConfigStatus {
   return {
-    couchdbUrl: config.couch.url,
+    couchdbUrl: redactUrlUserInfo(config.couch.url),
     database: config.couch.database,
     hasUsername: Boolean(config.couch.username),
     hasPassword: Boolean(config.couch.password),

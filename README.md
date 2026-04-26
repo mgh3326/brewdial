@@ -8,9 +8,10 @@ not assume any specific agent or client.
 
 ## Status
 
-**Skeleton (PR1).** Repository layout, SvelteKit shell, shared types, and a
-`/api/health` endpoint. CouchDB integration, MCP server, auth, and deployment
-are intentionally deferred to later PRs.
+**CouchDB foundation (PR2).** Monorepo skeleton plus a server-only CouchDB
+client, `/api/health` and `/api/db/health` endpoints, and bootstrap/health
+scripts. MCP server, auth, and deployment are intentionally deferred to
+later PRs.
 
 ## Planned architecture
 
@@ -52,8 +53,9 @@ pnpm check    # svelte-check + tsc --noEmit across workspaces
 pnpm build    # builds apps/web
 ```
 
-`pnpm test` and `pnpm lint` are intentional no-op stubs in PR1. ESLint and
-Vitest will be wired up in a later PR.
+`pnpm test` runs Vitest in both workspaces (covers shared feedback rules and
+CouchDB helpers; no live CouchDB required). `pnpm lint` remains an intentional
+no-op stub until ESLint is wired up in a later PR.
 
 ## Health check
 
