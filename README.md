@@ -145,6 +145,31 @@ formatted as `COF-NNNN` (zero-padded to 4 digits). Feedback document IDs are of
 the form `feedback:<recipeCode>:<timestamp-suffix>`. CouchDB credentials are
 never echoed in API responses or logs.
 
+## Mobile UI MVP
+
+PR5 adds a mobile-first SvelteKit web UI for humans on top of the PR4 API.
+Pages call the existing repository helpers server-side via SvelteKit `load`
+functions and form `actions` — no client-side `fetch` to the local API. The
+JSON API endpoints from PR4 remain unchanged for agents and the future MCP
+server.
+
+Routes:
+
+- `/` — dashboard with most recent 5 recipes
+- `/recipes` — recipe list (`?limit=N`, default 20, max 100)
+- `/recipes/new` — manual recipe creation form
+- `/recipes/COF-0001` — recipe detail with feedback history
+- `/feedback/new?recipeCode=COF-0001` — feedback creation form
+
+The UI requires a running, bootstrapped CouchDB (`pnpm db:bootstrap`) for real
+data; without it, pages render a safe error message instead of stack traces or
+config.
+
+```bash
+pnpm dev
+# open http://localhost:5173
+```
+
 ## License
 
 TBD.
