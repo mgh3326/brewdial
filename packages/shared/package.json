@@ -14,10 +14,11 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "echo '@brewdial/shared has no build step' && exit 0",
-    "test": "echo '@brewdial/shared: no tests in PR1 (intentional no-op)' && exit 0",
+    "test": "vitest run",
     "lint": "echo '@brewdial/shared: no lint in PR1 (intentional no-op)' && exit 0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
   }
 }
