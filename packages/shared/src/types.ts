@@ -90,3 +90,5 @@ export interface PreferenceDoc {
   createdAt: string;
   updatedAt: string;
 }
+
+export type BrewDialDoc = RecipeDoc | FeedbackDoc | PreferenceDoc;
