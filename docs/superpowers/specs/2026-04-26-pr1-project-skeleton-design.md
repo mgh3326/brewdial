@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-26
 **Status:** Approved (decisions resolved 2026-04-26)
-**Source spec:** `/Users/robin/shared/prompts/brewdial-pr1-project-skeleton.md`
+**Source prompt:** `brewdial-pr1-project-skeleton.md` (initial PR1 implementation brief)
 
 ## Goal
 

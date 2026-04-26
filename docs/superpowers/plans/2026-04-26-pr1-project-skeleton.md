@@ -9,7 +9,7 @@
 **Tech Stack:** pnpm@10.33.2, Node ≥22, TypeScript, SvelteKit (latest, scaffolded via `sv`), plain CSS.
 
 **Reference spec:** `docs/superpowers/specs/2026-04-26-pr1-project-skeleton-design.md`
-**Source brief:** `/Users/robin/shared/prompts/brewdial-pr1-project-skeleton.md`
+**Source prompt:** `brewdial-pr1-project-skeleton.md` (initial PR1 implementation brief)
 
 ---
 
