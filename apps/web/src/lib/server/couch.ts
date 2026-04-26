@@ -149,3 +149,55 @@ export async function putDocument<T extends { _id: string; _rev?: string }>(
   );
   return { ...doc, _rev: response.rev };
 }
+
+export interface AllDocsOptions {
+  startkey?: string;
+  endkey?: string;
+  includeDocs?: boolean;
+  limit?: number;
+  descending?: boolean;
+}
+
+interface AllDocsRow<T> {
+  id: string;
+  key: string;
+  value: { rev: string };
+  doc?: T;
+}
+
+interface AllDocsResponse<T> {
+  total_rows: number;
+  offset: number;
+  rows: AllDocsRow<T>[];
+}
+
+export async function getAllDocuments<T>(
+  config: CouchConfig,
+  options: AllDocsOptions = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<T[]> {
+  const params = new URLSearchParams();
+  if (options.startkey !== undefined) params.set('startkey', JSON.stringify(options.startkey));
+  if (options.endkey !== undefined) params.set('endkey', JSON.stringify(options.endkey));
+  if (options.includeDocs) params.set('include_docs', 'true');
+  if (options.limit !== undefined) params.set('limit', String(options.limit));
+  if (options.descending) params.set('descending', 'true');
+
+  const query = params.toString();
+  const path =
+    `/${encodeURIComponent(config.database)}/_all_docs` + (query ? `?${query}` : '');
+
+  const body = await couchRequest<AllDocsResponse<T>>(
+    config,
+    path,
+    { method: 'GET' },
+    fetchImpl
+  );
+
+  if (!options.includeDocs) {
+    return body.rows.map((row) => row as unknown as T);
+  }
+  return body.rows
+    .map((row) => row.doc)
+    .filter((doc): doc is T => doc !== undefined);
+}
