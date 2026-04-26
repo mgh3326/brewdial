@@ -1,7 +1,7 @@
 {
-	"name": "web",
+	"name": "@brewdial/web",
 	"private": true,
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -9,7 +9,12 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test": "echo '@brewdial/web: no tests in PR1 (intentional no-op)' && exit 0",
+		"lint": "echo '@brewdial/web: no lint in PR1 (intentional no-op)' && exit 0"
+	},
+	"dependencies": {
+		"@brewdial/shared": "workspace:*"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.1",

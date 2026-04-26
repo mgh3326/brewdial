@@ -9,6 +9,10 @@ importers:
   .: {}
 
   apps/web:
+    dependencies:
+      '@brewdial/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
     devDependencies:
       '@sveltejs/adapter-auto':
         specifier: ^7.0.1
