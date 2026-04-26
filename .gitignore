@@ -15,8 +15,8 @@ coverage
 
 # Editor / OS
 .DS_Store
-/.idea
-.vscode/*
+.idea/
+.vscode/
 
 # Other package managers (project uses pnpm)
 package-lock.json
