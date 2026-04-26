@@ -14,7 +14,7 @@
 
 ## Pre-flight
 
-Run from the worktree root (`/Users/robin/.superset/worktrees/brewdial/ui-mvp`, the current working directory). Confirm:
+Run from the repository/worktree root. Confirm:
 
 - `pnpm --version` reports `10.33.2`
 - `node --version` reports `>=22`
