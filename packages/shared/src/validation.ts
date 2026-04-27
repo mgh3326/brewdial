@@ -24,7 +24,7 @@ const FEEDBACK_SOURCES = ['web', 'agent', 'mcp'] as const;
 const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
-const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grind'] as const;
+const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grind', 'grinder', 'brewer'] as const;
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -80,9 +80,17 @@ function validateBeanSnapshot(
   const name = pickString(raw, 'name', errors, 'beanSnapshot');
   const roaster = pickString(raw, 'roaster', errors, 'beanSnapshot');
   const roastDate = pickString(raw, 'roastDate', errors, 'beanSnapshot');
+  const roastLevel = pickString(raw, 'roastLevel', errors, 'beanSnapshot');
+  const origin = pickString(raw, 'origin', errors, 'beanSnapshot');
+  const process = pickString(raw, 'process', errors, 'beanSnapshot');
+  const notes = pickString(raw, 'notes', errors, 'beanSnapshot');
   if (name !== undefined) out.name = name;
   if (roaster !== undefined) out.roaster = roaster;
   if (roastDate !== undefined) out.roastDate = roastDate;
+  if (roastLevel !== undefined) out.roastLevel = roastLevel;
+  if (origin !== undefined) out.origin = origin;
+  if (process !== undefined) out.process = process;
+  if (notes !== undefined) out.notes = notes;
   return out;
 }
 
@@ -185,6 +193,8 @@ export function validateCreateRecipeInput(
     else intent = input.intent;
   }
 
+  const notes = pickString(input, 'notes', errors, 'input');
+
   const adjustmentFromPrevious = pickString(
     input,
     'adjustmentFromPrevious',
@@ -215,6 +225,7 @@ export function validateCreateRecipeInput(
   if (params !== undefined) value.params = params;
   if (steps !== undefined) value.steps = steps;
   if (intent !== undefined) value.intent = intent;
+  if (notes !== undefined) value.notes = notes;
   if (adjustmentFromPrevious !== undefined) value.adjustmentFromPrevious = adjustmentFromPrevious;
   if (createdBy !== undefined) value.createdBy = createdBy;
 

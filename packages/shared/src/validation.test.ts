@@ -23,13 +23,14 @@ describe('validateCreateRecipeInput', () => {
     const result = validateCreateRecipeInput({
       method: 'espresso',
       title: 'Morning shot',
-      params: { doseG: 18, waterG: 36, tempC: 93 },
+      params: { doseG: 18, waterG: 36, tempC: 93, grinder: 'KINGrinder K6', brewer: 'Gaggia Classic' },
       steps: [{ atSec: 0, waterG: 0, note: 'Pre-infuse' }],
       intent: ['sweeter'],
+      notes: 'First attempt with new grinder',
       adjustmentFromPrevious: 'finer grind',
       createdBy: 'agent',
       beanId: 'bean:abc',
-      beanSnapshot: { name: 'Geisha', roaster: 'Tim', roastDate: '2026-04-01' }
+      beanSnapshot: { name: 'Geisha', roaster: 'Tim', roastDate: '2026-04-01', roastLevel: 'light', origin: 'Ethiopia', process: 'washed', notes: 'Floral, citrus' }
     });
     expect(result.ok).toBe(true);
   });

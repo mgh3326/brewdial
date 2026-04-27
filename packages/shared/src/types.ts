@@ -10,6 +10,10 @@ export interface BeanSnapshot {
   name?: string;
   roaster?: string;
   roastDate?: string;
+  roastLevel?: string;
+  origin?: string;
+  process?: string;
+  notes?: string;
 }
 
 export interface RecipeParams {
@@ -18,6 +22,8 @@ export interface RecipeParams {
   ratio?: string;
   tempC?: number;
   grind?: string;
+  grinder?: string;
+  brewer?: string;
   targetTimeSec?: number;
 }
 
@@ -40,6 +46,7 @@ export interface RecipeDoc {
   params: RecipeParams;
   steps: RecipeStep[];
   intent?: string[];
+  notes?: string;
   adjustmentFromPrevious?: string;
   createdBy: 'agent' | 'manual';
   createdAt: string;

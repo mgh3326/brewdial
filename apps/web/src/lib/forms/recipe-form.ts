@@ -6,11 +6,18 @@ export interface RecipeFormValues {
   beanName?: string;
   roaster?: string;
   roastDate?: string;
+  roastLevel?: string;
+  origin?: string;
+  process?: string;
+  beanNotes?: string;
   doseG?: string;
   waterG?: string;
   tempC?: string;
   grind?: string;
+  grinder?: string;
+  brewer?: string;
   targetTimeSec?: string;
+  notes?: string;
   intentText?: string;
   stepsText?: string;
 }
@@ -21,11 +28,18 @@ const STRING_KEYS: ReadonlyArray<keyof RecipeFormValues> = [
   'beanName',
   'roaster',
   'roastDate',
+  'roastLevel',
+  'origin',
+  'process',
+  'beanNotes',
   'doseG',
   'waterG',
   'tempC',
   'grind',
-  'targetTimeSec'
+  'grinder',
+  'brewer',
+  'targetTimeSec',
+  'notes'
 ];
 
 const RAW_TEXT_KEYS: ReadonlyArray<keyof RecipeFormValues> = ['intentText', 'stepsText'];
@@ -82,6 +96,10 @@ export function recipeValuesToInput(values: RecipeFormValues): CreateRecipeInput
   if (values.beanName) beanSnapshot.name = values.beanName;
   if (values.roaster) beanSnapshot.roaster = values.roaster;
   if (values.roastDate) beanSnapshot.roastDate = values.roastDate;
+  if (values.roastLevel) beanSnapshot.roastLevel = values.roastLevel;
+  if (values.origin) beanSnapshot.origin = values.origin;
+  if (values.process) beanSnapshot.process = values.process;
+  if (values.beanNotes) beanSnapshot.notes = values.beanNotes;
   if (Object.keys(beanSnapshot).length > 0) input.beanSnapshot = beanSnapshot;
 
   const params: NonNullable<CreateRecipeInput['params']> = {};
@@ -94,10 +112,14 @@ export function recipeValuesToInput(values: RecipeFormValues): CreateRecipeInput
   if (tempC !== undefined) params.tempC = tempC;
   if (targetTimeSec !== undefined) params.targetTimeSec = targetTimeSec;
   if (values.grind) params.grind = values.grind;
+  if (values.grinder) params.grinder = values.grinder;
+  if (values.brewer) params.brewer = values.brewer;
   if (Object.keys(params).length > 0) input.params = params;
 
   const intent = linesToArray(values.intentText);
   if (intent.length > 0) input.intent = intent;
+
+  if (values.notes) input.notes = values.notes;
 
   const stepNotes = linesToArray(values.stepsText);
   if (stepNotes.length > 0) input.steps = stepNotes.map((note) => ({ note }));

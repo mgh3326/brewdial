@@ -20,11 +20,18 @@ describe('formDataToRecipeValues', () => {
         beanName: 'Yirgacheffe ',
         roaster: '',
         roastDate: '2026-04-01',
+        roastLevel: 'light',
+        origin: 'Ethiopia',
+        process: 'washed',
+        beanNotes: 'Floral notes',
         doseG: ' 15 ',
         waterG: '240',
         tempC: '',
         grind: 'medium-fine',
+        grinder: 'KINGrinder K6',
+        brewer: 'Hario V60',
         targetTimeSec: '180',
+        notes: 'First attempt',
         intentText: 'sweeter\nless burnt\n',
         stepsText: 'Bloom 40g for 35s\nPour to 160g\n'
       })
@@ -34,10 +41,17 @@ describe('formDataToRecipeValues', () => {
       method: 'v60',
       beanName: 'Yirgacheffe',
       roastDate: '2026-04-01',
+      roastLevel: 'light',
+      origin: 'Ethiopia',
+      process: 'washed',
+      beanNotes: 'Floral notes',
       doseG: '15',
       waterG: '240',
       grind: 'medium-fine',
+      grinder: 'KINGrinder K6',
+      brewer: 'Hario V60',
       targetTimeSec: '180',
+      notes: 'First attempt',
       intentText: 'sweeter\nless burnt\n',
       stepsText: 'Bloom 40g for 35s\nPour to 160g\n'
     });
@@ -59,13 +73,15 @@ describe('recipeValuesToInput', () => {
       waterG: '240',
       tempC: '92',
       grind: 'medium-fine',
+      grinder: 'KINGrinder K6',
+      brewer: 'Hario V60',
       targetTimeSec: '180'
     };
     const input = recipeValuesToInput(values);
     expect(input).toEqual({
       method: 'v60',
       title: 'Test V60',
-      params: { doseG: 15, waterG: 240, tempC: 92, grind: 'medium-fine', targetTimeSec: 180 }
+      params: { doseG: 15, waterG: 240, tempC: 92, grind: 'medium-fine', grinder: 'KINGrinder K6', brewer: 'Hario V60', targetTimeSec: 180 }
     });
   });
 
@@ -80,6 +96,34 @@ describe('recipeValuesToInput', () => {
       roastDate: '2026-04-01'
     });
     expect(b.beanSnapshot).toEqual({ name: 'Yirg', roastDate: '2026-04-01' });
+
+    const c = recipeValuesToInput({
+      title: 'a',
+      method: 'v60',
+      beanName: 'Starbucks Blonde',
+      roaster: 'Starbucks',
+      roastLevel: 'blonde',
+      origin: 'Latin America',
+      process: 'washed',
+      beanNotes: 'Smooth and sweet'
+    });
+    expect(c.beanSnapshot).toEqual({
+      name: 'Starbucks Blonde',
+      roaster: 'Starbucks',
+      roastLevel: 'blonde',
+      origin: 'Latin America',
+      process: 'washed',
+      notes: 'Smooth and sweet'
+    });
+  });
+
+  it('includes recipe notes when provided', () => {
+    const input = recipeValuesToInput({
+      title: 'a',
+      method: 'v60',
+      notes: 'Used 90 clicks on KINGrinder K6'
+    });
+    expect(input.notes).toBe('Used 90 clicks on KINGrinder K6');
   });
 
   it('converts intentText into a string array of non-empty trimmed lines', () => {
