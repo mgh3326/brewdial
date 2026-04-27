@@ -29,6 +29,7 @@ export async function createRecipe(
   if (input.beanId !== undefined) doc.beanId = input.beanId;
   if (input.beanSnapshot !== undefined) doc.beanSnapshot = input.beanSnapshot;
   if (input.intent !== undefined) doc.intent = input.intent;
+  if (input.notes !== undefined) doc.notes = input.notes;
   if (input.adjustmentFromPrevious !== undefined)
     doc.adjustmentFromPrevious = input.adjustmentFromPrevious;
   return putDocument(config, doc, fetchImpl);

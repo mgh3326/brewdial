@@ -52,6 +52,26 @@
     </div>
 
     <div class="field">
+      <label for="roastLevel">Roast level</label>
+      <input id="roastLevel" name="roastLevel" value={v.roastLevel ?? ''} />
+    </div>
+
+    <div class="field">
+      <label for="origin">Origin</label>
+      <input id="origin" name="origin" value={v.origin ?? ''} />
+    </div>
+
+    <div class="field">
+      <label for="process">Process</label>
+      <input id="process" name="process" value={v.process ?? ''} />
+    </div>
+
+    <div class="field">
+      <label for="beanNotes">Bean notes</label>
+      <textarea id="beanNotes" name="beanNotes">{v.beanNotes ?? ''}</textarea>
+    </div>
+
+    <div class="field">
       <label for="doseG">Dose (g)</label>
       <input id="doseG" name="doseG" inputmode="decimal" value={v.doseG ?? ''} />
     </div>
@@ -72,6 +92,16 @@
     </div>
 
     <div class="field">
+      <label for="grinder">Grinder</label>
+      <input id="grinder" name="grinder" value={v.grinder ?? ''} />
+    </div>
+
+    <div class="field">
+      <label for="brewer">Brewer</label>
+      <input id="brewer" name="brewer" value={v.brewer ?? ''} />
+    </div>
+
+    <div class="field">
       <label for="targetTimeSec">Target time (s)</label>
       <input id="targetTimeSec" name="targetTimeSec" inputmode="numeric" value={v.targetTimeSec ?? ''} />
     </div>
@@ -79,6 +109,11 @@
     <div class="field">
       <label for="intentText">Intent (one per line)</label>
       <textarea id="intentText" name="intentText">{v.intentText ?? ''}</textarea>
+    </div>
+
+    <div class="field">
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes">{v.notes ?? ''}</textarea>
     </div>
 
     <div class="field">

@@ -15,12 +15,17 @@ export interface CreateRecipeInput {
     name?: string;
     roaster?: string;
     roastDate?: string;
+    roastLevel?: string;
+    origin?: string;
+    process?: string;
+    notes?: string;
   };
   method: BrewMethod;
   title: string;
   params?: RecipeParams;
   steps?: RecipeStep[];
   intent?: string[];
+  notes?: string;
   adjustmentFromPrevious?: string;
   createdBy?: 'agent' | 'manual';
 }

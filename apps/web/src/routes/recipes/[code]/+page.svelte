@@ -35,7 +35,7 @@
     <h1>{recipe.title}</h1>
   </div>
 
-  {#if recipe.beanSnapshot && (recipe.beanSnapshot.name || recipe.beanSnapshot.roaster || recipe.beanSnapshot.roastDate)}
+  {#if recipe.beanSnapshot && (recipe.beanSnapshot.name || recipe.beanSnapshot.roaster || recipe.beanSnapshot.roastDate || recipe.beanSnapshot.roastLevel || recipe.beanSnapshot.origin || recipe.beanSnapshot.process || recipe.beanSnapshot.notes)}
     <section class="stack-tight">
       <h2>Bean</h2>
       <dl class="dl">
@@ -47,6 +47,18 @@
         {/if}
         {#if recipe.beanSnapshot.roastDate}
           <dt>Roast date</dt><dd>{recipe.beanSnapshot.roastDate}</dd>
+        {/if}
+        {#if recipe.beanSnapshot.roastLevel}
+          <dt>Roast level</dt><dd>{recipe.beanSnapshot.roastLevel}</dd>
+        {/if}
+        {#if recipe.beanSnapshot.origin}
+          <dt>Origin</dt><dd>{recipe.beanSnapshot.origin}</dd>
+        {/if}
+        {#if recipe.beanSnapshot.process}
+          <dt>Process</dt><dd>{recipe.beanSnapshot.process}</dd>
+        {/if}
+        {#if recipe.beanSnapshot.notes}
+          <dt>Notes</dt><dd>{recipe.beanSnapshot.notes}</dd>
         {/if}
       </dl>
     </section>
@@ -82,6 +94,13 @@
           <li>{item}</li>
         {/each}
       </ul>
+    </section>
+  {/if}
+
+  {#if recipe.notes}
+    <section class="stack-tight">
+      <h2>Notes</h2>
+      <p>{recipe.notes}</p>
     </section>
   {/if}
 
