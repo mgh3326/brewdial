@@ -1,12 +1,12 @@
-import type { CreateFeedbackInput, CreateRecipeInput } from './api-types';
-import { isRecipeCode } from './schemas';
+import type { CreateFeedbackInput, CreateRecipeInput } from './api-types.js';
+import { isRecipeCode } from './schemas.js';
 import type {
   ActualBrewParams,
   BrewMethod,
   FeedbackRatings,
   RecipeParams,
   RecipeStep
-} from './types';
+} from './types.js';
 
 export type ValidationResult<T> =
   | { ok: true; value: T }

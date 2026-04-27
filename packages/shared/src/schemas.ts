@@ -1,4 +1,4 @@
-import type { PreferenceDoc } from './types';
+import type { PreferenceDoc } from './types.js';
 
 export const recipeCodePattern = /^COF-\d{4,}$/;
 

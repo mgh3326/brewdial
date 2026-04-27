@@ -7,7 +7,7 @@ import type {
   RecipeDoc,
   RecipeParams,
   RecipeStep
-} from './types';
+} from './types.js';
 
 export interface CreateRecipeInput {
   beanId?: string;

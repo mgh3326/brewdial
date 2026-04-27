@@ -1,4 +1,4 @@
-import type { FeedbackRatings } from './types';
+import type { FeedbackRatings } from './types.js';
 
 export interface FeedbackRatingAnalysis {
   dominantIssues: string[];
