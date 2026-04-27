@@ -3,6 +3,7 @@ import type {
   BrewMethod,
   FeedbackDoc,
   FeedbackRatings,
+  PreferenceDoc,
   RecipeDoc,
   RecipeParams,
   RecipeStep
@@ -58,4 +59,46 @@ export interface ApiErrorResponse {
   ok: false;
   error: string;
   details?: string[];
+}
+
+export interface FeedbackSummary {
+  count: number;
+  latestAt: string | null;
+  averageOverall: number | null;
+  commonDesiredDirections: string[];
+  latestComment: string | null;
+}
+
+export interface RecipeWithFeedbackSummary {
+  recipe: RecipeDoc;
+  feedback: FeedbackDoc[];
+  feedbackSummary: FeedbackSummary;
+}
+
+export interface ContextSummary {
+  generatedAt: string;
+  preferences: PreferenceDoc | null;
+  recentRecipes: RecipeWithFeedbackSummary[];
+  totals: {
+    recipes: number;
+    feedback: number;
+  };
+  guidance: string[];
+}
+
+export interface ContextSummaryResponse {
+  context: ContextSummary;
+}
+
+export interface RecipeContext {
+  generatedAt: string;
+  preferences: PreferenceDoc | null;
+  recipe: RecipeDoc;
+  feedback: FeedbackDoc[];
+  feedbackSummary: FeedbackSummary;
+  guidance: string[];
+}
+
+export interface RecipeContextResponse {
+  context: RecipeContext;
 }

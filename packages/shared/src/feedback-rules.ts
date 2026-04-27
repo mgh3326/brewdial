@@ -1,12 +1,12 @@
 import type { FeedbackRatings } from './types';
 
-export interface FeedbackSummary {
+export interface FeedbackRatingAnalysis {
   dominantIssues: string[];
   positiveSignals: string[];
   recommendedAdjustments: string[];
 }
 
-export function summarizeFeedbackRatings(ratings: FeedbackRatings): FeedbackSummary {
+export function summarizeFeedbackRatings(ratings: FeedbackRatings): FeedbackRatingAnalysis {
   const dominantIssues: string[] = [];
   const positiveSignals: string[] = [];
   const recommendedAdjustments: string[] = [];
