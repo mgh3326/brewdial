@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   validateCreateFeedbackInput,
   validateCreateRecipeInput
-} from './validation';
+} from './validation.js';
 
 describe('validateCreateRecipeInput', () => {
   it('accepts a minimal valid input and strips unknown fields', () => {

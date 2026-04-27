@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeFeedbackRatings } from './feedback-rules';
+import { summarizeFeedbackRatings } from './feedback-rules.js';
 
 describe('summarizeFeedbackRatings', () => {
   it('flags burnt as a dominant issue with the three burnt-related adjustments when burnt >= 3', () => {

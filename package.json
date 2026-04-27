@@ -11,7 +11,10 @@
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "db:bootstrap": "pnpm --filter @brewdial/web db:bootstrap",
-    "db:health": "pnpm --filter @brewdial/web db:health"
+    "db:health": "pnpm --filter @brewdial/web db:health",
+    "mcp": "pnpm --filter @brewdial/mcp mcp",
+    "mcp:dev": "pnpm --filter @brewdial/mcp mcp:dev",
+    "mcp:smoke": "pnpm --filter @brewdial/mcp smoke"
   },
   "packageManager": "pnpm@10.33.2",
   "engines": {
