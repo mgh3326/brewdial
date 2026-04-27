@@ -1,10 +1,15 @@
 import type {
+  ContextSummary,
   FeedbackDoc,
   FeedbackSummary,
   PreferenceDoc,
   RecipeDoc,
   RecipeWithFeedbackSummary
 } from '@brewdial/shared';
+import type { CouchConfig } from './config';
+import { listRecentRecipes } from './repositories/recipes';
+import { listFeedbackForRecipe } from './repositories/feedback';
+import { getGlobalPreferences } from './repositories/preferences';
 
 export interface ContextGuidanceInput {
   preferences: PreferenceDoc | null;
@@ -141,4 +146,50 @@ export function buildRecipeGuidance(input: RecipeGuidanceInput): string[] {
   const pref = preferenceLine(input.preferences);
   if (pref) out.push(pref);
   return out;
+}
+
+const DEFAULT_CONTEXT_LIMIT = 5;
+const MIN_CONTEXT_LIMIT = 1;
+const MAX_CONTEXT_LIMIT = 20;
+
+function clampContextLimit(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return DEFAULT_CONTEXT_LIMIT;
+  const n = Math.floor(raw);
+  if (n < MIN_CONTEXT_LIMIT) return MIN_CONTEXT_LIMIT;
+  if (n > MAX_CONTEXT_LIMIT) return MAX_CONTEXT_LIMIT;
+  return n;
+}
+
+export async function buildRecentContext(
+  config: CouchConfig,
+  limit?: number,
+  fetchImpl?: typeof fetch
+): Promise<ContextSummary> {
+  const safeLimit = clampContextLimit(limit);
+  const [recentRecipes, preferences] = await Promise.all([
+    listRecentRecipes(config, safeLimit, fetchImpl),
+    getGlobalPreferences(config, fetchImpl)
+  ]);
+  const enriched: RecipeWithFeedbackSummary[] = await Promise.all(
+    recentRecipes.map(async (recipe) => {
+      const feedback = await listFeedbackForRecipe(config, recipe.code, fetchImpl);
+      return {
+        recipe,
+        feedback,
+        feedbackSummary: summarizeFeedback(feedback)
+      };
+    })
+  );
+  const totals = {
+    recipes: enriched.length,
+    feedback: enriched.reduce((acc, r) => acc + r.feedback.length, 0)
+  };
+  const guidance = buildContextGuidance({ preferences, recipes: enriched });
+  return {
+    generatedAt: new Date().toISOString(),
+    preferences,
+    recentRecipes: enriched,
+    totals,
+    guidance
+  };
 }
