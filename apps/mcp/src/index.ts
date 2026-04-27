@@ -7,9 +7,69 @@ import {
   type Tool
 } from '@modelcontextprotocol/sdk/types.js';
 import { getMcpConfig } from './config.js';
-import { handleGetRecentContext, handleGetRecipeContext } from './tools.js';
+import { handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
 
 const TOOLS: Tool[] = [
+  {
+    name: 'brew.create_recipe',
+    description:
+      'Persist a newly generated coffee recipe to BrewDial. Use this immediately after generating a recipe for the user, then include the returned COF-NNNN code in the Discord reply.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: {
+          type: 'string',
+          enum: ['v60', 'espresso', 'aeropress', 'kalita', 'other'],
+          description: 'Brew method'
+        },
+        title: { type: 'string', description: 'Human-readable recipe title' },
+        beanId: { type: 'string', description: 'Optional stable bean identifier' },
+        beanSnapshot: {
+          type: 'object',
+          description: 'Bean metadata snapshot',
+          properties: {
+            name: { type: 'string' },
+            roaster: { type: 'string' },
+            roastDate: { type: 'string' },
+            roastLevel: { type: 'string' },
+            origin: { type: 'string' },
+            process: { type: 'string' },
+            notes: { type: 'string' }
+          }
+        },
+        params: {
+          type: 'object',
+          description: 'Brew parameters',
+          properties: {
+            doseG: { type: 'number' },
+            waterG: { type: 'number' },
+            ratio: { type: 'string' },
+            tempC: { type: 'number' },
+            grind: { type: 'string' },
+            grinder: { type: 'string' },
+            brewer: { type: 'string' },
+            targetTimeSec: { type: 'number' }
+          }
+        },
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              atSec: { type: 'number' },
+              waterG: { type: 'number' },
+              note: { type: 'string' }
+            },
+            required: ['note']
+          }
+        },
+        intent: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+        adjustmentFromPrevious: { type: 'string' }
+      },
+      required: ['method', 'title']
+    }
+  },
   {
     name: 'brew.get_recent_context',
     description: 'Get recent BrewDial context including recipes, feedback, and guidance',
@@ -62,6 +122,10 @@ async function main(): Promise<void> {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case 'brew.create_recipe': {
+        const result = await handleCreateRecipe(config.couch, args as Record<string, unknown> | undefined);
+        return result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+      }
       case 'brew.get_recent_context': {
         const result = await handleGetRecentContext(config.couch, args as Record<string, unknown> | undefined);
         return result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean };

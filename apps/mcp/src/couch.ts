@@ -92,6 +92,24 @@ export async function getDocument<T>(
   }
 }
 
+export async function putDocument<T extends { _id: string; _rev?: string }>(
+  config: CouchConfig,
+  doc: T,
+  fetchImpl: typeof fetch = fetch
+): Promise<T & { _rev: string }> {
+  const response = await couchRequest<{ ok: boolean; id: string; rev: string }>(
+    config,
+    `/${encodeURIComponent(config.database)}/${encodeURIComponent(doc._id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(doc),
+      expectedStatuses: [201, 202]
+    },
+    fetchImpl
+  );
+  return { ...doc, _rev: response.rev };
+}
+
 export interface AllDocsOptions {
   startkey?: string;
   endkey?: string;
