@@ -3,9 +3,9 @@ import { summarizeFeedbackRatings } from './feedback-rules';
 
 describe('summarizeFeedbackRatings', () => {
   it('flags burnt as a dominant issue with the three burnt-related adjustments when burnt >= 3', () => {
-    const summary = summarizeFeedbackRatings({ burnt: 3 });
-    expect(summary.dominantIssues).toContain('burnt');
-    expect(summary.recommendedAdjustments).toEqual(
+    const analysis = summarizeFeedbackRatings({ burnt: 3 });
+    expect(analysis.dominantIssues).toContain('burnt');
+    expect(analysis.recommendedAdjustments).toEqual(
       expect.arrayContaining([
         'Lower water temperature by 1-2°C',
         'Grind slightly coarser',
@@ -15,9 +15,9 @@ describe('summarizeFeedbackRatings', () => {
   });
 
   it('reports sweetness as a positive signal when sweetness >= 3', () => {
-    const summary = summarizeFeedbackRatings({ sweetness: 3 });
-    expect(summary.positiveSignals).toContain('sweetness');
-    expect(summary.dominantIssues).toEqual([]);
+    const analysis = summarizeFeedbackRatings({ sweetness: 3 });
+    expect(analysis.positiveSignals).toContain('sweetness');
+    expect(analysis.dominantIssues).toEqual([]);
   });
 
   it('deduplicates recommendedAdjustments when multiple issues push the same string', () => {
@@ -25,14 +25,14 @@ describe('summarizeFeedbackRatings', () => {
     // adjustment lists do not currently overlap — so dedup is exercised by
     // confirming each adjustment appears exactly once even when several
     // dominant issues fire at the same time.
-    const summary = summarizeFeedbackRatings({ burnt: 3, astringency: 3, sour: 3 });
+    const analysis = summarizeFeedbackRatings({ burnt: 3, astringency: 3, sour: 3 });
     const counts = new Map<string, number>();
-    for (const adjustment of summary.recommendedAdjustments) {
+    for (const adjustment of analysis.recommendedAdjustments) {
       counts.set(adjustment, (counts.get(adjustment) ?? 0) + 1);
     }
     for (const [adjustment, count] of counts) {
       expect(count, `${adjustment} should appear exactly once`).toBe(1);
     }
-    expect(summary.recommendedAdjustments.length).toBe(new Set(summary.recommendedAdjustments).size);
+    expect(analysis.recommendedAdjustments.length).toBe(new Set(analysis.recommendedAdjustments).size);
   });
 });

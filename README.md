@@ -8,10 +8,10 @@ not assume any specific agent or client.
 
 ## Status
 
-**CouchDB foundation (PR2).** Monorepo skeleton plus a server-only CouchDB
-client, `/api/health` and `/api/db/health` endpoints, and bootstrap/health
-scripts. MCP server, auth, and deployment are intentionally deferred to
-later PRs.
+**Agent Context API (PR6).** Monorepo skeleton, server-only CouchDB client
+(PR2 / PR3), Recipe / Feedback JSON API (PR4), Mobile UI MVP (PR5), and now a
+read-only Agent Context Summary API. MCP server, auth, and deployment are
+intentionally deferred to later PRs.
 
 ## Planned architecture
 
@@ -169,6 +169,27 @@ config.
 pnpm dev
 # open http://localhost:5173
 ```
+
+## Agent Context API
+
+PR6 adds a read-only summary API for agents and MCP clients. It returns
+structured context — recent recipes, attached feedback, derived feedback
+summaries, global preferences, and a small list of deterministic guidance
+hints — without calling an LLM. CouchDB must be running and bootstrapped
+(`pnpm db:bootstrap`).
+
+```bash
+# Recent context (default limit 5, clamped to 1..20)
+curl 'http://localhost:5173/api/context?limit=5'
+
+# Single-recipe context
+curl http://localhost:5173/api/context/COF-0001
+```
+
+Errors are safe JSON (`400 Invalid recipe code`, `404 Recipe not found`,
+`503 CouchDB unreachable`) and never include CouchDB credentials, raw error
+bodies, or stack traces. See `docs/decisions/0005-agent-context-api.md` for
+the rationale and non-goals.
 
 ## License
 
