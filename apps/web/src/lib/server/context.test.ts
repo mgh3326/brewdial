@@ -97,3 +97,139 @@ describe('summarizeFeedback', () => {
     expect(out.latestComment).toBeNull();
   });
 });
+
+import type {
+  FeedbackSummary,
+  PreferenceDoc,
+  RecipeDoc,
+  RecipeWithFeedbackSummary
+} from '@brewdial/shared';
+import { buildContextGuidance, buildRecipeGuidance } from './context';
+
+function recipe(code: `COF-${string}`): RecipeDoc {
+  return {
+    _id: `recipe:${code}`,
+    type: 'recipe',
+    code,
+    method: 'v60',
+    version: 1,
+    title: code,
+    params: {},
+    steps: [],
+    createdBy: 'manual',
+    createdAt: '2026-04-20T00:00:00Z',
+    updatedAt: '2026-04-20T00:00:00Z'
+  };
+}
+
+function summary(partial: Partial<FeedbackSummary> = {}): FeedbackSummary {
+  return {
+    count: partial.count ?? 0,
+    latestAt: partial.latestAt ?? null,
+    averageOverall: partial.averageOverall ?? null,
+    commonDesiredDirections: partial.commonDesiredDirections ?? [],
+    latestComment: partial.latestComment ?? null
+  };
+}
+
+function entry(
+  code: `COF-${string}`,
+  partial: Partial<FeedbackSummary> = {}
+): RecipeWithFeedbackSummary {
+  return { recipe: recipe(code), feedback: [], feedbackSummary: summary(partial) };
+}
+
+const prefs: PreferenceDoc = {
+  _id: 'preference:global',
+  type: 'preference',
+  likes: ['floral', 'citrus'],
+  dislikes: ['bitter'],
+  createdAt: '2026-04-01T00:00:00Z',
+  updatedAt: '2026-04-01T00:00:00Z'
+};
+
+describe('buildContextGuidance', () => {
+  it('emits the no-recipes hint when recipes is empty', () => {
+    const out = buildContextGuidance({ preferences: null, recipes: [] });
+    expect(out).toContain(
+      'No recipes yet. Create a baseline recipe before asking for dial-in suggestions.'
+    );
+  });
+
+  it('emits the no-feedback hint for the most recent recipe', () => {
+    const out = buildContextGuidance({
+      preferences: null,
+      recipes: [entry('COF-0002'), entry('COF-0001', { count: 3 })]
+    });
+    expect(out).toContain(
+      'Recent recipe COF-0002 has no feedback yet; collect tasting notes before changing parameters.'
+    );
+  });
+
+  it('emits the low-average hint when averageOverall < 3', () => {
+    const out = buildContextGuidance({
+      preferences: null,
+      recipes: [entry('COF-0003', { count: 2, averageOverall: 2.5 })]
+    });
+    expect(out).toContain(
+      'COF-0003 average overall is below 3; inspect feedback comments and desired directions before repeating.'
+    );
+  });
+
+  it('does not emit recipe hints when newest recipe has feedback with avg >= 3', () => {
+    const out = buildContextGuidance({
+      preferences: null,
+      recipes: [entry('COF-0004', { count: 2, averageOverall: 4 })]
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('appends a preference summary line when likes or dislikes are present', () => {
+    const out = buildContextGuidance({
+      preferences: prefs,
+      recipes: [entry('COF-0005', { count: 1, averageOverall: 4 })]
+    });
+    expect(out).toContain('Preferences: likes [floral, citrus]; dislikes [bitter].');
+  });
+
+  it('omits the preference line when both likes and dislikes are empty', () => {
+    const out = buildContextGuidance({
+      preferences: { ...prefs, likes: [], dislikes: [] },
+      recipes: [entry('COF-0006', { count: 1, averageOverall: 4 })]
+    });
+    expect(out.find((s) => s.startsWith('Preferences:'))).toBeUndefined();
+  });
+});
+
+describe('buildRecipeGuidance', () => {
+  it('emits the no-feedback hint when count is 0', () => {
+    const out = buildRecipeGuidance({
+      preferences: null,
+      recipe: recipe('COF-0010'),
+      feedbackSummary: summary({ count: 0 })
+    });
+    expect(out).toContain(
+      'Recipe COF-0010 has no feedback yet; collect tasting notes before changing parameters.'
+    );
+  });
+
+  it('emits the low-average hint when averageOverall < 3', () => {
+    const out = buildRecipeGuidance({
+      preferences: null,
+      recipe: recipe('COF-0011'),
+      feedbackSummary: summary({ count: 4, averageOverall: 2.99 })
+    });
+    expect(out).toContain(
+      'COF-0011 average overall is below 3; inspect feedback comments and desired directions before repeating.'
+    );
+  });
+
+  it('appends preference line when present', () => {
+    const out = buildRecipeGuidance({
+      preferences: prefs,
+      recipe: recipe('COF-0012'),
+      feedbackSummary: summary({ count: 2, averageOverall: 4 })
+    });
+    expect(out).toContain('Preferences: likes [floral, citrus]; dislikes [bitter].');
+  });
+});

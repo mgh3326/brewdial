@@ -1,7 +1,21 @@
 import type {
   FeedbackDoc,
-  FeedbackSummary
+  FeedbackSummary,
+  PreferenceDoc,
+  RecipeDoc,
+  RecipeWithFeedbackSummary
 } from '@brewdial/shared';
+
+export interface ContextGuidanceInput {
+  preferences: PreferenceDoc | null;
+  recipes: RecipeWithFeedbackSummary[];
+}
+
+export interface RecipeGuidanceInput {
+  preferences: PreferenceDoc | null;
+  recipe: RecipeDoc;
+  feedbackSummary: FeedbackSummary;
+}
 
 export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
   if (feedback.length === 0) {
@@ -73,4 +87,58 @@ export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
     commonDesiredDirections,
     latestComment
   };
+}
+
+function preferenceLine(prefs: PreferenceDoc | null): string | null {
+  if (!prefs) return null;
+  const likes = prefs.likes.filter((s) => s.trim().length > 0);
+  const dislikes = prefs.dislikes.filter((s) => s.trim().length > 0);
+  if (likes.length === 0 && dislikes.length === 0) return null;
+  const parts: string[] = [];
+  if (likes.length > 0) parts.push(`likes [${likes.join(', ')}]`);
+  if (dislikes.length > 0) parts.push(`dislikes [${dislikes.join(', ')}]`);
+  return `Preferences: ${parts.join('; ')}.`;
+}
+
+export function buildContextGuidance(input: ContextGuidanceInput): string[] {
+  const out: string[] = [];
+  if (input.recipes.length === 0) {
+    out.push(
+      'No recipes yet. Create a baseline recipe before asking for dial-in suggestions.'
+    );
+  } else {
+    const newest = input.recipes[0];
+    const s = newest.feedbackSummary;
+    if (s.count === 0) {
+      out.push(
+        `Recent recipe ${newest.recipe.code} has no feedback yet; collect tasting notes before changing parameters.`
+      );
+    } else if (typeof s.averageOverall === 'number' && s.averageOverall < 3) {
+      out.push(
+        `${newest.recipe.code} average overall is below 3; inspect feedback comments and desired directions before repeating.`
+      );
+    }
+  }
+  const pref = preferenceLine(input.preferences);
+  if (pref) out.push(pref);
+  return out;
+}
+
+export function buildRecipeGuidance(input: RecipeGuidanceInput): string[] {
+  const out: string[] = [];
+  if (input.feedbackSummary.count === 0) {
+    out.push(
+      `Recipe ${input.recipe.code} has no feedback yet; collect tasting notes before changing parameters.`
+    );
+  } else if (
+    typeof input.feedbackSummary.averageOverall === 'number' &&
+    input.feedbackSummary.averageOverall < 3
+  ) {
+    out.push(
+      `${input.recipe.code} average overall is below 3; inspect feedback comments and desired directions before repeating.`
+    );
+  }
+  const pref = preferenceLine(input.preferences);
+  if (pref) out.push(pref);
+  return out;
 }
