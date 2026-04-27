@@ -423,3 +423,97 @@ describe('buildRecentContext', () => {
     );
   });
 });
+
+import { buildRecipeContext } from './context';
+
+interface SingleRecipeFetchOptions {
+  recipe: AllDocsRow<RecipeDoc> | null; // null => 404 from getRecipeByCode
+  feedback?: AllDocsRow<FeedbackDoc>[];
+  preferences?: PreferenceDoc | null;
+}
+
+function buildSingleRecipeFetch(opts: SingleRecipeFetchOptions): typeof fetch {
+  const fetchImpl = buildFetch({
+    recipes: opts.recipe ? [opts.recipe] : [],
+    feedbackByCode: opts.recipe
+      ? { [opts.recipe.doc.code]: opts.feedback ?? [] }
+      : {},
+    preferences: opts.preferences ?? null
+  });
+  return (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    const path = decodeURIComponent(u.pathname);
+    const recipeMatch = path.match(/^\/coffee\/recipe:(COF-[^/]+)$/);
+    if (recipeMatch && (!init?.method || init.method === 'GET')) {
+      if (!opts.recipe || opts.recipe.doc.code !== recipeMatch[1]) {
+        return new Response(JSON.stringify({ error: 'not_found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify(opts.recipe.doc), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return fetchImpl(url, init);
+  }) as unknown as typeof fetch;
+}
+
+describe('buildRecipeContext', () => {
+  it('returns null when the recipe does not exist', async () => {
+    const fetchImpl = buildSingleRecipeFetch({ recipe: null });
+    const out = await buildRecipeContext(couchConfig, 'COF-9999', fetchImpl);
+    expect(out).toBeNull();
+  });
+
+  it('returns the full recipe context for an existing recipe', async () => {
+    const fetchImpl = buildSingleRecipeFetch({
+      recipe: recipeRow('COF-0001', '2026-04-20T00:00:00Z'),
+      feedback: [
+        feedbackRow('COF-0001', '2026-04-22T00:00:00Z', { overall: 4 }, {
+          comment: 'great',
+          desiredDirection: ['sweeter']
+        })
+      ],
+      preferences: null
+    });
+    const out = await buildRecipeContext(couchConfig, 'COF-0001', fetchImpl);
+    expect(out).not.toBeNull();
+    expect(out!.recipe.code).toBe('COF-0001');
+    expect(out!.feedback).toHaveLength(1);
+    expect(out!.feedbackSummary.count).toBe(1);
+    expect(out!.feedbackSummary.averageOverall).toBe(4);
+    expect(out!.feedbackSummary.commonDesiredDirections).toEqual(['sweeter']);
+    expect(out!.feedbackSummary.latestComment).toBe('great');
+    expect(out!.guidance).toEqual([]);
+    expect(typeof out!.generatedAt).toBe('string');
+  });
+
+  it('emits the no-feedback guidance hint when no feedback exists', async () => {
+    const fetchImpl = buildSingleRecipeFetch({
+      recipe: recipeRow('COF-0002', '2026-04-20T00:00:00Z'),
+      feedback: [],
+      preferences: null
+    });
+    const out = await buildRecipeContext(couchConfig, 'COF-0002', fetchImpl);
+    expect(out!.guidance).toContain(
+      'Recipe COF-0002 has no feedback yet; collect tasting notes before changing parameters.'
+    );
+  });
+
+  it('emits the low-average guidance when averageOverall < 3', async () => {
+    const fetchImpl = buildSingleRecipeFetch({
+      recipe: recipeRow('COF-0003', '2026-04-20T00:00:00Z'),
+      feedback: [
+        feedbackRow('COF-0003', '2026-04-21T00:00:00Z', { overall: 2 }),
+        feedbackRow('COF-0003', '2026-04-22T00:00:00Z', { overall: 3 })
+      ],
+      preferences: null
+    });
+    const out = await buildRecipeContext(couchConfig, 'COF-0003', fetchImpl);
+    expect(out!.guidance).toContain(
+      'COF-0003 average overall is below 3; inspect feedback comments and desired directions before repeating.'
+    );
+  });
+});

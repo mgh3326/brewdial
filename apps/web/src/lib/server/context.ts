@@ -3,11 +3,13 @@ import type {
   FeedbackDoc,
   FeedbackSummary,
   PreferenceDoc,
+  RecipeCode,
+  RecipeContext,
   RecipeDoc,
   RecipeWithFeedbackSummary
 } from '@brewdial/shared';
 import type { CouchConfig } from './config';
-import { listRecentRecipes } from './repositories/recipes';
+import { getRecipeByCode, listRecentRecipes } from './repositories/recipes';
 import { listFeedbackForRecipe } from './repositories/feedback';
 import { getGlobalPreferences } from './repositories/preferences';
 
@@ -190,6 +192,29 @@ export async function buildRecentContext(
     preferences,
     recentRecipes: enriched,
     totals,
+    guidance
+  };
+}
+
+export async function buildRecipeContext(
+  config: CouchConfig,
+  code: RecipeCode,
+  fetchImpl?: typeof fetch
+): Promise<RecipeContext | null> {
+  const recipe = await getRecipeByCode(config, code, fetchImpl);
+  if (!recipe) return null;
+  const [feedback, preferences] = await Promise.all([
+    listFeedbackForRecipe(config, code, fetchImpl),
+    getGlobalPreferences(config, fetchImpl)
+  ]);
+  const feedbackSummary = summarizeFeedback(feedback);
+  const guidance = buildRecipeGuidance({ preferences, recipe, feedbackSummary });
+  return {
+    generatedAt: new Date().toISOString(),
+    preferences,
+    recipe,
+    feedback,
+    feedbackSummary,
     guidance
   };
 }
