@@ -7,13 +7,13 @@
     "brewdial-mcp": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
-    "check": "tsc --noEmit",
-    "test": "vitest run",
+    "build": "pnpm --filter @brewdial/shared build && tsc",
+    "check": "pnpm --filter @brewdial/shared build && tsc --noEmit",
+    "test": "pnpm --filter @brewdial/shared build && vitest run",
     "lint": "echo '@brewdial/mcp: no lint configured' && exit 0",
     "mcp": "node dist/index.js",
-    "mcp:dev": "tsx src/index.ts",
-    "smoke": "tsx scripts/smoke-test.ts"
+    "mcp:dev": "pnpm --filter @brewdial/shared build && tsx src/index.ts",
+    "smoke": "pnpm --filter @brewdial/shared build && tsx scripts/smoke-test.ts"
   },
   "dependencies": {
     "@brewdial/shared": "workspace:*",
