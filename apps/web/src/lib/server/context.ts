@@ -162,6 +162,21 @@ function clampContextLimit(raw: number | undefined): number {
   return n;
 }
 
+/**
+ * Parse the public `?limit=` query string and clamp it into the
+ * documented range [1, 20] with a default of 5.
+ *
+ * - null / empty / non-numeric -> 5
+ * - <= 0                       -> 1
+ * - > 20                       -> 20
+ * - otherwise                  -> Math.floor(n)
+ */
+export function parseContextLimit(raw: string | null): number {
+  if (raw === null || raw === '') return DEFAULT_CONTEXT_LIMIT;
+  const n = Number.parseInt(raw, 10);
+  return clampContextLimit(Number.isFinite(n) ? n : undefined);
+}
+
 export async function buildRecentContext(
   config: CouchConfig,
   limit?: number,

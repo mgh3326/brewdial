@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FeedbackDoc } from '@brewdial/shared';
-import { summarizeFeedback } from './context';
+import { parseContextLimit, summarizeFeedback } from './context';
 
 function fb(partial: Partial<FeedbackDoc> & Pick<FeedbackDoc, 'createdAt'>): FeedbackDoc {
   return {
@@ -515,5 +515,47 @@ describe('buildRecipeContext', () => {
     expect(out!.guidance).toContain(
       'COF-0003 average overall is below 3; inspect feedback comments and desired directions before repeating.'
     );
+  });
+});
+
+describe('parseContextLimit', () => {
+  it('returns the default (5) when the raw value is null', () => {
+    expect(parseContextLimit(null)).toBe(5);
+  });
+
+  it('returns the default (5) when the raw value is an empty string', () => {
+    expect(parseContextLimit('')).toBe(5);
+  });
+
+  it('returns the default (5) when the raw value is non-numeric', () => {
+    expect(parseContextLimit('abc')).toBe(5);
+  });
+
+  it('clamps zero up to the minimum (1)', () => {
+    expect(parseContextLimit('0')).toBe(1);
+  });
+
+  it('clamps negatives up to the minimum (1)', () => {
+    expect(parseContextLimit('-3')).toBe(1);
+  });
+
+  it('clamps values above the max down to 20', () => {
+    expect(parseContextLimit('99')).toBe(20);
+  });
+
+  it('passes through in-range integers', () => {
+    expect(parseContextLimit('7')).toBe(7);
+  });
+
+  it('accepts the lower boundary (1)', () => {
+    expect(parseContextLimit('1')).toBe(1);
+  });
+
+  it('accepts the upper boundary (20)', () => {
+    expect(parseContextLimit('20')).toBe(20);
+  });
+
+  it('floors decimal-looking input via base-10 parseInt (5.7 -> 5)', () => {
+    expect(parseContextLimit('5.7')).toBe(5);
   });
 });
