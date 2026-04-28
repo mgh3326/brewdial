@@ -401,6 +401,23 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 0.95rem;
-    color: var(--text-muted);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    cursor: pointer;
+    min-height: 2.75rem;
+  }
+
+  .sound-toggle input[type='checkbox'] {
+    accent-color: var(--accent);
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  .sound-toggle:focus-within {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: 2px;
   }
 </style>
