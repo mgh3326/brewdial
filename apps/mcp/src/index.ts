@@ -7,7 +7,7 @@ import {
   type Tool
 } from '@modelcontextprotocol/sdk/types.js';
 import { getMcpConfig } from './config.js';
-import { handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
+import { handleCreateFeedback, handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
 
 const TOOLS: Tool[] = [
   {
@@ -96,6 +96,51 @@ const TOOLS: Tool[] = [
       },
       required: ['code']
     }
+  },
+  {
+    name: 'brew.create_feedback',
+    description:
+      "Save a tasting/feedback note for a BrewDial recipe. Prefer rawComment for the user's own words; ratings and quickTags are optional. Returns the persisted feedback summary.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipeCode: { type: 'string', description: 'Recipe code, format COF-NNNN' },
+        rawComment: {
+          type: 'string',
+          description: "User's own wording about the brew. Preserved verbatim."
+        },
+        quickTags: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['고소함', '견과류', '쓴맛', '산미', '떫음', '묽음', '진함', '좋았음', '아쉬움']
+          },
+          description: 'Optional fixed-vocabulary quick tags.'
+        },
+        ratings: {
+          type: 'object',
+          description: 'Optional numeric ratings; same keys as web form.',
+          properties: {
+            overall: { type: 'integer', minimum: 1, maximum: 5 },
+            sweetness: { type: 'integer', minimum: 0, maximum: 4 },
+            burnt: { type: 'integer', minimum: 0, maximum: 4 },
+            bitter: { type: 'integer', minimum: 0, maximum: 4 },
+            sour: { type: 'integer', minimum: 0, maximum: 4 },
+            body: { type: 'integer', minimum: 0, maximum: 4 },
+            astringency: { type: 'integer', minimum: 0, maximum: 4 },
+            clarity: { type: 'integer', minimum: 0, maximum: 4 }
+          }
+        },
+        source: {
+          type: 'string',
+          enum: ['web', 'coffee_profile', 'api', 'agent', 'mcp'],
+          description: 'Defaults to coffee_profile for this tool.'
+        },
+        desiredDirection: { type: 'array', items: { type: 'string' } },
+        nextHint: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['recipeCode']
+    }
   }
 ];
 
@@ -132,6 +177,10 @@ async function main(): Promise<void> {
       }
       case 'brew.get_recipe_context': {
         const result = await handleGetRecipeContext(config.couch, args as Record<string, unknown> | undefined);
+        return result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+      }
+      case 'brew.create_feedback': {
+        const result = await handleCreateFeedback(config.couch, args as Record<string, unknown> | undefined);
         return result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
       }
       default:

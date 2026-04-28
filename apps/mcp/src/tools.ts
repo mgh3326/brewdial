@@ -1,7 +1,8 @@
 import type { RecipeCode } from '@brewdial/shared';
-import { isRecipeCode, validateCreateRecipeInput } from '@brewdial/shared';
+import { isRecipeCode, validateCreateFeedbackInput, validateCreateRecipeInput } from '@brewdial/shared';
 import type { CouchConfig } from './config.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
+import { createFeedback } from './repositories/feedback.js';
 import { createRecipe } from './repositories/recipes.js';
 
 export interface ToolResult {
@@ -56,6 +57,64 @@ export async function handleCreateRecipe(
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: 'text', text: `Error creating recipe: ${message}` }],
+      isError: true
+    };
+  }
+}
+
+export async function handleCreateFeedback(
+  config: CouchConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const validation = validateCreateFeedbackInput(args ?? {});
+  if (!validation.ok) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            { ok: false, error: 'Invalid feedback input', details: validation.errors },
+            null,
+            2
+          )
+        }
+      ],
+      isError: true
+    };
+  }
+
+  const value = validation.value;
+  if (value.source === undefined) value.source = 'coffee_profile';
+
+  try {
+    const feedback = await createFeedback(config, value);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok: true,
+              feedback: {
+                _id: feedback._id,
+                recipeCode: feedback.recipeCode,
+                rawComment: feedback.rawComment ?? feedback.comment ?? null,
+                quickTags: feedback.quickTags ?? [],
+                ratings: feedback.ratings ?? null,
+                source: feedback.source,
+                createdAt: feedback.createdAt
+              }
+            },
+            null,
+            2
+          )
+        }
+      ]
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: 'text', text: `Error creating feedback: ${message}` }],
       isError: true
     };
   }
