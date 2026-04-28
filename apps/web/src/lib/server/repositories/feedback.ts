@@ -25,14 +25,24 @@ export async function addFeedback(
     type: 'feedback',
     recipeCode: input.recipeCode,
     recipeId: `recipe:${input.recipeCode}`,
-    ratings: input.ratings,
     source: input.source ?? 'web',
     createdAt: now,
     updatedAt: now
   };
   if (recipe.beanId !== undefined) doc.beanId = recipe.beanId;
+  if (input.ratings !== undefined && Object.keys(input.ratings).length > 0) {
+    doc.ratings = input.ratings;
+  }
   if (input.actual !== undefined) doc.actual = input.actual;
-  if (input.comment !== undefined) doc.comment = input.comment;
+  if (input.rawComment !== undefined && input.rawComment.length > 0) {
+    doc.rawComment = input.rawComment;
+    doc.comment = input.comment ?? input.rawComment;
+  } else if (input.comment !== undefined) {
+    doc.comment = input.comment;
+  }
+  if (input.quickTags !== undefined && input.quickTags.length > 0) {
+    doc.quickTags = input.quickTags;
+  }
   if (input.desiredDirection !== undefined) doc.desiredDirection = input.desiredDirection;
   if (input.nextHint !== undefined) doc.nextHint = input.nextHint;
 

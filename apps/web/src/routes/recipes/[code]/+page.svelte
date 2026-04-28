@@ -315,7 +315,7 @@
           <article class="card">
             <p class="card-meta muted">{formatDate(fb.createdAt)}</p>
             <dl class="dl">
-              {#each ratingPairs(fb.ratings) as [k, v]}
+              {#each ratingPairs(fb.ratings ?? {}) as [k, v]}
                 <dt>{k}</dt><dd>{v}</dd>
               {/each}
             </dl>
