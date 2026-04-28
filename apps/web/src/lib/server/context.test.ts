@@ -26,7 +26,10 @@ describe('summarizeFeedback', () => {
       latestAt: null,
       averageOverall: null,
       commonDesiredDirections: [],
-      latestComment: null
+      latestComment: null,
+      latestRawComment: null,
+      latestQuickTags: [],
+      latestSource: null
     });
   });
 
@@ -96,6 +99,29 @@ describe('summarizeFeedback', () => {
     ]);
     expect(out.latestComment).toBeNull();
   });
+
+  it('surfaces rawComment and quickTags from the most-recent doc', () => {
+    const out = summarizeFeedback([
+      fb({ createdAt: '2026-04-20T00:00:00Z', comment: 'old' }),
+      {
+        ...fb({ createdAt: '2026-04-22T00:00:00Z' }),
+        rawComment: '산미가 강했음',
+        quickTags: ['산미', '아쉬움'] as const,
+        source: 'coffee_profile' as const
+      }
+    ]);
+    expect(out.latestRawComment).toBe('산미가 강했음');
+    expect(out.latestQuickTags).toEqual(['산미', '아쉬움']);
+    expect(out.latestSource).toBe('coffee_profile');
+  });
+
+  it('falls back to comment for latestRawComment when rawComment is absent (legacy doc)', () => {
+    const out = summarizeFeedback([
+      fb({ createdAt: '2026-04-20T00:00:00Z', comment: 'legacy' })
+    ]);
+    expect(out.latestRawComment).toBe('legacy');
+    expect(out.latestQuickTags).toEqual([]);
+  });
 });
 
 import type {
@@ -128,7 +154,10 @@ function summary(partial: Partial<FeedbackSummary> = {}): FeedbackSummary {
     latestAt: partial.latestAt ?? null,
     averageOverall: partial.averageOverall ?? null,
     commonDesiredDirections: partial.commonDesiredDirections ?? [],
-    latestComment: partial.latestComment ?? null
+    latestComment: partial.latestComment ?? null,
+    latestRawComment: partial.latestRawComment ?? null,
+    latestQuickTags: partial.latestQuickTags ?? [],
+    latestSource: partial.latestSource ?? null
   };
 }
 

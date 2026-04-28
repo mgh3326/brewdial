@@ -43,7 +43,10 @@ describe('summarizeFeedback', () => {
       latestAt: null,
       averageOverall: null,
       commonDesiredDirections: [],
-      latestComment: null
+      latestComment: null,
+      latestRawComment: null,
+      latestQuickTags: [],
+      latestSource: null
     });
   });
 
@@ -81,6 +84,55 @@ describe('summarizeFeedback', () => {
     expect(result.averageOverall).toBe(4.5);
     expect(result.commonDesiredDirections).toContain('more body');
     expect(result.latestComment).toBe('Even better!');
+    expect(result.latestRawComment).toBe('Even better!');
+    expect(result.latestSource).toBe('web');
+  });
+
+  it('surfaces rawComment and quickTags from the latest doc', () => {
+    const feedback: FeedbackDoc[] = [
+      {
+        _id: 'feedback:COF-0001:2024-01-01T00:00:00.000Z-a',
+        type: 'feedback',
+        recipeCode: 'COF-0001',
+        recipeId: 'recipe:COF-0001',
+        source: 'web',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      },
+      {
+        _id: 'feedback:COF-0001:2024-01-02T00:00:00.000Z-b',
+        type: 'feedback',
+        recipeCode: 'COF-0001',
+        recipeId: 'recipe:COF-0001',
+        rawComment: '산미가 강했음',
+        quickTags: ['산미', '아쉬움'],
+        source: 'coffee_profile',
+        createdAt: '2024-01-02T00:00:00.000Z',
+        updatedAt: '2024-01-02T00:00:00.000Z'
+      }
+    ];
+    const result = summarizeFeedback(feedback);
+    expect(result.latestRawComment).toBe('산미가 강했음');
+    expect(result.latestQuickTags).toEqual(['산미', '아쉬움']);
+    expect(result.latestSource).toBe('coffee_profile');
+  });
+
+  it('falls back to comment when rawComment is absent (legacy doc)', () => {
+    const feedback: FeedbackDoc[] = [
+      {
+        _id: 'feedback:COF-0001:2024-01-01T00:00:00.000Z-a',
+        type: 'feedback',
+        recipeCode: 'COF-0001',
+        recipeId: 'recipe:COF-0001',
+        comment: 'legacy comment',
+        source: 'web',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z'
+      }
+    ];
+    const result = summarizeFeedback(feedback);
+    expect(result.latestRawComment).toBe('legacy comment');
+    expect(result.latestQuickTags).toEqual([]);
   });
 });
 
@@ -129,7 +181,10 @@ describe('buildRecipeGuidance', () => {
         latestAt: null,
         averageOverall: null,
         commonDesiredDirections: [],
-        latestComment: null
+        latestComment: null,
+        latestRawComment: null,
+        latestQuickTags: [],
+        latestSource: null
       }
     });
     expect(result[0]).toContain('no feedback yet');

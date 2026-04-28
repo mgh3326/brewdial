@@ -31,7 +31,10 @@ export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
       latestAt: null,
       averageOverall: null,
       commonDesiredDirections: [],
-      latestComment: null
+      latestComment: null,
+      latestRawComment: null,
+      latestQuickTags: [],
+      latestSource: null
     };
   }
 
@@ -44,7 +47,7 @@ export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
 
   const overalls: number[] = [];
   for (const f of feedback) {
-    if (typeof f.ratings.overall === 'number') overalls.push(f.ratings.overall);
+    if (typeof f.ratings?.overall === 'number') overalls.push(f.ratings.overall);
   }
   const averageOverall =
     overalls.length === 0
@@ -87,12 +90,17 @@ export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
   }
   const latestComment = latestCommentDoc?.comment ?? null;
 
+  const latest = [...feedback].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0] ?? null;
+
   return {
     count: feedback.length,
     latestAt,
     averageOverall,
     commonDesiredDirections,
-    latestComment
+    latestComment,
+    latestRawComment: latest?.rawComment ?? latest?.comment ?? null,
+    latestQuickTags: latest?.quickTags ?? [],
+    latestSource: latest?.source ?? null
   };
 }
 
