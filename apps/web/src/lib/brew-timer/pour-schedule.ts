@@ -58,3 +58,52 @@ export function buildPourSchedule(recipe: RecipeDoc): PourSchedule {
 
   return { totalSec, phases };
 }
+
+export function roundToStep(grams: number, stepG = 10): number {
+  if (!Number.isFinite(grams) || grams < 0) return 0;
+  const step = Number.isFinite(stepG) && stepG > 0 ? stepG : 1;
+  return Math.round(grams / step) * step;
+}
+
+export function getPhaseStartWaterG(schedule: PourSchedule, phaseIndex: number): number {
+  if (phaseIndex <= 0 || phaseIndex >= schedule.phases.length) return 0;
+  for (let i = phaseIndex - 1; i >= 0; i--) {
+    const w = schedule.phases[i].targetWaterG;
+    if (typeof w === 'number' && Number.isFinite(w)) return w;
+  }
+  return 0;
+}
+
+export function getCurrentPhase(schedule: PourSchedule, elapsedSec: number): PourPhase | null {
+  if (!Number.isFinite(elapsedSec) || elapsedSec < 0) return null;
+  if (elapsedSec >= schedule.totalSec) return null;
+  return (
+    schedule.phases.find(
+      (phase) => elapsedSec >= phase.startSec && elapsedSec < phase.endSec
+    ) ?? null
+  );
+}
+
+export function getExpectedWaterG(
+  schedule: PourSchedule,
+  elapsedSec: number
+): number | undefined {
+  const phase = getCurrentPhase(schedule, elapsedSec);
+  if (!phase) return undefined;
+  const target = phase.targetWaterG;
+  if (typeof target !== 'number' || !Number.isFinite(target)) return undefined;
+  const start = getPhaseStartWaterG(schedule, phase.index);
+  const span = phase.endSec - phase.startSec;
+  if (span <= 0) return target;
+  const ratio = Math.max(0, Math.min(1, (elapsedSec - phase.startSec) / span));
+  return start + ratio * (target - start);
+}
+
+export function getPhaseProgressRatio(schedule: PourSchedule, elapsedSec: number): number {
+  if (!Number.isFinite(elapsedSec) || elapsedSec < 0) return 0;
+  const phase = getCurrentPhase(schedule, elapsedSec);
+  if (!phase) return elapsedSec <= 0 ? 0 : 1;
+  const span = phase.endSec - phase.startSec;
+  if (span <= 0) return 1;
+  return Math.max(0, Math.min(1, (elapsedSec - phase.startSec) / span));
+}
