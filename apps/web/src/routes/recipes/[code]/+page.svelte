@@ -1,6 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { buildPourSchedule, formatSeconds } from '$lib/brew-timer/pour-schedule';
+  import {
+    buildPourSchedule,
+    formatSeconds,
+    getCurrentPhase,
+    getExpectedWaterG,
+    getPhaseProgressRatio,
+    roundToStep
+  } from '$lib/brew-timer/pour-schedule';
+  import { loadSoundPreference, saveSoundPreference } from '$lib/brew-timer/sound-preference';
+  import { createPourAudio, type PourAudio } from '$lib/brew-timer/pour-audio';
   import ErrorPanel from '$lib/ui/ErrorPanel.svelte';
   import type { PageData } from './$types';
 
@@ -17,11 +26,19 @@
   let isTimerRunning = $state(false);
   let lastAnnouncedPhase = $state(-1);
   let notificationPermission = $state<'default' | 'denied' | 'granted' | 'unsupported'>('unsupported');
+  let soundEnabled = $state(true);
+  let completionAnnounced = $state(false);
+  let pourAudio: PourAudio | null = null;
 
   const currentPhase = $derived(
-    pourSchedule.phases.find((phase) => elapsedSec >= phase.startSec && elapsedSec < phase.endSec) ??
-      pourSchedule.phases.at(-1) ??
-      null
+    getCurrentPhase(pourSchedule, elapsedSec) ?? pourSchedule.phases.at(-1) ?? null
+  );
+  const expectedWaterG = $derived(getExpectedWaterG(pourSchedule, elapsedSec));
+  const roundedExpectedG = $derived(
+    expectedWaterG === undefined ? undefined : roundToStep(expectedWaterG)
+  );
+  const phaseProgressPct = $derived(
+    Math.round(getPhaseProgressRatio(pourSchedule, elapsedSec) * 100)
   );
   const nextPhase = $derived(
     pourSchedule.phases.find((phase) => phase.startSec > elapsedSec) ?? null
@@ -74,9 +91,13 @@
   function startTimer(): void {
     if (!canUseTimer) return;
     isTimerRunning = true;
+    if (pourAudio) {
+      void pourAudio.unlock();
+    }
     if (currentPhase && lastAnnouncedPhase !== currentPhase.index) {
       lastAnnouncedPhase = currentPhase.index;
       announcePhase(currentPhase);
+      if (soundEnabled) pourAudio?.playPhaseStart();
     }
   }
 
@@ -88,11 +109,25 @@
     isTimerRunning = false;
     elapsedSec = 0;
     lastAnnouncedPhase = -1;
+    completionAnnounced = false;
+  }
+
+  function onSoundToggle(): void {
+    saveSoundPreference(soundEnabled);
+    if (soundEnabled) void pourAudio?.unlock();
+  }
+
+  function testSound(): void {
+    if (!pourAudio) return;
+    void pourAudio.unlock().then(() => pourAudio?.playPhaseStart());
   }
 
   onMount(() => {
     notificationPermission =
       typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+    soundEnabled = loadSoundPreference();
+    pourAudio = createPourAudio();
+
     const id = window.setInterval(() => {
       if (!isTimerRunning) return;
       elapsedSec = Math.min(elapsedSec + 1, pourSchedule.totalSec);
@@ -102,12 +137,22 @@
       if (phase && phase.index !== lastAnnouncedPhase) {
         lastAnnouncedPhase = phase.index;
         announcePhase(phase);
+        if (soundEnabled) pourAudio?.playPhaseStart();
       }
       if (elapsedSec >= pourSchedule.totalSec) {
         isTimerRunning = false;
+        if (!completionAnnounced) {
+          completionAnnounced = true;
+          if (soundEnabled) pourAudio?.playComplete();
+        }
       }
     }, 1000);
-    return () => window.clearInterval(id);
+
+    return () => {
+      window.clearInterval(id);
+      pourAudio?.close();
+      pourAudio = null;
+    };
   });
 </script>
 
@@ -182,6 +227,22 @@
         {#if currentPhase && !timerDone}
           <p class="muted">{currentPhase.note}</p>
         {/if}
+        {#if !timerDone && currentPhase && roundedExpectedG !== undefined}
+          <p class="timer-expected">지금쯤 약 <span class="timer-expected-num">{roundedExpectedG}</span>g</p>
+          <p class="timer-target muted">목표: {currentPhase.endLabel}까지 {currentPhase.targetWaterG}g</p>
+        {/if}
+        {#if !timerDone && currentPhase}
+          <div
+            class="phase-progress"
+            role="progressbar"
+            aria-valuenow={phaseProgressPct}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-label="현재 구간 진행률"
+          >
+            <div class="phase-progress-fill" style="width: {phaseProgressPct}%"></div>
+          </div>
+        {/if}
         {#if nextPhase && !timerDone}
           <p class="muted">다음 알림: {phaseTitle(nextPhase)}</p>
         {/if}
@@ -200,6 +261,11 @@
         {#if notificationPermission === 'default'}
           <button class="btn btn-secondary" type="button" onclick={requestNotifications}>알림 허용</button>
         {/if}
+        <label class="sound-toggle">
+          <input type="checkbox" bind:checked={soundEnabled} onchange={onSoundToggle} />
+          사운드
+        </label>
+        <button class="btn btn-secondary" type="button" onclick={testSound}>사운드 테스트</button>
       </div>
     </section>
   {/if}
@@ -296,5 +362,45 @@
     background: var(--surface-muted);
     color: var(--text-muted);
     font-size: 0.95rem;
+  }
+
+  .timer-expected {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: clamp(1.5rem, 6vw, 2.4rem);
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--accent-strong);
+  }
+
+  .timer-expected-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .timer-target {
+    margin: 0;
+    font-size: 0.95rem;
+  }
+
+  .phase-progress {
+    width: 100%;
+    height: 0.5rem;
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .phase-progress-fill {
+    height: 100%;
+    background: var(--accent-strong);
+    transition: width 200ms linear;
+  }
+
+  .sound-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.95rem;
+    color: var(--text-muted);
   }
 </style>
