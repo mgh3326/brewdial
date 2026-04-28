@@ -4,9 +4,12 @@ import type {
   ActualBrewParams,
   BrewMethod,
   FeedbackRatings,
+  FeedbackSource,
+  QuickFeedbackTag,
   RecipeParams,
   RecipeStep
 } from './types.js';
+import { QUICK_FEEDBACK_TAGS } from './types.js';
 
 export type ValidationResult<T> =
   | { ok: true; value: T }
@@ -20,7 +23,7 @@ const BREW_METHODS: readonly BrewMethod[] = [
   'other'
 ];
 
-const FEEDBACK_SOURCES = ['web', 'agent', 'mcp'] as const;
+const FEEDBACK_SOURCES = ['web', 'coffee_profile', 'api', 'agent', 'mcp'] as const;
 const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
@@ -236,6 +239,7 @@ function validateRatings(
   raw: unknown,
   errors: string[]
 ): FeedbackRatings | undefined {
+  if (raw === undefined) return undefined;
   if (!isPlainObject(raw)) {
     errors.push('ratings must be an object');
     return undefined;
@@ -257,11 +261,7 @@ function validateRatings(
     }
     out[key] = v as FeedbackRatings[typeof key];
   }
-  if (Object.keys(out).length === 0) {
-    errors.push('ratings must include at least one rating field');
-    return undefined;
-  }
-  return out;
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 function validateActual(
@@ -305,7 +305,23 @@ export function validateCreateFeedbackInput(
   const ratings = validateRatings(input.ratings, errors);
   const actual = validateActual(input.actual, errors);
 
+  const rawComment = pickString(input, 'rawComment', errors, 'input');
   const comment = pickString(input, 'comment', errors, 'input');
+
+  let quickTags: QuickFeedbackTag[] | undefined;
+  if (input.quickTags !== undefined) {
+    if (!isStringArray(input.quickTags)) {
+      errors.push('quickTags must be a string array');
+    } else {
+      const allowed = new Set<string>(QUICK_FEEDBACK_TAGS);
+      const invalid = input.quickTags.filter((t) => !allowed.has(t));
+      if (invalid.length > 0) {
+        errors.push(`quickTags contains unknown values: ${invalid.join(', ')}`);
+      } else if (input.quickTags.length > 0) {
+        quickTags = input.quickTags as QuickFeedbackTag[];
+      }
+    }
+  }
 
   let desiredDirection: string[] | undefined;
   if (input.desiredDirection !== undefined) {
@@ -320,7 +336,7 @@ export function validateCreateFeedbackInput(
     else nextHint = input.nextHint;
   }
 
-  let source: 'web' | 'agent' | 'mcp' | undefined;
+  let source: FeedbackSource | undefined;
   if (input.source !== undefined) {
     if (
       typeof input.source !== 'string' ||
@@ -328,18 +344,26 @@ export function validateCreateFeedbackInput(
     ) {
       errors.push(`source must be one of ${FEEDBACK_SOURCES.join(', ')}`);
     } else {
-      source = input.source as 'web' | 'agent' | 'mcp';
+      source = input.source as FeedbackSource;
     }
   }
 
-  if (errors.length > 0 || ratings === undefined) {
-    return { ok: false, errors };
+  const hasContent =
+    (ratings !== undefined && Object.keys(ratings).length > 0) ||
+    (typeof rawComment === 'string' && rawComment.length > 0) ||
+    (quickTags !== undefined && quickTags.length > 0);
+  if (!hasContent) {
+    errors.push('feedback must include at least one of rawComment, ratings, or quickTags');
   }
 
+  if (errors.length > 0) return { ok: false, errors };
+
   const value: CreateFeedbackInput = {
-    recipeCode: recipeCode as `COF-${string}`,
-    ratings
+    recipeCode: recipeCode as `COF-${string}`
   };
+  if (ratings !== undefined) value.ratings = ratings;
+  if (rawComment !== undefined) value.rawComment = rawComment;
+  if (quickTags !== undefined) value.quickTags = quickTags;
   if (actual !== undefined) value.actual = actual;
   if (comment !== undefined) value.comment = comment;
   if (desiredDirection !== undefined) value.desiredDirection = desiredDirection;
