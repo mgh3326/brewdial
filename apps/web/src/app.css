@@ -2,6 +2,7 @@
   --bg: #fafafa;
   --surface: #ffffff;
   --surface-muted: #f1ece6;
+  --surface-raised: #e7ded4;
   --text: #1a1a1a;
   --text-muted: #555;
   --accent: #6f4e37;
@@ -124,6 +125,21 @@ a:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
   color: #fff;
+}
+
+.btn:active,
+.btn-secondary:active {
+  transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .btn-secondary {
@@ -253,6 +269,7 @@ a:hover {
     --bg: #161616;
     --surface: #1f1f1f;
     --surface-muted: #2a2520;
+    --surface-raised: #3a3228;
     --text: #e8e8e8;
     --text-muted: #aaa;
     --accent: #d4a574;
@@ -269,5 +286,16 @@ a:hover {
 
   .btn:hover {
     color: #1a1a1a;
+  }
+
+  .btn-secondary {
+    background: var(--surface-muted);
+    color: var(--accent-strong);
+    border-color: var(--accent);
+  }
+
+  .btn-secondary:hover {
+    background: var(--surface-raised);
+    color: var(--accent-strong);
   }
 }
