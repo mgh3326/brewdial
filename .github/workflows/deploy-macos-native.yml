@@ -29,8 +29,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Tailscale
-        # False-positive secret scanners may classify the action slug as a GitHub key.
-        uses: tailscale/github-action@v4 # pragma: allowlist secret
+        uses: tailscale/github-action@v4 # gitleaks:allow
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
