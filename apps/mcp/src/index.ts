@@ -13,7 +13,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial. Use this immediately after generating a recipe for the user, then include the returned COF-NNNN code in the Discord reply.',
+      'Persist a newly generated coffee recipe to BrewDial. Use this immediately after generating a recipe for the user, then include the returned COF-NNNN code in the Discord reply. Steps may include atSec/endSec/waterG/pourRateGPerSec for structured pour-rate timing; legacy {atSec,waterG,note} steps remain valid.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,8 +56,10 @@ const TOOLS: Tool[] = [
           items: {
             type: 'object',
             properties: {
-              atSec: { type: 'number' },
-              waterG: { type: 'number' },
+              atSec: { type: 'number', description: "When this step's action starts, in seconds" },
+              endSec: { type: 'number', description: "When this step's pour ends (exclusive), in seconds. Optional." },
+              waterG: { type: 'number', description: 'Cumulative target water (g) at the end of this step' },
+              pourRateGPerSec: { type: 'number', description: 'Optional pour rate; overrides the rate derived from (waterG, atSec, endSec)' },
               note: { type: 'string' }
             },
             required: ['note']
