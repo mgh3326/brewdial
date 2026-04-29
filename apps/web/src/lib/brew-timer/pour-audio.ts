@@ -29,24 +29,41 @@ export function createPourAudio(factory: AudioContextFactory = defaultFactory): 
   let ctx: AudioContext | null = null;
   let unlocking: Promise<void> | null = null;
   let closed = false;
+  let primed = false;
 
   function isReady(): boolean {
     return !!ctx && !closed && ctx.state === 'running';
   }
 
+  // Called synchronously during unlock() so iOS WebKit sees it as gesture-driven.
+  function primeSilentBuffer(): void {
+    if (primed || !ctx) return;
+    primed = true;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t = ctx.currentTime;
+      osc.start(t);
+      osc.stop(t + 0.02);
+    } catch {
+      // older WebKit may throw on detached nodes; ignore
+    }
+  }
+
   function unlock(): Promise<void> {
     if (closed) return Promise.resolve();
     if (unlocking) return unlocking;
-    unlocking = (async () => {
-      if (!ctx) ctx = factory();
-      if (ctx.state === 'suspended') {
-        try {
-          await ctx.resume();
-        } catch {
-          // leave state as-is; isReady() will report false
-        }
-      }
-    })();
+    // Construct and resume synchronously on the gesture task so iOS WebKit
+    // treats resume() as user-initiated.
+    if (!ctx) ctx = factory();
+    primeSilentBuffer();
+    unlocking =
+      ctx.state === 'suspended'
+        ? ctx.resume().catch(() => undefined)
+        : Promise.resolve();
     return unlocking;
   }
 
@@ -84,6 +101,7 @@ export function createPourAudio(factory: AudioContextFactory = defaultFactory): 
   function close(): void {
     if (closed) return;
     closed = true;
+    primed = false;
     if (ctx && ctx.state !== 'closed') {
       void ctx.close().catch(() => {});
     }
