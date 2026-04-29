@@ -66,6 +66,52 @@ describe('validateCreateRecipeInput', () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it('accepts a step with endSec and pourRateGPerSec', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Structured',
+      steps: [{ atSec: 0, endSec: 35, waterG: 60, pourRateGPerSec: 1.7, note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.steps).toEqual([
+        { atSec: 0, endSec: 35, waterG: 60, pourRateGPerSec: 1.7, note: 'Bloom' }
+      ]);
+    }
+  });
+
+  it('rejects negative endSec', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'X',
+      steps: [{ atSec: 0, endSec: -1, note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join(' ')).toMatch(/endSec/);
+  });
+
+  it('rejects non-numeric pourRateGPerSec', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'X',
+      steps: [{ atSec: 0, pourRateGPerSec: 'fast', note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join(' ')).toMatch(/pourRateGPerSec/);
+  });
+
+  it('still accepts legacy {atSec, waterG, note} steps unchanged', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Legacy',
+      steps: [{ atSec: 0, waterG: 40, note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.steps).toEqual([{ atSec: 0, waterG: 40, note: 'Bloom' }]);
+    }
+  });
 });
 
 describe('validateCreateFeedbackInput', () => {
