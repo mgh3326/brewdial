@@ -29,7 +29,9 @@ export interface RecipeParams {
 
 export interface RecipeStep {
   atSec?: number;
+  endSec?: number;
   waterG?: number;
+  pourRateGPerSec?: number;
   note: string;
 }
 
