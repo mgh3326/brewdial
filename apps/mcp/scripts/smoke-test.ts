@@ -60,19 +60,20 @@ async function smokeTest(): Promise<void> {
       console.log(`   - ${tool.name}: ${tool.description}`);
     }
 
-    if (toolsResult.tools.length !== 3) {
-      throw new Error(`Expected 3 tools, got ${toolsResult.tools.length}`);
-    }
-
+    const expectedTools = [
+      'brew.create_feedback',
+      'brew.create_recipe',
+      'brew.get_recent_context',
+      'brew.get_recipe_context'
+    ];
     const toolNames = toolsResult.tools.map(t => t.name).sort();
-    if (!toolNames.includes('brew.create_recipe')) {
-      throw new Error('Missing brew.create_recipe tool');
+    if (toolsResult.tools.length !== expectedTools.length) {
+      throw new Error(`Expected ${expectedTools.length} tools, got ${toolsResult.tools.length}`);
     }
-    if (!toolNames.includes('brew.get_recent_context')) {
-      throw new Error('Missing brew.get_recent_context tool');
-    }
-    if (!toolNames.includes('brew.get_recipe_context')) {
-      throw new Error('Missing brew.get_recipe_context tool');
+    for (const name of expectedTools) {
+      if (!toolNames.includes(name)) {
+        throw new Error(`Missing ${name} tool`);
+      }
     }
 
     console.log('\n2. Testing brew.create_recipe validation...');
