@@ -2,11 +2,14 @@
   import { onMount } from 'svelte';
   import {
     buildPourSchedule,
+    buildBrewPhases,
     formatSeconds,
     getCurrentPhase,
-    getExpectedWaterG,
-    getPhaseProgressRatio,
-    roundToStep
+    getCurrentBrewPhase,
+    getExpectedWaterGForPhase,
+    getBrewPhaseProgressRatio,
+    roundToStep,
+    type BrewPhase
   } from '$lib/brew-timer/pour-schedule';
   import { loadSoundPreference, saveSoundPreference } from '$lib/brew-timer/sound-preference';
   import { createPourAudio, type PourAudio } from '$lib/brew-timer/pour-audio';
@@ -30,15 +33,15 @@
   let completionAnnounced = $state(false);
   let pourAudio: PourAudio | null = null;
 
-  const currentPhase = $derived(
-    getCurrentPhase(pourSchedule, elapsedSec) ?? pourSchedule.phases.at(-1) ?? null
-  );
-  const expectedWaterG = $derived(getExpectedWaterG(pourSchedule, elapsedSec));
-  const roundedExpectedG = $derived(
-    expectedWaterG === undefined ? undefined : roundToStep(expectedWaterG)
+  const brewPhases = $derived(buildBrewPhases(recipe));
+  const currentBrewPhase = $derived(getCurrentBrewPhase(brewPhases, elapsedSec));
+  const phaseExpectedG = $derived(
+    currentBrewPhase ? getExpectedWaterGForPhase(currentBrewPhase, elapsedSec) : undefined
   );
   const phaseProgressPct = $derived(
-    Math.round(getPhaseProgressRatio(pourSchedule, elapsedSec) * 100)
+    currentBrewPhase
+      ? Math.round(getBrewPhaseProgressRatio(currentBrewPhase, elapsedSec) * 100)
+      : 0
   );
   const nextPhase = $derived(
     pourSchedule.phases.find((phase) => phase.startSec > elapsedSec) ?? null
@@ -60,11 +63,11 @@
     return grams === undefined ? '목표 무게 미지정' : `${grams}g까지`;
   }
 
-  function phaseTitle(phase: NonNullable<typeof currentPhase>): string {
+  function phaseTitle(phase: { startLabel: string; endLabel: string; targetWaterG?: number }): string {
     return `${phase.startLabel}–${phase.endLabel} · ${targetLabel(phase.targetWaterG)}`;
   }
 
-  function announcePhase(phase: NonNullable<typeof currentPhase>): void {
+  function announcePhase(phase: { startLabel: string; targetWaterG: number | undefined; note: string }): void {
     const title = `BrewDial: ${phase.startLabel} 푸어 시작`;
     const body = `${targetLabel(phase.targetWaterG)} · ${phase.note}`;
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -91,12 +94,18 @@
   function startTimer(): void {
     if (!canUseTimer) return;
     isTimerRunning = true;
-    if (pourAudio) {
-      void pourAudio.unlock();
-    }
-    if (currentPhase && lastAnnouncedPhase !== currentPhase.index) {
-      lastAnnouncedPhase = currentPhase.index;
-      announcePhase(currentPhase);
+    if (pourAudio) void pourAudio.unlock();
+    if (
+      currentBrewPhase &&
+      (currentBrewPhase.kind === 'bloom' || currentBrewPhase.kind === 'pour') &&
+      lastAnnouncedPhase !== currentBrewPhase.index
+    ) {
+      lastAnnouncedPhase = currentBrewPhase.index;
+      announcePhase({
+        startLabel: currentBrewPhase.startLabel,
+        targetWaterG: currentBrewPhase.targetWaterG,
+        note: currentBrewPhase.note ?? ''
+      });
       if (soundEnabled) pourAudio?.playPhaseStart();
     }
   }
@@ -131,12 +140,18 @@
     const id = window.setInterval(() => {
       if (!isTimerRunning) return;
       elapsedSec = Math.min(elapsedSec + 1, pourSchedule.totalSec);
-      const phase = pourSchedule.phases.find(
-        (candidate) => elapsedSec >= candidate.startSec && elapsedSec < candidate.endSec
-      );
-      if (phase && phase.index !== lastAnnouncedPhase) {
+      const phase = getCurrentBrewPhase(brewPhases, elapsedSec);
+      if (
+        phase &&
+        (phase.kind === 'bloom' || phase.kind === 'pour') &&
+        phase.index !== lastAnnouncedPhase
+      ) {
         lastAnnouncedPhase = phase.index;
-        announcePhase(phase);
+        announcePhase({
+          startLabel: phase.startLabel,
+          targetWaterG: phase.targetWaterG,
+          note: phase.note ?? ''
+        });
         if (soundEnabled) pourAudio?.playPhaseStart();
       }
       if (elapsedSec >= pourSchedule.totalSec) {
@@ -215,25 +230,31 @@
       <div class="stack-tight">
         <p class="card-meta muted">Pouring timer</p>
         <div class="timer-display">{formatSeconds(elapsedSec)}</div>
-        <p class="timer-status">
-          {#if timerDone}
-            추출 완료 · 목표 {formatSeconds(pourSchedule.totalSec)}
-          {:else if currentPhase}
-            지금: {phaseTitle(currentPhase)}
+        {#if currentBrewPhase}
+          {#if currentBrewPhase.kind === 'wait'}
+            <p class="timer-status">기다리기 · 다음 푸어까지 {formatSeconds(currentBrewPhase.endSec - elapsedSec)}</p>
+            <p class="muted">현재 누적 {currentBrewPhase.startWaterG}g — 목표 무게에 먼저 도달하면 다음 구간 시작 시간까지 기다리세요.</p>
+          {:else if currentBrewPhase.kind === 'drawdown'}
+            <p class="timer-status">드립 종료까지 {formatSeconds(currentBrewPhase.endSec - elapsedSec)}</p>
+            <p class="muted">붓기를 멈추고 추출이 빠질 때까지 기다리세요. 목표 시간 {formatSeconds(brewPhases.at(-1)?.endSec ?? 0)}.</p>
           {:else}
-            타이머 준비
+            <p class="timer-status">
+              지금: {currentBrewPhase.startLabel}–{currentBrewPhase.endLabel} ·
+              {currentBrewPhase.targetWaterG !== undefined ? `${currentBrewPhase.targetWaterG}g까지` : '목표 무게 미지정'}
+            </p>
+            {#if currentBrewPhase.note}<p class="muted">{currentBrewPhase.note}</p>{/if}
+            {#if phaseExpectedG !== undefined}
+              <p class="timer-expected">지금쯤 약 <span class="timer-expected-num">{roundToStep(phaseExpectedG)}</span>g</p>
+            {/if}
+            {#if currentBrewPhase.targetWaterG !== undefined}
+              <p class="timer-target muted">목표: {currentBrewPhase.endLabel}까지 {currentBrewPhase.targetWaterG}g</p>
+            {/if}
+            {#if currentBrewPhase.pourRateGPerSec !== undefined}
+              <p class="timer-rate muted">속도: 약 {currentBrewPhase.pourRateGPerSec.toFixed(1)} g/s</p>
+            {/if}
           {/if}
-        </p>
-        {#if currentPhase && !timerDone}
-          <p class="muted">{currentPhase.note}</p>
-        {/if}
-        {#if !timerDone && currentPhase && roundedExpectedG !== undefined}
-          <p class="timer-expected">지금쯤 약 <span class="timer-expected-num">{roundedExpectedG}</span>g</p>
-          <p class="timer-target muted">목표: {currentPhase.endLabel}까지 {currentPhase.targetWaterG}g</p>
-        {/if}
-        {#if !timerDone && currentPhase}
           <div
-            class="phase-progress"
+            class="phase-progress {currentBrewPhase.kind === 'wait' ? 'phase-kind-wait' : currentBrewPhase.kind === 'drawdown' ? 'phase-kind-drawdown' : ''}"
             role="progressbar"
             aria-valuenow={phaseProgressPct}
             aria-valuemin="0"
@@ -242,6 +263,8 @@
           >
             <div class="phase-progress-fill" style="width: {phaseProgressPct}%"></div>
           </div>
+        {:else if timerDone}
+          <p class="timer-status">추출 완료 · 목표 {formatSeconds(pourSchedule.totalSec)}</p>
         {/if}
         {#if nextPhase && !timerDone}
           <p class="muted">다음 알림: {phaseTitle(nextPhase)}</p>
@@ -419,5 +442,19 @@
   .sound-toggle:focus-within {
     outline: 2px solid var(--accent-strong);
     outline-offset: 2px;
+  }
+
+  .timer-rate {
+    margin: 0;
+    font-size: 0.95rem;
+  }
+
+  .phase-progress.phase-kind-wait .phase-progress-fill {
+    background: var(--surface-strong, var(--text-muted));
+  }
+
+  .phase-progress.phase-kind-drawdown .phase-progress-fill {
+    background: var(--accent, var(--accent-strong));
+    opacity: 0.7;
   }
 </style>
