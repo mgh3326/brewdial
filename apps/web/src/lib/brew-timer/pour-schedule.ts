@@ -34,7 +34,8 @@ export function buildPourSchedule(recipe: RecipeDoc): PourSchedule {
     .filter(hasAtSec)
     .sort((a, b) => a.atSec - b.atSec);
 
-  const lastStepSec = timedSteps.at(-1)?.atSec ?? 0;
+  const lastStep = timedSteps.at(-1);
+  const lastStepSec = Math.max(lastStep?.atSec ?? 0, lastStep?.endSec ?? 0);
   const rawTarget = recipe.params.targetTimeSec;
   const totalSec =
     typeof rawTarget === 'number' && Number.isFinite(rawTarget) && rawTarget > lastStepSec
@@ -116,7 +117,7 @@ export function phaseRateGPerSec(
   if (
     typeof step.pourRateGPerSec === 'number' &&
     Number.isFinite(step.pourRateGPerSec) &&
-    step.pourRateGPerSec >= 0
+    step.pourRateGPerSec > 0
   ) {
     return step.pourRateGPerSec;
   }

@@ -67,6 +67,18 @@ describe('buildPourSchedule', () => {
     expect(schedule.phases.at(-1)?.endSec).toBe(220);
   });
 
+  it('uses final step endSec for totalSec when target time is missing', () => {
+    const schedule = buildPourSchedule(recipe({
+      params: {},
+      steps: [
+        { atSec: 0, endSec: 30, waterG: 60, note: 'Bloom' },
+        { atSec: 60, endSec: 90, waterG: 200, note: 'Pour' }
+      ]
+    }));
+    expect(schedule.totalSec).toBe(90);
+    expect(schedule.phases.at(-1)?.endSec).toBe(90);
+  });
+
   it('ignores untimed steps for timer phases', () => {
     const schedule = buildPourSchedule(recipe({
       steps: [

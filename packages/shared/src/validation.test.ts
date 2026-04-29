@@ -91,6 +91,16 @@ describe('validateCreateRecipeInput', () => {
     if (!result.ok) expect(result.errors.join(' ')).toMatch(/endSec/);
   });
 
+  it('rejects endSec that is not greater than atSec', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'X',
+      steps: [{ atSec: 30, endSec: 30, note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join(' ')).toMatch(/greater than atSec/);
+  });
+
   it('rejects non-numeric pourRateGPerSec', () => {
     const result = validateCreateRecipeInput({
       method: 'v60',
@@ -99,6 +109,16 @@ describe('validateCreateRecipeInput', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors.join(' ')).toMatch(/pourRateGPerSec/);
+  });
+
+  it('rejects non-positive pourRateGPerSec', () => {
+    const result = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'X',
+      steps: [{ atSec: 0, pourRateGPerSec: 0, note: 'Bloom' }]
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join(' ')).toMatch(/positive/);
   });
 
   it('still accepts legacy {atSec, waterG, note} steps unchanged', () => {
