@@ -163,6 +163,30 @@ function validateRecipeSteps(
         built.waterG = step.waterG;
       }
     }
+    if (step.endSec !== undefined) {
+      if (
+        typeof step.endSec !== 'number' ||
+        !Number.isFinite(step.endSec) ||
+        step.endSec < 0
+      ) {
+        errors.push(`steps[${i}].endSec must be a non-negative finite number`);
+      } else if (typeof step.atSec === 'number' && step.endSec <= step.atSec) {
+        errors.push(`steps[${i}].endSec must be greater than atSec`);
+      } else {
+        built.endSec = step.endSec;
+      }
+    }
+    if (step.pourRateGPerSec !== undefined) {
+      if (
+        typeof step.pourRateGPerSec !== 'number' ||
+        !Number.isFinite(step.pourRateGPerSec) ||
+        step.pourRateGPerSec <= 0
+      ) {
+        errors.push(`steps[${i}].pourRateGPerSec must be a positive finite number`);
+      } else {
+        built.pourRateGPerSec = step.pourRateGPerSec;
+      }
+    }
     out.push(built);
   });
   return out;
