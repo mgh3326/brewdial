@@ -6,6 +6,7 @@ DEPLOY_BRANCH="${2:-production}"
 APP_DIR="${BREWDIAL_APP_DIR:-/Users/mgh3326/work/brewdial}"
 SERVICE_LABEL="${BREWDIAL_SERVICE_LABEL:-com.robinco.brewdial.web}"
 LOCAL_BASE_URL="${BREWDIAL_LOCAL_BASE_URL:-http://127.0.0.1:3020}"
+export PATH="/Users/mgh3326/.hermes/node/bin:/Users/mgh3326/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 
 log() {
   printf '[brewdial-deploy] %s\n' "$*"
