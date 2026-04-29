@@ -36,6 +36,7 @@ export async function addFeedback(
   if (input.actual !== undefined) doc.actual = input.actual;
   if (input.rawComment !== undefined && input.rawComment.length > 0) {
     doc.rawComment = input.rawComment;
+    // Mirror rawComment into legacy comment so old feedback readers remain compatible.
     doc.comment = input.comment ?? input.rawComment;
   } else if (input.comment !== undefined) {
     doc.comment = input.comment;

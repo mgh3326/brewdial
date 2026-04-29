@@ -127,4 +127,9 @@
   .quick-tag input[type='checkbox'] {
     accent-color: var(--accent);
   }
+
+  .quick-tag:focus-within {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: 2px;
+  }
 </style>

@@ -1,4 +1,4 @@
-import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '@brewdial/shared';
+import type { CreateFeedbackInput, FeedbackDoc, RecipeCode, RecipeDoc } from '@brewdial/shared';
 import type { CouchConfig } from '../config.js';
 import { getAllDocuments, getDocument, putDocument } from '../couch.js';
 
@@ -13,7 +13,7 @@ export async function createFeedback(
   input: CreateFeedbackInput,
   fetchImpl: typeof fetch = fetch
 ): Promise<FeedbackDoc> {
-  const recipe = await getDocument<FeedbackDoc & { beanId?: string }>(
+  const recipe = await getDocument<RecipeDoc>(
     config,
     `recipe:${input.recipeCode}`,
     fetchImpl
@@ -36,6 +36,7 @@ export async function createFeedback(
   if (input.actual) doc.actual = input.actual;
   if (input.rawComment) {
     doc.rawComment = input.rawComment;
+    // Mirror rawComment into legacy comment so old feedback readers remain compatible.
     doc.comment = input.comment ?? input.rawComment;
   } else if (input.comment !== undefined) {
     doc.comment = input.comment;

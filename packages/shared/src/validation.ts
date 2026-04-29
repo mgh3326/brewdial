@@ -67,7 +67,7 @@ function pickString(
     errors.push(`${path}.${key} must be a string`);
     return undefined;
   }
-  return v;
+  return v.trim();
 }
 
 function validateBeanSnapshot(
@@ -362,7 +362,7 @@ export function validateCreateFeedbackInput(
     recipeCode: recipeCode as `COF-${string}`
   };
   if (ratings !== undefined) value.ratings = ratings;
-  if (rawComment !== undefined) value.rawComment = rawComment;
+  if (rawComment !== undefined && rawComment.length > 0) value.rawComment = rawComment;
   if (quickTags !== undefined) value.quickTags = quickTags;
   if (actual !== undefined) value.actual = actual;
   if (comment !== undefined) value.comment = comment;

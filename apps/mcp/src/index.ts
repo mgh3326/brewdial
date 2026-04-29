@@ -100,7 +100,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_feedback',
     description:
-      "Save a tasting/feedback note for a BrewDial recipe. Prefer rawComment for the user's own words; ratings and quickTags are optional. Returns the persisted feedback summary.",
+      "Save a tasting/feedback note for a BrewDial recipe. At least one of rawComment, ratings, or quickTags is required. Prefer rawComment for the user's own words. Returns the persisted feedback summary.",
     inputSchema: {
       type: 'object',
       properties: {

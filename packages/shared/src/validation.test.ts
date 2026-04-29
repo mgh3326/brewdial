@@ -150,6 +150,17 @@ describe('validateCreateFeedbackInput (ROB-33)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('rejects whitespace-only rawComment without any other content', () => {
+    const result = validateCreateFeedbackInput({
+      recipeCode: 'COF-0001',
+      rawComment: '   '
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(' ')).toMatch(/at least one/);
+    }
+  });
+
   it('rejects empty feedback (no rawComment, ratings, or quickTags)', () => {
     const result = validateCreateFeedbackInput({ recipeCode: 'COF-0001' });
     expect(result.ok).toBe(false);
