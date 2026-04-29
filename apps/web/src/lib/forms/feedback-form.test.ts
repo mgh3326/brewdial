@@ -52,7 +52,8 @@ describe('feedbackValuesToInput', () => {
     const input = feedbackValuesToInput(values);
     expect(input).toEqual({
       recipeCode: 'COF-0001',
-      ratings: { overall: 4, sweetness: 3, burnt: 1 }
+      ratings: { overall: 4, sweetness: 3, burnt: 1 },
+      source: 'web'
     });
   });
 
@@ -65,8 +66,8 @@ describe('feedbackValuesToInput', () => {
     };
     const input = feedbackValuesToInput(values);
     expect(input.ratings).toEqual({ sweetness: 3 });
-    expect('overall' in input.ratings).toBe(false);
-    expect('bitter' in input.ratings).toBe(false);
+    expect('overall' in input.ratings!).toBe(false);
+    expect('bitter' in input.ratings!).toBe(false);
   });
 
   it('converts desiredDirectionText into a string array of non-empty trimmed lines', () => {
@@ -92,9 +93,9 @@ describe('feedbackValuesToInput', () => {
     expect(b.actual).toEqual({ tempC: 92, grind: 'medium-fine', timeSec: 180 });
   });
 
-  it('omits source so the repository default applies', () => {
+  it('sets source to web', () => {
     const input = feedbackValuesToInput({ recipeCode: 'COF-0001', overall: '4' });
-    expect('source' in input).toBe(false);
+    expect(input.source).toBe('web');
   });
 
   it('passes through comment when present', () => {
@@ -104,5 +105,32 @@ describe('feedbackValuesToInput', () => {
       comment: 'tasted balanced'
     });
     expect(input.comment).toBe('tasted balanced');
+  });
+});
+
+describe('formDataToFeedbackValues (ROB-33 rawComment + quickTags)', () => {
+  it('extracts rawComment and quickTags (multi-value) from form data', () => {
+    const f = new FormData();
+    f.append('recipeCode', 'COF-0001');
+    f.append('rawComment', '오늘은 너무 묽었음');
+    f.append('quickTags', '묽음');
+    f.append('quickTags', '아쉬움');
+    const v = formDataToFeedbackValues(f);
+    expect(v.rawComment).toBe('오늘은 너무 묽었음');
+    expect(v.quickTags).toEqual(['묽음', '아쉬움']);
+  });
+});
+
+describe('feedbackValuesToInput (ROB-33 rawComment + quickTags)', () => {
+  it('builds rawComment-only input (no ratings) when no rating fields supplied', () => {
+    const input = feedbackValuesToInput({
+      recipeCode: 'COF-0001',
+      rawComment: '오늘은 너무 묽었음',
+      quickTags: ['묽음']
+    });
+    expect(input.rawComment).toBe('오늘은 너무 묽었음');
+    expect(input.quickTags).toEqual(['묽음']);
+    expect(input.ratings).toBeUndefined();
+    expect(input.source).toBe('web');
   });
 });

@@ -93,6 +93,47 @@ describe('addFeedback', () => {
     expect(feedback.createdAt).toBe(feedback.updatedAt);
     expect(captured.putBody?.recipeId).toBe('recipe:COF-0001');
   });
+
+  it('persists rawComment, quickTags, and mirrors rawComment into comment', async () => {
+    const captured: { putBody?: Record<string, unknown> } = {};
+    const fetchImpl = makeRouter({
+      'GET /coffee/recipe:COF-0001': () => ({
+        status: 200,
+        body: {
+          _id: 'recipe:COF-0001', _rev: '1-r', type: 'recipe', code: 'COF-0001',
+          method: 'v60', version: 1, title: 'X', params: {}, steps: [],
+          createdBy: 'manual', createdAt: 'now', updatedAt: 'now'
+        }
+      })
+    });
+    const wrappedFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      if (init?.method === 'PUT' && decodeURIComponent(u.pathname).startsWith('/coffee/feedback:COF-0001:')) {
+        captured.putBody = JSON.parse(init.body as string);
+        return new Response(JSON.stringify({ ok: true, id: 'x', rev: '1-f' }),
+          { status: 201, headers: { 'content-type': 'application/json' } });
+      }
+      return fetchImpl(url, init);
+    }) as unknown as typeof fetch;
+
+    const fb = await addFeedback(
+      config,
+      {
+        recipeCode: 'COF-0001',
+        rawComment: '산미가 강했음',
+        quickTags: ['산미', '아쉬움'],
+        source: 'coffee_profile'
+      },
+      wrappedFetch
+    );
+
+    expect(fb.rawComment).toBe('산미가 강했음');
+    expect(fb.comment).toBe('산미가 강했음');
+    expect(fb.quickTags).toEqual(['산미', '아쉬움']);
+    expect(fb.source).toBe('coffee_profile');
+    expect(fb.ratings).toBeUndefined();
+    expect(captured.putBody?.rawComment).toBe('산미가 강했음');
+  });
 });
 
 describe('listFeedbackForRecipe', () => {

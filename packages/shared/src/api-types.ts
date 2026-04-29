@@ -3,7 +3,9 @@ import type {
   BrewMethod,
   FeedbackDoc,
   FeedbackRatings,
+  FeedbackSource,
   PreferenceDoc,
+  QuickFeedbackTag,
   RecipeDoc,
   RecipeParams,
   RecipeStep
@@ -44,12 +46,14 @@ export interface GetRecipeResponse {
 
 export interface CreateFeedbackInput {
   recipeCode: `COF-${string}`;
-  ratings: FeedbackRatings;
+  ratings?: FeedbackRatings;
+  rawComment?: string;
+  quickTags?: QuickFeedbackTag[];
   actual?: ActualBrewParams;
   comment?: string;
   desiredDirection?: string[];
   nextHint?: string[];
-  source?: 'web' | 'agent' | 'mcp';
+  source?: FeedbackSource;
 }
 
 export interface CreateFeedbackResponse {
@@ -72,6 +76,9 @@ export interface FeedbackSummary {
   averageOverall: number | null;
   commonDesiredDirections: string[];
   latestComment: string | null;
+  latestRawComment: string | null;
+  latestQuickTags: string[];
+  latestSource: string | null;
 }
 
 export interface RecipeWithFeedbackSummary {

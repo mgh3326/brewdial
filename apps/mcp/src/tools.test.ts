@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
+import { handleCreateFeedback, handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
 import type { CouchConfig } from './config.js';
 
 const mockConfig: CouchConfig = {
@@ -35,6 +35,29 @@ describe('handleGetRecentContext', () => {
   it('accepts limit parameter', async () => {
     const result = await handleGetRecentContext(mockConfig, { limit: 3 });
     expect(result).toHaveProperty('content');
+  });
+});
+
+describe('handleCreateFeedback', () => {
+  it('rejects invalid recipe code', async () => {
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'INVALID', rawComment: 'x' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid feedback input');
+  });
+
+  it('rejects empty submissions (no rawComment, ratings, or quickTags)', async () => {
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('at least one');
+  });
+
+  it('errors when CouchDB is unreachable but input is valid', async () => {
+    const r = await handleCreateFeedback(mockConfig, {
+      recipeCode: 'COF-0001',
+      rawComment: '오늘은 산미가 강했음'
+    });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error creating feedback');
   });
 });
 

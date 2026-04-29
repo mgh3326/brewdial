@@ -64,6 +64,21 @@ export interface FeedbackRatings {
   clarity?: RatingValue;
 }
 
+export const QUICK_FEEDBACK_TAGS = [
+  '고소함',
+  '견과류',
+  '쓴맛',
+  '산미',
+  '떫음',
+  '묽음',
+  '진함',
+  '좋았음',
+  '아쉬움'
+] as const;
+export type QuickFeedbackTag = (typeof QUICK_FEEDBACK_TAGS)[number];
+
+export type FeedbackSource = 'web' | 'coffee_profile' | 'api' | 'agent' | 'mcp';
+
 export interface ActualBrewParams {
   tempC?: number;
   grind?: string;
@@ -77,12 +92,14 @@ export interface FeedbackDoc {
   recipeCode: RecipeCode;
   recipeId: string;
   beanId?: string;
-  ratings: FeedbackRatings;
+  ratings?: FeedbackRatings;
   actual?: ActualBrewParams;
   comment?: string;
+  rawComment?: string;
+  quickTags?: QuickFeedbackTag[];
   desiredDirection?: string[];
   nextHint?: string[];
-  source: 'web' | 'agent' | 'mcp';
+  source: FeedbackSource;
   createdAt: string;
   updatedAt: string;
 }

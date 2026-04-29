@@ -103,13 +103,13 @@ describe('validateCreateFeedbackInput', () => {
     if (!result.ok) expect(result.errors.join(' ')).toMatch(/recipeCode/);
   });
 
-  it('rejects when ratings has no fields', () => {
+  it('rejects when ratings has no fields and no other content', () => {
     const result = validateCreateFeedbackInput({
       recipeCode: 'COF-0001',
       ratings: {}
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join(' ')).toMatch(/ratings/);
+    if (!result.ok) expect(result.errors.join(' ')).toMatch(/at least one/);
   });
 
   it('rejects when overall is out of range', () => {
@@ -126,5 +126,65 @@ describe('validateCreateFeedbackInput', () => {
       ratings: { sweetness: 5 }
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('validateCreateFeedbackInput (ROB-33)', () => {
+  it('accepts rawComment-only feedback without ratings', () => {
+    const result = validateCreateFeedbackInput({
+      recipeCode: 'COF-0001',
+      rawComment: '오늘은 산미가 너무 강했음'
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.rawComment).toBe('오늘은 산미가 너무 강했음');
+      expect(result.value.ratings).toBeUndefined();
+    }
+  });
+
+  it('accepts quickTags-only feedback', () => {
+    const result = validateCreateFeedbackInput({
+      recipeCode: 'COF-0001',
+      quickTags: ['고소함', '좋았음']
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects whitespace-only rawComment without any other content', () => {
+    const result = validateCreateFeedbackInput({
+      recipeCode: 'COF-0001',
+      rawComment: '   '
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(' ')).toMatch(/at least one/);
+    }
+  });
+
+  it('rejects empty feedback (no rawComment, ratings, or quickTags)', () => {
+    const result = validateCreateFeedbackInput({ recipeCode: 'COF-0001' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(' ')).toMatch(/at least one/);
+    }
+  });
+
+  it('rejects unknown quickTags', () => {
+    const result = validateCreateFeedbackInput({
+      recipeCode: 'COF-0001',
+      quickTags: ['고소함', '말도안되는태그']
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts new source values coffee_profile and api', () => {
+    for (const source of ['coffee_profile', 'api', 'web', 'agent', 'mcp']) {
+      const r = validateCreateFeedbackInput({
+        recipeCode: 'COF-0001',
+        rawComment: 'x',
+        source
+      });
+      expect(r.ok).toBe(true);
+    }
   });
 });

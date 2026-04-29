@@ -1,6 +1,7 @@
 <script lang="ts">
   import ErrorPanel from '$lib/ui/ErrorPanel.svelte';
   import RatingControl from '$lib/ui/RatingControl.svelte';
+  import { QUICK_FEEDBACK_TAGS } from '@brewdial/shared';
   import type { ActionData, PageData } from './$types';
 
   interface Props {
@@ -10,6 +11,8 @@
   let { data, form }: Props = $props();
 
   const v = $derived(form?.values ?? {});
+  const selectedTags: string[] = $derived(Array.isArray(v.quickTags) ? v.quickTags : []);
+  let detailsOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -39,43 +42,94 @@
     <form method="POST" class="stack">
       <input type="hidden" name="recipeCode" value={data.recipe.code} />
 
-      <RatingControl name="overall" label="Overall (1–5)" min={1} max={5} value={v.overall} />
-      <RatingControl name="sweetness" label="Sweetness" value={v.sweetness} />
-      <RatingControl name="burnt" label="Burnt" value={v.burnt} />
-      <RatingControl name="bitter" label="Bitter" value={v.bitter} />
-      <RatingControl name="sour" label="Sour" value={v.sour} />
-      <RatingControl name="body" label="Body" value={v.body} />
-      <RatingControl name="astringency" label="Astringency" value={v.astringency} />
-      <RatingControl name="clarity" label="Clarity" value={v.clarity} />
-
       <div class="field">
-        <label for="comment">Comment</label>
-        <textarea id="comment" name="comment">{v.comment ?? ''}</textarea>
+        <label for="rawComment">오늘의 한 줄 (자유롭게)</label>
+        <textarea
+          id="rawComment"
+          name="rawComment"
+          rows="4"
+          placeholder="예) 산미는 좋았는데 끝맛이 살짝 떫었어요"
+        >{v.rawComment ?? ''}</textarea>
       </div>
 
-      <div class="field">
-        <label for="desiredDirectionText">Desired direction (one per line)</label>
-        <textarea id="desiredDirectionText" name="desiredDirectionText"
-          >{v.desiredDirectionText ?? ''}</textarea
-        >
-      </div>
+      <fieldset class="quick-tags">
+        <legend>빠른 태그 (선택)</legend>
+        <div class="quick-tags-options">
+          {#each QUICK_FEEDBACK_TAGS as tag}
+            <label class="quick-tag">
+              <input
+                type="checkbox"
+                name="quickTags"
+                value={tag}
+                checked={selectedTags.includes(tag)}
+              />
+              <span>{tag}</span>
+            </label>
+          {/each}
+        </div>
+      </fieldset>
 
-      <div class="field">
-        <label for="tempC">Actual temp (°C)</label>
-        <input id="tempC" name="tempC" inputmode="decimal" value={v.tempC ?? ''} />
-      </div>
+      <details bind:open={detailsOpen}>
+        <summary>자세히 기록하기</summary>
+        <div class="stack">
+          <RatingControl name="overall" label="Overall (1–5)" min={1} max={5} value={v.overall} />
+          <RatingControl name="sweetness" label="Sweetness" value={v.sweetness} />
+          <RatingControl name="burnt" label="Burnt" value={v.burnt} />
+          <RatingControl name="bitter" label="Bitter" value={v.bitter} />
+          <RatingControl name="sour" label="Sour" value={v.sour} />
+          <RatingControl name="body" label="Body" value={v.body} />
+          <RatingControl name="astringency" label="Astringency" value={v.astringency} />
+          <RatingControl name="clarity" label="Clarity" value={v.clarity} />
 
-      <div class="field">
-        <label for="grind">Actual grind</label>
-        <input id="grind" name="grind" value={v.grind ?? ''} />
-      </div>
+          <div class="field">
+            <label for="desiredDirectionText">Desired direction (one per line)</label>
+            <textarea id="desiredDirectionText" name="desiredDirectionText"
+              >{v.desiredDirectionText ?? ''}</textarea
+            >
+          </div>
+          <div class="field">
+            <label for="tempC">Actual temp (°C)</label>
+            <input id="tempC" name="tempC" inputmode="decimal" value={v.tempC ?? ''} />
+          </div>
+          <div class="field">
+            <label for="grind">Actual grind</label>
+            <input id="grind" name="grind" value={v.grind ?? ''} />
+          </div>
+          <div class="field">
+            <label for="timeSec">Actual time (s)</label>
+            <input id="timeSec" name="timeSec" inputmode="numeric" value={v.timeSec ?? ''} />
+          </div>
+        </div>
+      </details>
 
-      <div class="field">
-        <label for="timeSec">Actual time (s)</label>
-        <input id="timeSec" name="timeSec" inputmode="numeric" value={v.timeSec ?? ''} />
-      </div>
-
-      <button type="submit" class="btn">Submit feedback</button>
+      <button type="submit" class="btn">저장</button>
     </form>
   {/if}
 </section>
+
+<style>
+  .quick-tags-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .quick-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-muted);
+    cursor: pointer;
+    min-height: 2.25rem;
+  }
+  .quick-tag input[type='checkbox'] {
+    accent-color: var(--accent);
+  }
+
+  .quick-tag:focus-within {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: 2px;
+  }
+</style>

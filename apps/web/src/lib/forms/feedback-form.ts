@@ -2,6 +2,8 @@ import type { CreateFeedbackInput, FeedbackRatings } from '@brewdial/shared';
 
 export interface FeedbackFormValues {
   recipeCode?: string;
+  rawComment?: string;
+  quickTags?: string[];
   overall?: string;
   sweetness?: string;
   burnt?: string;
@@ -69,6 +71,10 @@ export function formDataToFeedbackValues(formData: FormData): FeedbackFormValues
     const v = readRaw(formData, key);
     if (v !== undefined) (out as Record<string, string>)[key] = v;
   }
+  const rawComment = readRaw(formData, 'rawComment');
+  if (rawComment !== undefined) out.rawComment = rawComment;
+  const tags = formData.getAll('quickTags').filter((v): v is string => typeof v === 'string' && v.length > 0);
+  if (tags.length > 0) out.quickTags = tags;
   return out;
 }
 
@@ -99,15 +105,19 @@ function linesToArray(text: string | undefined): string[] {
 export function feedbackValuesToInput(values: FeedbackFormValues): CreateFeedbackInput {
   const ratings: FeedbackRatings = {};
   for (const key of RATING_KEYS) {
-    const parsed = parseInt10(values[key as keyof FeedbackFormValues]);
+    const parsed = parseInt10(values[key as keyof FeedbackFormValues] as string | undefined);
     if (parsed !== undefined) (ratings as Record<string, number>)[key] = parsed;
   }
 
   const input: CreateFeedbackInput = {
     recipeCode: (values.recipeCode ?? '') as CreateFeedbackInput['recipeCode'],
-    ratings
+    source: 'web'
   };
-
+  if (Object.keys(ratings).length > 0) input.ratings = ratings;
+  if (values.rawComment) input.rawComment = values.rawComment;
+  if (values.quickTags && values.quickTags.length > 0) {
+    input.quickTags = values.quickTags as CreateFeedbackInput['quickTags'];
+  }
   if (values.comment) input.comment = values.comment;
 
   const desiredDirection = linesToArray(values.desiredDirectionText);

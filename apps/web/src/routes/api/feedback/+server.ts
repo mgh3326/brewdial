@@ -63,8 +63,10 @@ export const POST = async ({ request }: { request: Request }) => {
     };
     return json(body, { status: 400 });
   }
+  const value = result.value;
+  if (value.source === undefined) value.source = 'api';
   try {
-    const feedback = await addFeedback(config.couch, result.value);
+    const feedback = await addFeedback(config.couch, value);
     const body: CreateFeedbackResponse = { feedback };
     return json(body, { status: 201 });
   } catch (err) {
