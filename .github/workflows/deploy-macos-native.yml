@@ -1,0 +1,83 @@
+name: Deploy BrewDial Production
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (defaults to the workflow commit)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brewdial-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to MacBook launchd
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Tailscale
+        shell: bash
+        env:
+          TS_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+            | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+            | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y tailscale
+          sudo tailscale up \
+            --auth-key "$TS_KEY" \
+            --hostname "brewdial-deploy-${GITHUB_RUN_ID}" \
+            --accept-routes=false
+
+      - name: Configure SSH key and known host
+        shell: bash
+        env:
+          MACBOOK_DEPLOY_SSH_HOST: ${{ secrets.MACBOOK_DEPLOY_SSH_HOST }}
+          MACBOOK_DEPLOY_SSH_HOST_KEY: ${{ secrets.MACBOOK_DEPLOY_SSH_HOST_KEY }}
+          MACBOOK_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.MACBOOK_DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$MACBOOK_DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/brewdial_deploy_key
+          chmod 600 ~/.ssh/brewdial_deploy_key
+          deploy_host="${MACBOOK_DEPLOY_SSH_HOST#*@}"
+          printf '%s %s\n' "$deploy_host" "$MACBOOK_DEPLOY_SSH_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        shell: bash
+        env:
+          MACBOOK_DEPLOY_SSH_HOST: ${{ secrets.MACBOOK_DEPLOY_SSH_HOST }}
+          DEPLOY_SHA: ${{ github.event.inputs.sha || github.sha }}
+          DEPLOY_BRANCH: production
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -i ~/.ssh/brewdial_deploy_key
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile=~/.ssh/known_hosts
+            -o ConnectTimeout=30
+          )
+
+          deploy_sha_q=$(printf '%q' "$DEPLOY_SHA")
+          deploy_branch_q=$(printf '%q' "$DEPLOY_BRANCH")
+          ssh "${ssh_opts[@]}" "$MACBOOK_DEPLOY_SSH_HOST" \
+            "cd /Users/mgh3326/work/brewdial && scripts/deploy-production.sh $deploy_sha_q $deploy_branch_q"
