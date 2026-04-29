@@ -137,6 +137,14 @@
     soundEnabled = loadSoundPreference();
     pourAudio = createPourAudio();
 
+    function onVisibilityChange(): void {
+      if (document.hidden) return;
+      if (!isTimerRunning) return;
+      if (!soundEnabled) return;
+      void pourAudio?.unlock();
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     const id = window.setInterval(() => {
       if (!isTimerRunning) return;
       elapsedSec = Math.min(elapsedSec + 1, pourSchedule.totalSec);
@@ -164,6 +172,7 @@
     }, 1000);
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.clearInterval(id);
       pourAudio?.close();
       pourAudio = null;

@@ -28,8 +28,9 @@ function makeFakeContext() {
     state: 'suspended' as AudioContextState,
     currentTime: 0,
     destination: { name: 'dest' },
-    resume: vi.fn(async () => {
+    resume: vi.fn(() => {
       ctx.state = 'running';
+      return Promise.resolve();
     }),
     close: vi.fn(async () => {
       ctx.state = 'closed';
@@ -72,7 +73,17 @@ describe('createPourAudio', () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it('unlocks the context on first call and is idempotent', async () => {
+  it('constructs the context and calls resume synchronously on first unlock', () => {
+    const built = makeFakeContext();
+    const factory = vi.fn(() => built.ctx as unknown as AudioContext);
+    const audio = createPourAudio(factory);
+    const p = audio.unlock(); // do NOT await yet
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(built.ctx.resume).toHaveBeenCalledTimes(1);
+    expect(p).toBeInstanceOf(Promise);
+  });
+
+  it('unlock is idempotent — factory and resume called once across multiple calls', async () => {
     const built = makeFakeContext();
     const factory = vi.fn(() => built.ctx as unknown as AudioContext);
     const audio = createPourAudio(factory);
@@ -82,29 +93,42 @@ describe('createPourAudio', () => {
     await audio.unlock();
 
     expect(factory).toHaveBeenCalledTimes(1);
-    expect(built.ctx.resume).toHaveBeenCalled();
+    expect(built.ctx.resume).toHaveBeenCalledTimes(1);
     expect(audio.isReady()).toBe(true);
   });
 
-  it('playPhaseStart schedules two 880Hz oscillators after unlock', async () => {
+  it('schedules one silent priming oscillator on first unlock only', async () => {
+    const built = makeFakeContext();
+    const audio = createPourAudio(() => built.ctx as unknown as AudioContext);
+    await audio.unlock();
+    await audio.unlock();
+    // Only the silent prime, no phase tones yet
+    expect(built.oscillators.length).toBe(1);
+    expect(built.gains[0].gain.value).toBe(0);
+  });
+
+  it('playPhaseStart schedules two 880Hz oscillators after unlock (plus one silent prime)', async () => {
     const built = makeFakeContext();
     const audio = createPourAudio(() => built.ctx as unknown as AudioContext);
     await audio.unlock();
     audio.playPhaseStart();
-    expect(built.oscillators.length).toBe(2);
-    expect(built.oscillators[0].frequency.value).toBe(880);
-    expect(built.oscillators[1].frequency.value).toBe(880);
-    expect(built.oscillators[0].startedAt).not.toBeNull();
-    expect(built.oscillators[0].stoppedAt).not.toBeNull();
+    // 1 silent prime + 2 phase-start tones
+    expect(built.oscillators.length).toBe(3);
+    const tones = built.oscillators.slice(1);
+    expect(tones[0].frequency.value).toBe(880);
+    expect(tones[1].frequency.value).toBe(880);
+    expect(tones[0].startedAt).not.toBeNull();
+    expect(tones[0].stoppedAt).not.toBeNull();
   });
 
-  it('playComplete schedules three descending oscillators after unlock', async () => {
+  it('playComplete schedules three descending oscillators after unlock (plus one silent prime)', async () => {
     const built = makeFakeContext();
     const audio = createPourAudio(() => built.ctx as unknown as AudioContext);
     await audio.unlock();
     audio.playComplete();
-    expect(built.oscillators.length).toBe(3);
-    expect(built.oscillators.map((o) => o.frequency.value)).toEqual([988, 784, 523]);
+    // 1 silent prime + 3 completion tones
+    expect(built.oscillators.length).toBe(4);
+    expect(built.oscillators.slice(1).map((o) => o.frequency.value)).toEqual([988, 784, 523]);
   });
 
   it('play* are no-ops before unlock', () => {
@@ -123,5 +147,17 @@ describe('createPourAudio', () => {
     audio.close();
     expect(built.ctx.close).toHaveBeenCalledTimes(1);
     expect(audio.isReady()).toBe(false);
+  });
+
+  it('close() resets so a new instance primes again', async () => {
+    const built1 = makeFakeContext();
+    const a1 = createPourAudio(() => built1.ctx as unknown as AudioContext);
+    await a1.unlock();
+    a1.close();
+    const built2 = makeFakeContext();
+    const a2 = createPourAudio(() => built2.ctx as unknown as AudioContext);
+    await a2.unlock();
+    // New instance gets its own prime
+    expect(built2.oscillators.length).toBe(1);
   });
 });
