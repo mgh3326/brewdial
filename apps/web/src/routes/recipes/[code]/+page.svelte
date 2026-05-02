@@ -128,7 +128,8 @@
 
   function testSound(): void {
     if (!pourAudio) return;
-    void pourAudio.unlock().then(() => pourAudio?.playPhaseStart());
+    void pourAudio.unlock();
+    pourAudio.playPhaseStart();
   }
 
   onMount(() => {

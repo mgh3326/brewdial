@@ -35,6 +35,10 @@ export function createPourAudio(factory: AudioContextFactory = defaultFactory): 
     return !!ctx && !closed && ctx.state === 'running';
   }
 
+  function canScheduleTone(): boolean {
+    return !!ctx && !closed && ctx.state !== 'closed';
+  }
+
   // Called synchronously during unlock() so iOS WebKit sees it as gesture-driven.
   function primeSilentBuffer(): void {
     if (primed || !ctx) return;
@@ -84,14 +88,14 @@ export function createPourAudio(factory: AudioContextFactory = defaultFactory): 
   }
 
   function playPhaseStart(): void {
-    if (!isReady() || !ctx) return;
+    if (!canScheduleTone() || !ctx) return;
     const t0 = ctx.currentTime;
     tone(880, t0, TONE_S);
     tone(880, t0 + TONE_S + GAP_S, TONE_S);
   }
 
   function playComplete(): void {
-    if (!isReady() || !ctx) return;
+    if (!canScheduleTone() || !ctx) return;
     const t0 = ctx.currentTime;
     tone(988, t0, COMPLETE_TONE_S);
     tone(784, t0 + COMPLETE_TONE_S, COMPLETE_TONE_S);
