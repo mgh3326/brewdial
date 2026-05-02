@@ -131,6 +131,31 @@ describe('createPourAudio', () => {
     expect(built.oscillators.slice(1).map((o) => o.frequency.value)).toEqual([988, 784, 523]);
   });
 
+  it('playPhaseStart can schedule tones immediately after unlock before resume settles', () => {
+    const built = makeFakeContext();
+    let resolveResume: (() => void) | undefined;
+    built.ctx.resume = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveResume = () => {
+            built.ctx.state = 'running';
+            resolve();
+          };
+        })
+    );
+    const audio = createPourAudio(() => built.ctx as unknown as AudioContext);
+
+    void audio.unlock();
+    audio.playPhaseStart();
+
+    // 1 silent prime + 2 phase-start tones are scheduled while the context is
+    // still suspended; iOS Safari can then play them when resume completes.
+    expect(built.ctx.state).toBe('suspended');
+    expect(built.oscillators.length).toBe(3);
+    expect(built.oscillators.slice(1).map((o) => o.frequency.value)).toEqual([880, 880]);
+    resolveResume?.();
+  });
+
   it('play* are no-ops before unlock', () => {
     const built = makeFakeContext();
     const audio = createPourAudio(() => built.ctx as unknown as AudioContext);
