@@ -47,6 +47,29 @@
     pourSchedule.phases.find((phase) => phase.startSec > elapsedSec) ?? null
   );
   const timerDone = $derived(canUseTimer && elapsedSec >= pourSchedule.totalSec);
+  const dialProgress = $derived(
+    pourSchedule.totalSec > 0 ? Math.min(1, elapsedSec / pourSchedule.totalSec) : 0
+  );
+
+  function pourLabel(index: number): string {
+    return index === 0 ? 'Bloom' : `Pour ${index}`;
+  }
+
+  function phasePillLabel(phase: BrewPhase): string {
+    if (phase.kind === 'bloom') return 'Bloom';
+    if (phase.kind === 'wait') return 'Wait';
+    if (phase.kind === 'drawdown') return 'Drawdown';
+    const pourCountBefore = brewPhases
+      .slice(0, phase.index)
+      .filter((p) => p.kind === 'pour').length;
+    return `Pour ${pourCountBefore + 1}`;
+  }
+
+  function pourState(phase: { startSec: number; endSec: number }): 'done' | 'now' | 'upcoming' {
+    if (elapsedSec >= phase.endSec) return 'done';
+    if (elapsedSec >= phase.startSec) return 'now';
+    return 'upcoming';
+  }
 
   function formatDate(iso: string): string {
     if (!iso) return '';
@@ -236,9 +259,26 @@
 
   {#if canUseTimer}
     <section class="card brew-timer" aria-label="Pouring timer">
+      <div class="dial-wrap">
+        {#if currentBrewPhase}
+          <span class="phase-pill">{phasePillLabel(currentBrewPhase)}</span>
+        {:else if timerDone}
+          <span class="phase-pill">Done</span>
+        {/if}
+        <div
+          class="dial"
+          style="--dial-progress: {dialProgress}"
+          role="timer"
+          aria-label="추출 경과 시간"
+        >
+          <div class="clock">
+            <div class="time">{formatSeconds(elapsedSec)}</div>
+            <div class="of">of {formatSeconds(pourSchedule.totalSec)}</div>
+          </div>
+        </div>
+      </div>
+
       <div class="stack-tight">
-        <p class="card-meta muted">Pouring timer</p>
-        <div class="timer-display">{formatSeconds(elapsedSec)}</div>
         {#if currentBrewPhase}
           {#if currentBrewPhase.kind === 'wait'}
             <p class="timer-status">기다리기 · 다음 푸어까지 {formatSeconds(currentBrewPhase.endSec - elapsedSec)}</p>
@@ -278,11 +318,26 @@
         {#if nextPhase && !timerDone}
           <p class="muted">다음 알림: {phaseTitle(nextPhase)}</p>
         {/if}
-        <p class="timer-help">
-          시간 범위는 “그 구간을 다 채워서 계속 붓기”라기보다, 시작 시간에 붓기 시작해서 끝 시간쯤 목표 무게에 도달하라는 뜻입니다.
-          목표 무게에 먼저 도달하면 다음 구간까지 기다리면 됩니다.
-        </p>
       </div>
+
+      <h3 class="section-h">Pours</h3>
+      <ul class="pour-list">
+        {#each pourSchedule.phases as phase (phase.index)}
+          <li class="pour-row {pourState(phase)}">
+            <span class="label">{pourLabel(phase.index)}</span>
+            <span class="time muted">{phase.startLabel} – {phase.endLabel}</span>
+            <span class="grams">
+              {phase.targetWaterG !== undefined ? `${phase.targetWaterG} g` : '—'}
+            </span>
+          </li>
+        {/each}
+      </ul>
+
+      <p class="timer-help">
+        시간 범위는 “그 구간을 다 채워서 계속 붓기”라기보다, 시작 시간에 붓기 시작해서 끝 시간쯤 목표 무게에 도달하라는 뜻입니다.
+        목표 무게에 먼저 도달하면 다음 구간까지 기다리면 됩니다.
+      </p>
+
       <div class="row">
         {#if isTimerRunning}
           <button class="btn" type="button" onclick={pauseTimer}>Pause</button>
@@ -373,12 +428,62 @@
     gap: 0.75rem;
   }
 
-  .timer-display {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: clamp(2.5rem, 12vw, 5rem);
-    font-weight: 800;
-    line-height: 1;
+  .dial-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.25rem 0;
+  }
+
+  .section-h {
+    margin: 0.25rem 0 0;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .pour-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .pour-row {
+    display: grid;
+    grid-template-columns: 5rem 1fr auto;
+    gap: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    align-items: center;
+    font-size: 0.92rem;
+  }
+
+  .pour-row .grams {
+    font-family: var(--font-mono);
     color: var(--accent-strong);
+    font-weight: 700;
+  }
+
+  .pour-row.done {
+    color: var(--text-muted);
+    background: var(--surface-muted);
+  }
+
+  .pour-row.done .grams {
+    color: var(--text-muted);
+  }
+
+  .pour-row.now {
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 
   .timer-status {
