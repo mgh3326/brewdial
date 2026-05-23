@@ -54,19 +54,17 @@
 
       <fieldset class="quick-tags">
         <legend>빠른 태그 (선택)</legend>
-        <div class="quick-tags-options">
-          {#each QUICK_FEEDBACK_TAGS as tag}
-            <label class="quick-tag">
-              <input
-                type="checkbox"
-                name="quickTags"
-                value={tag}
-                checked={selectedTags.includes(tag)}
-              />
-              <span>{tag}</span>
-            </label>
-          {/each}
-        </div>
+        {#each QUICK_FEEDBACK_TAGS as tag}
+          <label>
+            <input
+              type="checkbox"
+              name="quickTags"
+              value={tag}
+              checked={selectedTags.includes(tag)}
+            />
+            <span>{tag}</span>
+          </label>
+        {/each}
       </fieldset>
 
       <details bind:open={detailsOpen}>
@@ -107,29 +105,3 @@
   {/if}
 </section>
 
-<style>
-  .quick-tags-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-  .quick-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.4rem 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--surface-muted);
-    cursor: pointer;
-    min-height: 2.25rem;
-  }
-  .quick-tag input[type='checkbox'] {
-    accent-color: var(--accent);
-  }
-
-  .quick-tag:focus-within {
-    outline: 2px solid var(--accent-strong);
-    outline-offset: 2px;
-  }
-</style>
