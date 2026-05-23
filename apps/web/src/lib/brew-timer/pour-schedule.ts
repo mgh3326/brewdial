@@ -228,7 +228,7 @@ export function getCurrentBrewPhase(phases: BrewPhase[], elapsedSec: number): Br
 
 /** True once the pour is done and the block is in its rest tail ("쉬는 시간"). */
 export function isBrewPhaseResting(phase: BrewPhase, elapsedSec: number): boolean {
-  return phase.pourEndSec < phase.endSec && elapsedSec >= phase.pourEndSec;
+  return phase.pourEndSec < phase.endSec && elapsedSec >= phase.pourEndSec && elapsedSec < phase.endSec;
 }
 
 export function getExpectedWaterGForPhase(

@@ -404,10 +404,12 @@ describe('isBrewPhaseResting', () => {
     params: { targetTimeSec: 120 }
   }));
 
-  it('is false while still pouring, true once the pour window has passed', () => {
+  it('is false while still pouring, true only inside the rest tail', () => {
     expect(isBrewPhaseResting(phases[0], 15)).toBe(false);
     expect(isBrewPhaseResting(phases[0], 30)).toBe(true);
     expect(isBrewPhaseResting(phases[0], 45)).toBe(true);
+    expect(isBrewPhaseResting(phases[0], 60)).toBe(false);
+    expect(isBrewPhaseResting(phases[0], 75)).toBe(false);
   });
 
   it('is false for a pour with no rest tail (pourEndSec === endSec)', () => {

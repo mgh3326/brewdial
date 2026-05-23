@@ -51,7 +51,7 @@
     currentBrewPhase !== null && currentBrewPhase.index === brewPhases.length - 1
   );
   const nextPhase = $derived(
-    pourSchedule.phases.find((phase) => phase.startSec > elapsedSec) ?? null
+    brewPhases.find((phase) => phase.startSec > elapsedSec) ?? null
   );
   const timerDone = $derived(canUseTimer && elapsedSec >= pourSchedule.totalSec);
   const dialProgress = $derived(
@@ -91,8 +91,8 @@
     return grams === undefined ? '목표 무게 미지정' : `${grams}g까지`;
   }
 
-  function phaseTitle(phase: { startLabel: string; endLabel: string; targetWaterG?: number }): string {
-    return `${phase.startLabel}–${phase.endLabel} · ${targetLabel(phase.targetWaterG)}`;
+  function phaseTitle(phase: BrewPhase): string {
+    return `${phase.startLabel}–${phase.pourEndLabel} · ${targetLabel(phase.targetWaterG)}`;
   }
 
   function announcePhase(phase: { startLabel: string; targetWaterG: number | undefined; note: string }): void {
@@ -325,10 +325,15 @@
 
       <h3 class="section-h">Pours</h3>
       <ul class="pour-list">
-        {#each pourSchedule.phases as phase (phase.index)}
+        {#each brewPhases as phase (phase.index)}
           <li class="pour-row {pourState(phase)}">
             <span class="label">{pourLabel(phase.index)}</span>
-            <span class="time muted">{phase.startLabel} – {phase.endLabel}</span>
+            <span class="time muted">
+              {phase.startLabel} – {phase.pourEndLabel}
+              {#if phase.pourEndSec < phase.endSec}
+                <span class="time-detail">쉬기 {phase.pourEndLabel} – {phase.endLabel}</span>
+              {/if}
+            </span>
             <span class="grams">
               {phase.targetWaterG !== undefined ? `${phase.targetWaterG} g` : '—'}
             </span>
@@ -337,8 +342,7 @@
       </ul>
 
       <p class="timer-help">
-        시간 범위는 “그 구간을 다 채워서 계속 붓기”라기보다, 시작 시간에 붓기 시작해서 끝 시간쯤 목표 무게에 도달하라는 뜻입니다.
-        목표 무게에 먼저 도달하면 다음 구간까지 기다리면 됩니다.
+        Pours의 기본 시간은 실제로 붓는 창입니다. 목표 무게에 도달하면 “쉬기”로 표시된 시간까지 기다렸다가 다음 푸어를 시작하세요.
       </p>
 
       <div class="row">
@@ -473,6 +477,13 @@
     font-family: var(--font-mono);
     color: var(--accent-strong);
     font-weight: 700;
+  }
+
+  .pour-row .time-detail {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
   }
 
   .pour-row.done {
