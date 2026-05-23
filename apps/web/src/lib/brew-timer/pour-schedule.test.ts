@@ -8,6 +8,7 @@ import {
   getExpectedWaterG,
   getExpectedWaterGForPhase,
   getBrewPhaseProgressRatio,
+  isBrewPhaseResting,
   getPhaseProgressRatio,
   getPhaseStartWaterG,
   phaseRateGPerSec,
@@ -277,7 +278,7 @@ describe('buildBrewPhases', () => {
     expect(phases.every((p) => p.pourRateGPerSec === undefined || typeof p.pourRateGPerSec === 'number')).toBe(true);
   });
 
-  it('inserts a wait phase when a step ends before the next step starts', () => {
+  it('absorbs the rest into the preceding pour (no separate wait/drawdown phase)', () => {
     const phases = buildBrewPhases(recipe({
       steps: [
         { atSec: 0, endSec: 30, waterG: 60, note: 'Bloom' },
@@ -285,9 +286,11 @@ describe('buildBrewPhases', () => {
       ],
       params: { targetTimeSec: 120 }
     }));
-    expect(phases.map((p) => p.kind)).toEqual(['bloom', 'wait', 'pour', 'drawdown']);
-    expect(phases[1]).toMatchObject({ startSec: 30, endSec: 60, startWaterG: 60, targetWaterG: undefined });
-    expect(phases[3]).toMatchObject({ kind: 'drawdown', startSec: 90, endSec: 120, startWaterG: 200 });
+    expect(phases.map((p) => p.kind)).toEqual(['bloom', 'pour']);
+    // Bloom pours until 0:30, then rests until the next pour starts at 1:00.
+    expect(phases[0]).toMatchObject({ startSec: 0, pourEndSec: 30, endSec: 60, targetWaterG: 60 });
+    // Final pour pours until 1:30, then its rest tail absorbs the drawdown to 2:00.
+    expect(phases[1]).toMatchObject({ startSec: 60, pourEndSec: 90, endSec: 120, startWaterG: 60, targetWaterG: 200 });
   });
 
   it('preserves explicit pourRateGPerSec on the source step', () => {
@@ -309,7 +312,7 @@ describe('buildBrewPhases', () => {
       params: { targetTimeSec: 120 }
     }));
     expect(phases[0].pourRateGPerSec).toBeCloseTo(60 / 30, 6);
-    expect(phases[2].pourRateGPerSec).toBeCloseTo((200 - 60) / 30, 6);
+    expect(phases[1].pourRateGPerSec).toBeCloseTo((200 - 60) / 30, 6);
   });
 
   it('does NOT inject wait/drawdown when no step has endSec (legacy recipes unchanged)', () => {
@@ -347,9 +350,11 @@ describe('getCurrentBrewPhase', () => {
   it('returns the phase whose half-open range contains elapsedSec', () => {
     expect(getCurrentBrewPhase(phases, 0)?.kind).toBe('bloom');
     expect(getCurrentBrewPhase(phases, 29)?.kind).toBe('bloom');
-    expect(getCurrentBrewPhase(phases, 30)?.kind).toBe('wait');
+    // 0:30 is now the bloom block's rest tail, not a separate wait phase.
+    expect(getCurrentBrewPhase(phases, 30)?.kind).toBe('bloom');
     expect(getCurrentBrewPhase(phases, 60)?.kind).toBe('pour');
-    expect(getCurrentBrewPhase(phases, 90)?.kind).toBe('drawdown');
+    // 1:30 is the final pour's rest tail (formerly drawdown), still the pour block.
+    expect(getCurrentBrewPhase(phases, 90)?.kind).toBe('pour');
   });
 
   it('returns null past the final endSec or for invalid input', () => {
@@ -374,14 +379,11 @@ describe('getExpectedWaterGForPhase', () => {
     expect(getExpectedWaterGForPhase(phases[0], 30)).toBeCloseTo(60, 6);
   });
 
-  it('returns startWaterG for wait phases', () => {
-    const wait = phases.find((p) => p.kind === 'wait')!;
-    expect(getExpectedWaterGForPhase(wait, 45)).toBe(60);
-  });
-
-  it('returns startWaterG for drawdown phases', () => {
-    const draw = phases.find((p) => p.kind === 'drawdown')!;
-    expect(getExpectedWaterGForPhase(draw, 100)).toBe(200);
+  it('holds the target weight flat during the rest tail', () => {
+    // Bloom block reaches 60g by 0:30, then rests until 1:00 — should stay 60.
+    expect(getExpectedWaterGForPhase(phases[0], 45)).toBe(60);
+    // Final pour reaches 200g by 1:30, holds through its drawdown tail.
+    expect(getExpectedWaterGForPhase(phases[1], 100)).toBe(200);
   });
 
   it('returns undefined when targetWaterG is missing on a pour phase', () => {
@@ -393,11 +395,37 @@ describe('getExpectedWaterGForPhase', () => {
   });
 });
 
+describe('isBrewPhaseResting', () => {
+  const phases = buildBrewPhases(recipe({
+    steps: [
+      { atSec: 0, endSec: 30, waterG: 60, note: 'Bloom' },
+      { atSec: 60, endSec: 90, waterG: 200, note: 'Pour' }
+    ],
+    params: { targetTimeSec: 120 }
+  }));
+
+  it('is false while still pouring, true only inside the rest tail', () => {
+    expect(isBrewPhaseResting(phases[0], 15)).toBe(false);
+    expect(isBrewPhaseResting(phases[0], 30)).toBe(true);
+    expect(isBrewPhaseResting(phases[0], 45)).toBe(true);
+    expect(isBrewPhaseResting(phases[0], 60)).toBe(false);
+    expect(isBrewPhaseResting(phases[0], 75)).toBe(false);
+  });
+
+  it('is false for a pour with no rest tail (pourEndSec === endSec)', () => {
+    const legacy = buildBrewPhases(recipe({
+      steps: [{ atSec: 0, waterG: 60, note: 'Bloom' }, { atSec: 60, waterG: 200, note: 'Pour' }],
+      params: { targetTimeSec: 120 }
+    }));
+    expect(isBrewPhaseResting(legacy[0], 59)).toBe(false);
+  });
+});
+
 describe('getBrewPhaseProgressRatio', () => {
   it('returns clamped progress within [0, 1]', () => {
     const phase: BrewPhase = {
-      index: 0, kind: 'wait', startSec: 30, endSec: 60,
-      startLabel: '0:30', endLabel: '1:00',
+      index: 0, kind: 'pour', startSec: 30, pourEndSec: 30, endSec: 60,
+      startLabel: '0:30', pourEndLabel: '0:30', endLabel: '1:00',
       startWaterG: 60, targetWaterG: undefined,
       pourRateGPerSec: undefined, note: undefined
     };
