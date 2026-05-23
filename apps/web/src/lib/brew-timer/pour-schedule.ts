@@ -135,14 +135,22 @@ export function phaseRateGPerSec(
   return delta / span;
 }
 
-export type BrewPhaseKind = 'bloom' | 'pour' | 'wait' | 'drawdown';
+export type BrewPhaseKind = 'bloom' | 'pour';
 
 export interface BrewPhase {
   index: number;
   kind: BrewPhaseKind;
   startSec: number;
+  /** When the target weight should be reached. The rest ("쉬는 시간") is the
+   *  tail [pourEndSec, endSec]. Equals endSec when the step has no rest. */
+  pourEndSec: number;
+  /** Next pour's start (or totalSec for the final block). Absorbs the rest so
+   *  the rest is never a separate phase the user can mistake for a new pour. */
   endSec: number;
   startLabel: string;
+  /** Label for pourEndSec — the end of the pour window shown as "0:45–1:03". */
+  pourEndLabel: string;
+  /** Label for endSec — when the rest ends / the next pour begins. */
   endLabel: string;
   startWaterG: number;
   targetWaterG?: number;
@@ -168,78 +176,46 @@ export function buildBrewPhases(recipe: RecipeDoc): BrewPhase[] {
       ? Math.floor(rawTarget)
       : Math.floor(lastStepSec);
 
-  const hasEndSec = timedSteps.some(
-    (s) => typeof s.endSec === 'number' && Number.isFinite(s.endSec)
-  );
-
-  const out: BrewPhase[] = [];
   let cumulativeStart = 0;
-  let lastEmittedEnd = 0;
 
-  timedSteps.forEach((step, j) => {
-    const nextStartSec = Math.floor(timedSteps[j + 1]?.atSec ?? totalSec);
+  return timedSteps.map((step, j): BrewPhase => {
     const startSec = Math.floor(step.atSec);
-    const candidateEnd =
+    // The rest extends to the next pour's start; the final block extends to
+    // totalSec, absorbing what used to be a separate "drawdown" phase.
+    const endSec = Math.floor(timedSteps[j + 1]?.atSec ?? totalSec);
+    // Target weight should be reached at the step's endSec (the pour window);
+    // without one, the pour spans the whole block and has no rest tail.
+    const pourEndSec =
       typeof step.endSec === 'number' &&
       Number.isFinite(step.endSec) &&
       step.endSec > step.atSec &&
-      step.endSec <= nextStartSec
+      step.endSec <= endSec
         ? Math.floor(step.endSec)
-        : nextStartSec;
+        : endSec;
 
-    const pourRate = phaseRateGPerSec(step, cumulativeStart, candidateEnd);
+    const startWaterG = cumulativeStart;
+    const pourRate = phaseRateGPerSec(step, startWaterG, pourEndSec);
 
-    out.push({
-      index: out.length,
+    const phase: BrewPhase = {
+      index: j,
       kind: j === 0 ? 'bloom' : 'pour',
       startSec,
-      endSec: candidateEnd,
+      pourEndSec,
+      endSec,
       startLabel: formatSeconds(startSec),
-      endLabel: formatSeconds(candidateEnd),
-      startWaterG: cumulativeStart,
+      pourEndLabel: formatSeconds(pourEndSec),
+      endLabel: formatSeconds(endSec),
+      startWaterG,
       targetWaterG: step.waterG,
       pourRateGPerSec: pourRate,
       note: step.note
-    });
+    };
 
     if (typeof step.waterG === 'number' && Number.isFinite(step.waterG)) {
       cumulativeStart = step.waterG;
     }
-    lastEmittedEnd = candidateEnd;
-
-    if (hasEndSec && candidateEnd < nextStartSec && j < timedSteps.length - 1) {
-      out.push({
-        index: out.length,
-        kind: 'wait',
-        startSec: candidateEnd,
-        endSec: nextStartSec,
-        startLabel: formatSeconds(candidateEnd),
-        endLabel: formatSeconds(nextStartSec),
-        startWaterG: cumulativeStart,
-        targetWaterG: undefined,
-        pourRateGPerSec: undefined,
-        note: undefined
-      });
-      lastEmittedEnd = nextStartSec;
-    }
+    return phase;
   });
-
-  if (hasEndSec && totalSec > lastEmittedEnd) {
-    out.push({
-      index: out.length,
-      kind: 'drawdown',
-      startSec: lastEmittedEnd,
-      endSec: totalSec,
-      startLabel: formatSeconds(lastEmittedEnd),
-      endLabel: formatSeconds(totalSec),
-      startWaterG: cumulativeStart,
-      targetWaterG: undefined,
-      pourRateGPerSec: undefined,
-      note: undefined
-    });
-  }
-
-  return out;
 }
 
 export function getCurrentBrewPhase(phases: BrewPhase[], elapsedSec: number): BrewPhase | null {
@@ -250,13 +226,20 @@ export function getCurrentBrewPhase(phases: BrewPhase[], elapsedSec: number): Br
   return phases.find((p) => elapsedSec >= p.startSec && elapsedSec < p.endSec) ?? null;
 }
 
+/** True once the pour is done and the block is in its rest tail ("쉬는 시간"). */
+export function isBrewPhaseResting(phase: BrewPhase, elapsedSec: number): boolean {
+  return phase.pourEndSec < phase.endSec && elapsedSec >= phase.pourEndSec;
+}
+
 export function getExpectedWaterGForPhase(
   phase: BrewPhase,
   elapsedSec: number
 ): number | undefined {
-  if (phase.kind === 'wait' || phase.kind === 'drawdown') return phase.startWaterG;
   if (phase.targetWaterG === undefined) return undefined;
-  const span = phase.endSec - phase.startSec;
+  // During the rest tail the target is already reached — hold it flat so the
+  // expected weight never climbs past the target while waiting.
+  if (elapsedSec >= phase.pourEndSec) return phase.targetWaterG;
+  const span = phase.pourEndSec - phase.startSec;
   if (span <= 0) return phase.targetWaterG;
   const ratio = Math.max(0, Math.min(1, (elapsedSec - phase.startSec) / span));
   return phase.startWaterG + ratio * (phase.targetWaterG - phase.startWaterG);
