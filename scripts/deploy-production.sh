@@ -43,7 +43,15 @@ log "running MCP smoke test"
 pnpm mcp:smoke
 
 log "restarting launchd service ${SERVICE_LABEL}"
-launchctl kickstart -k "gui/$(id -u)/${SERVICE_LABEL}"
+LAUNCHD_DOMAIN="${BREWDIAL_LAUNCHD_DOMAIN:-}"
+if [ -z "$LAUNCHD_DOMAIN" ]; then
+  if launchctl print "gui/$(id -u)/${SERVICE_LABEL}" >/dev/null 2>&1; then
+    LAUNCHD_DOMAIN="gui/$(id -u)"
+  else
+    LAUNCHD_DOMAIN="user/$(id -u)"
+  fi
+fi
+launchctl kickstart -k "${LAUNCHD_DOMAIN}/${SERVICE_LABEL}"
 
 log "waiting for local health checks"
 python3 - <<'PY'
