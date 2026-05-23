@@ -263,12 +263,13 @@
     <section class="card brew-timer" aria-label="Pouring timer">
       <div class="dial-wrap">
         {#if currentBrewPhase}
-          <span class="phase-pill">{phasePillLabel(currentBrewPhase)}{inRestTail ? ' · 쉬는 중' : ''}</span>
+          <span class="phase-pill" class:resting={inRestTail}>{phasePillLabel(currentBrewPhase)}{inRestTail ? ' · 쉬는 중' : ''}</span>
         {:else if timerDone}
           <span class="phase-pill">Done</span>
         {/if}
         <div
           class="dial"
+          class:resting={inRestTail}
           style="--dial-progress: {dialProgress}"
           role="timer"
           aria-label="추출 경과 시간"
@@ -591,6 +592,6 @@
   }
 
   .phase-progress.phase-kind-wait .phase-progress-fill {
-    background: var(--surface-strong, var(--text-muted));
+    background: var(--rest);
   }
 </style>

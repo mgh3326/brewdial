@@ -16,6 +16,11 @@
   --accent-strong: #4a321f;
   --accent-soft: #efe6dc;
 
+  /* Rest tail ("쉬는 중"): calm sage/teal, the cool opposite of the warm pour accent. */
+  --rest: #5b8a7a;
+  --rest-strong: #3a6053;
+  --rest-soft: #e3ede9;
+
   --danger-bg: #fdecea;
   --danger-border: #e0b4b4;
   --danger-text: #7a1f1f;
@@ -428,6 +433,41 @@ a:hover {
   color: var(--text-muted);
 }
 
+/* Rest tail: recolor the dial to calm sage/teal and let the arc gently breathe,
+   so "쉬는 중" reads at a glance without changing what the arc measures. */
+.dial.resting::before {
+  background: conic-gradient(
+    var(--rest) calc(var(--dial-progress, 0) * 360deg),
+    var(--surface-muted) 0
+  );
+  animation: dial-breathe 2.6s ease-in-out infinite;
+}
+
+.dial.resting .clock .time {
+  color: var(--rest-strong);
+}
+
+.phase-pill.resting {
+  background: var(--rest-soft);
+  color: var(--rest-strong);
+}
+
+@keyframes dial-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dial.resting::before {
+    animation: none;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141414;
@@ -441,6 +481,10 @@ a:hover {
     --accent: #d4a574;
     --accent-strong: #f0c89a;
     --accent-soft: #2e251c;
+
+    --rest: #7fb3a3;
+    --rest-strong: #a9d4c6;
+    --rest-soft: #1e2b27;
 
     --danger-bg: #3a1f1f;
     --danger-border: #6b3a3a;
