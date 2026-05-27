@@ -148,14 +148,14 @@ Add, in both `:root` and the dark-mode block (contrast-checked):
 
 ## Acceptance criteria (from issue)
 
-- [ ] With >20 recipes, `/recipes` exposes a working way to reach older/newer
+- [x] With >20 recipes, `/recipes` exposes a working way to reach older/newer
       pages; reloading a `?page=N` URL preserves the expected list state.
-- [ ] No duplicate or skipped cards across page transitions in normal sort order.
-- [ ] Mobile (390×844): before start, the timer is usable without scrolling far
+- [x] No duplicate or skipped cards across page transitions in normal sort order.
+- [x] Mobile (390×844): before start, the timer is usable without scrolling far
       below the timer content; after start, Pause/Resume/Reset stay reachable
       without losing current-phase context.
-- [ ] Active pour uses the pour color; wait/rest switches to a clearly different
+- [x] Active pour uses the pour color; wait/rest switches to a clearly different
       wait color; current-phase copy matches state.
-- [ ] Dark-mode contrast acceptable; no return of prior dark-mode control
+- [x] Dark-mode contrast acceptable; no return of prior dark-mode control
       visibility regression.
-- [ ] `pnpm check` / `build` / `test` / `lint` pass; targeted smoke reported.
+- [x] `pnpm check` / `build` / `test` / `lint` pass; targeted smoke reported.
