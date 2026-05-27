@@ -347,12 +347,6 @@
       </p>
 
       <div class="row">
-        {#if isTimerRunning}
-          <button class="btn" type="button" onclick={pauseTimer}>Pause</button>
-        {:else}
-          <button class="btn" type="button" onclick={startTimer}>{elapsedSec > 0 ? 'Resume' : 'Start brew'}</button>
-        {/if}
-        <button class="btn btn-secondary" type="button" onclick={resetTimer}>Reset</button>
         {#if notificationPermission === 'default'}
           <button class="btn btn-secondary" type="button" onclick={requestNotifications}>알림 허용</button>
         {/if}
@@ -361,6 +355,15 @@
           사운드
         </label>
         <button class="btn btn-secondary" type="button" onclick={testSound}>사운드 테스트</button>
+      </div>
+
+      <div class="timer-actions">
+        {#if isTimerRunning}
+          <button class="btn" type="button" onclick={pauseTimer}>Pause</button>
+        {:else}
+          <button class="btn" type="button" onclick={startTimer}>{elapsedSec > 0 ? 'Resume' : 'Start brew'}</button>
+        {/if}
+        <button class="btn btn-secondary" type="button" onclick={resetTimer}>Reset</button>
       </div>
     </section>
   {/if}
@@ -592,5 +595,26 @@
 
   .phase-progress.phase-kind-wait .phase-progress-fill {
     background: var(--surface-strong, var(--text-muted));
+  }
+
+  .timer-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    gap: 0.75rem;
+    /* Bleed to the card edges and sit flush at the card's bottom. */
+    margin: 0.25rem -1rem -1rem;
+    padding: 0.75rem 1rem;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+    border-bottom-left-radius: var(--radius);
+    border-bottom-right-radius: var(--radius);
+  }
+
+  .timer-actions .btn {
+    flex: 1;
   }
 </style>
