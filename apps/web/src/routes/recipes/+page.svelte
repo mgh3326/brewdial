@@ -32,4 +32,38 @@
       {/each}
     </div>
   {/if}
+
+  {#if data.totalPages > 1}
+    <nav class="pager" aria-label="레시피 페이지">
+      {#if data.page > 1}
+        <a class="btn btn-secondary" href="?page={data.page - 1}" rel="prev">← 이전</a>
+      {:else}
+        <span class="btn btn-secondary pager-disabled" aria-disabled="true">← 이전</span>
+      {/if}
+      <span class="pager-status muted">{data.page} / {data.totalPages} 페이지</span>
+      {#if data.page < data.totalPages}
+        <a class="btn btn-secondary" href="?page={data.page + 1}" rel="next">다음 →</a>
+      {:else}
+        <span class="btn btn-secondary pager-disabled" aria-disabled="true">다음 →</span>
+      {/if}
+    </nav>
+  {/if}
 </section>
+
+<style>
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .pager-status {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pager-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+</style>
