@@ -5,6 +5,7 @@ import { nextRecipeCode } from './counters';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const DEFAULT_PAGE_SIZE = 20;
 
 export async function createRecipe(
   config: CouchConfig,
@@ -43,12 +44,10 @@ export async function getRecipeByCode(
   return getDocument<RecipeDoc>(config, `recipe:${code}`, fetchImpl);
 }
 
-export async function listRecentRecipes(
+async function fetchAllRecipesSorted(
   config: CouchConfig,
-  limit: number = DEFAULT_LIMIT,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc[]> {
-  const safeLimit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit) || DEFAULT_LIMIT));
   const docs = await getAllDocuments<RecipeDoc>(
     config,
     {
@@ -60,6 +59,47 @@ export async function listRecentRecipes(
   );
   return docs
     .slice()
-    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
-    .slice(0, safeLimit);
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
+
+export async function listRecentRecipes(
+  config: CouchConfig,
+  limit: number = DEFAULT_LIMIT,
+  fetchImpl: typeof fetch = fetch
+): Promise<RecipeDoc[]> {
+  const safeLimit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit) || DEFAULT_LIMIT));
+  const sorted = await fetchAllRecipesSorted(config, fetchImpl);
+  return sorted.slice(0, safeLimit);
+}
+
+export interface RecipePage {
+  recipes: RecipeDoc[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export async function listRecipesPage(
+  config: CouchConfig,
+  opts: { page?: number; pageSize?: number } = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<RecipePage> {
+  const pageSize = Math.max(
+    1,
+    Math.min(MAX_LIMIT, Math.floor(opts.pageSize ?? DEFAULT_PAGE_SIZE) || DEFAULT_PAGE_SIZE)
+  );
+  const sorted = await fetchAllRecipesSorted(config, fetchImpl);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const rawPage = Math.floor(opts.page ?? 1);
+  const page = Math.max(
+    1,
+    Math.min(totalPages, Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1)
+  );
+  const start = (page - 1) * pageSize;
+  const recipes = sorted.slice(start, start + pageSize);
+  return { recipes, total, page, pageSize, totalPages };
+}
+
+export { DEFAULT_PAGE_SIZE };

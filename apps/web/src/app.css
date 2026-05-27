@@ -15,6 +15,9 @@
   --accent: #6f4e37;
   --accent-strong: #4a321f;
   --accent-soft: #efe6dc;
+  --wait: #4a6fa5;
+  --wait-strong: #2f4f7a;
+  --wait-soft: #e6edf5;
 
   --danger-bg: #fdecea;
   --danger-border: #e0b4b4;
@@ -382,8 +385,14 @@ a:hover {
   letter-spacing: 0.06em;
 }
 
+.phase-pill-wait {
+  background: var(--wait-soft);
+  color: var(--wait-strong);
+}
+
 /* Brew-timer dial - circular progress with mono readout. --dial-progress is 0..1. */
 .dial {
+  --dial-fill: var(--accent);
   position: relative;
   width: min(240px, 70vw);
   aspect-ratio: 1;
@@ -395,13 +404,17 @@ a:hover {
   margin: 0 auto;
 }
 
+.dial.is-waiting {
+  --dial-fill: var(--wait);
+}
+
 .dial::before {
   content: '';
   position: absolute;
   inset: 8px;
   border-radius: 50%;
   background: conic-gradient(
-    var(--accent) calc(var(--dial-progress, 0) * 360deg),
+    var(--dial-fill, var(--accent)) calc(var(--dial-progress, 0) * 360deg),
     var(--surface-muted) 0
   );
   -webkit-mask: radial-gradient(circle, transparent 0 calc(50% - 8px), #000 calc(50% - 8px));
@@ -441,6 +454,9 @@ a:hover {
     --accent: #d4a574;
     --accent-strong: #f0c89a;
     --accent-soft: #2e251c;
+    --wait: #6f9bd6;
+    --wait-strong: #9bc0ef;
+    --wait-soft: #1c2738;
 
     --danger-bg: #3a1f1f;
     --danger-border: #6b3a3a;
