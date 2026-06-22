@@ -27,6 +27,10 @@ export default defineConfig(({ command, mode }) => {
     // Relative base so assets resolve inside the Toss WebView; load repo-root .env.
     base: './',
     envDir: '../../',
+    // Surface the build target to runtime code (Sentry tags Toss vs. web errors).
+    define: {
+      __BREWDIAL_TARGET__: JSON.stringify(isWeb ? 'web' : 'toss'),
+    },
     ...(isWeb
       ? {
           resolve: {
