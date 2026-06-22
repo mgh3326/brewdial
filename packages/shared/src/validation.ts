@@ -12,8 +12,10 @@ import type {
 import { QUICK_FEEDBACK_TAGS } from './types.js';
 
 export type ValidationResult<T> =
-  | { ok: true; value: T }
+  | { ok: true; value: T; warnings: string[] }
   | { ok: false; errors: string[] };
+
+const POUR_OVER_METHODS: ReadonlySet<BrewMethod> = new Set(['v60', 'kalita', 'aeropress']);
 
 const BREW_METHODS: readonly BrewMethod[] = [
   'v60',
@@ -150,15 +152,15 @@ function validateRecipeSteps(
     }
     const built: RecipeStep = { note };
     if (step.atSec !== undefined) {
-      if (typeof step.atSec !== 'number') {
-        errors.push(`steps[${i}].atSec must be a number`);
+      if (typeof step.atSec !== 'number' || !Number.isFinite(step.atSec)) {
+        errors.push(`steps[${i}].atSec must be a finite number`);
       } else {
         built.atSec = step.atSec;
       }
     }
     if (step.waterG !== undefined) {
-      if (typeof step.waterG !== 'number') {
-        errors.push(`steps[${i}].waterG must be a number`);
+      if (typeof step.waterG !== 'number' || !Number.isFinite(step.waterG)) {
+        errors.push(`steps[${i}].waterG must be a finite number`);
       } else {
         built.waterG = step.waterG;
       }
@@ -190,6 +192,104 @@ function validateRecipeSteps(
     out.push(built);
   });
   return out;
+}
+
+// ROB-608: cross-field arithmetic + range checks. Clear contradictions go to
+// `errors` (reject); convention deviations to `warnings` (soft). `method:'other'`
+// (instant sticks etc.) is exempt; espresso skips the pour-over water schedule.
+function validateRecipeCrossFields(
+  value: CreateRecipeInput,
+  errors: string[],
+  warnings: string[]
+): void {
+  const { method } = value;
+  if (method === 'other') return;
+
+  const params = value.params ?? {};
+  const steps = value.steps ?? [];
+  const { doseG, waterG, tempC, ratio, targetTimeSec } = params;
+  const isPourOver = POUR_OVER_METHODS.has(method);
+
+  if (doseG !== undefined && doseG <= 0) errors.push('params.doseG must be greater than 0');
+  if (waterG !== undefined && waterG <= 0) errors.push('params.waterG must be greater than 0');
+  if (tempC !== undefined) {
+    if (tempC <= 0 || tempC > 100) errors.push('params.tempC must be between 0 and 100');
+    else if (tempC < 80) warnings.push(`params.tempC ${tempC}°C is unusually low for hot brewing`);
+  }
+  if (targetTimeSec !== undefined && targetTimeSec <= 0) {
+    errors.push('params.targetTimeSec must be greater than 0');
+  }
+
+  if (ratio !== undefined && doseG && waterG) {
+    const m = /^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$/.exec(ratio);
+    if (m) {
+      const declared = Number(m[1]);
+      const actual = waterG / doseG;
+      if (Number.isFinite(declared) && Math.abs(declared - actual) > 0.3) {
+        warnings.push(`ratio ${ratio} disagrees with waterG/doseG (≈1:${actual.toFixed(1)})`);
+      }
+    }
+  }
+
+  const timed = steps
+    .filter((s): s is RecipeStep & { atSec: number } => typeof s.atSec === 'number')
+    .slice()
+    .sort((a, b) => a.atSec - b.atSec);
+
+  for (let i = 1; i < timed.length; i += 1) {
+    const prev = timed[i - 1];
+    const cur = timed[i];
+    if (typeof prev.endSec === 'number' && cur.atSec < prev.endSec) {
+      errors.push(
+        `steps overlap: a step starts at ${cur.atSec}s before the previous step ends (${prev.endSec}s)`
+      );
+    }
+  }
+  if (timed.some((s) => s.endSec === undefined)) {
+    warnings.push('a timed step has no endSec; pour timing cannot be fully verified');
+  }
+
+  if (isPourOver) {
+    const weighted = timed.filter(
+      (s): s is RecipeStep & { atSec: number; waterG: number } => typeof s.waterG === 'number'
+    );
+    for (let i = 1; i < weighted.length; i += 1) {
+      if (weighted[i].waterG < weighted[i - 1].waterG) {
+        errors.push(
+          `cumulative step waterG decreases (${weighted[i - 1].waterG}g → ${weighted[i].waterG}g)`
+        );
+      }
+    }
+    if (waterG !== undefined) {
+      for (const s of weighted) {
+        if (s.waterG > waterG) {
+          errors.push(`a step waterG (${s.waterG}g) exceeds total params.waterG (${waterG}g)`);
+        }
+      }
+      const finalG = weighted.at(-1)?.waterG;
+      if (finalG !== undefined && Math.abs(finalG - waterG) > 1) {
+        warnings.push(`final step waterG (${finalG}g) does not reach params.waterG (${waterG}g)`);
+      }
+    }
+  }
+
+  if (targetTimeSec !== undefined && timed.length > 0) {
+    const lastEnd = Math.max(
+      ...timed.map((s) => (typeof s.endSec === 'number' ? s.endSec : s.atSec))
+    );
+    if (targetTimeSec < lastEnd) {
+      errors.push(
+        `params.targetTimeSec (${targetTimeSec}s) is before the last pour ends (${lastEnd}s)`
+      );
+    } else if (targetTimeSec - lastEnd > 75) {
+      warnings.push(
+        `unrealistic drawdown: targetTimeSec (${targetTimeSec}s) is ${targetTimeSec - lastEnd}s after the last pour ends`
+      );
+    }
+    if (isPourOver && (targetTimeSec < 60 || targetTimeSec > 600)) {
+      warnings.push(`params.targetTimeSec (${targetTimeSec}s) is outside the typical 60–600s range`);
+    }
+  }
 }
 
 export function validateCreateRecipeInput(
@@ -256,7 +356,11 @@ export function validateCreateRecipeInput(
   if (adjustmentFromPrevious !== undefined) value.adjustmentFromPrevious = adjustmentFromPrevious;
   if (createdBy !== undefined) value.createdBy = createdBy;
 
-  return { ok: true, value };
+  const warnings: string[] = [];
+  validateRecipeCrossFields(value, errors, warnings);
+  if (errors.length > 0) return { ok: false, errors };
+
+  return { ok: true, value, warnings };
 }
 
 function validateRatings(
@@ -394,5 +498,5 @@ export function validateCreateFeedbackInput(
   if (nextHint !== undefined) value.nextHint = nextHint;
   if (source !== undefined) value.source = source;
 
-  return { ok: true, value };
+  return { ok: true, value, warnings: [] };
 }

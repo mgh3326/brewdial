@@ -2,6 +2,10 @@ export type BrewMethod = 'v60' | 'espresso' | 'aeropress' | 'kalita' | 'other';
 
 export type RecipeCode = `COF-${string}`;
 
+// ROB-609: lineage + lifecycle status so re-saves vs intended variants are
+// structurally distinguishable (not just free-text).
+export type RecipeStatus = 'active' | 'superseded' | 'archived' | 'test';
+
 export type RatingValue = 0 | 1 | 2 | 3 | 4;
 
 export type OverallRating = 1 | 2 | 3 | 4 | 5;
@@ -51,6 +55,10 @@ export interface RecipeDoc {
   notes?: string;
   adjustmentFromPrevious?: string;
   createdBy: 'agent' | 'manual';
+  status?: RecipeStatus;
+  supersedes?: RecipeCode;
+  supersededBy?: RecipeCode;
+  parentCode?: RecipeCode;
   createdAt: string;
   updatedAt: string;
 }
