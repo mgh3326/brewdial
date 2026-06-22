@@ -1,17 +1,16 @@
 import { Button, Top } from '@toss/tds-mobile';
 import { useEffect, useState } from 'react';
-import { listRecentRecipes } from '../lib/data/recipes';
-import type { RecipeDoc } from '../lib/domain';
-import RecipeCard from '../components/RecipeCard';
+import { listBeans, type BeanSummary } from '../lib/data/beans';
+import BeanCard from '../components/BeanCard';
 
-export default function Home() {
-  const [recipes, setRecipes] = useState<RecipeDoc[]>([]);
+export default function Beans() {
+  const [beans, setBeans] = useState<BeanSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listRecentRecipes(100)
-      .then(setRecipes)
+    listBeans()
+      .then(setBeans)
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
   }, []);
@@ -19,11 +18,9 @@ export default function Home() {
   return (
     <>
       <Top
-        title={<Top.TitleParagraph size={28}>다음 브루를 다이얼인 ☕</Top.TitleParagraph>}
+        title={<Top.TitleParagraph size={28}>원두로 찾는 레시피 ☕</Top.TitleParagraph>}
         subtitleBottom={
-          <Top.SubtitleParagraph size={15}>
-            레시피와 추출 타이머, 피드백을 한 곳에서.
-          </Top.SubtitleParagraph>
+          <Top.SubtitleParagraph size={15}>원두를 고르면 그 원두의 레시피가 나와요.</Top.SubtitleParagraph>
         }
       />
       <div className="screen">
@@ -36,15 +33,15 @@ export default function Home() {
         {error && <div className="error-panel">불러오기 실패: {error}</div>}
 
         <section className="stack-tight">
-          <h2>레시피{!loading && !error ? ` ${recipes.length}개` : ''}</h2>
+          <h2>원두{!loading && !error ? ` ${beans.length}종` : ''}</h2>
           {loading ? (
             <p className="muted">불러오는 중…</p>
-          ) : recipes.length === 0 && !error ? (
-            <p className="empty">아직 레시피가 없어요. 첫 레시피를 만들어 보세요.</p>
+          ) : beans.length === 0 && !error ? (
+            <p className="empty">아직 원두가 없어요. 새 레시피를 만들면 원두가 자동으로 묶여요.</p>
           ) : (
             <div className="stack">
-              {recipes.map((r) => (
-                <RecipeCard key={r._id} recipe={r} />
+              {beans.map((b) => (
+                <BeanCard key={b.id} bean={b} />
               ))}
             </div>
           )}

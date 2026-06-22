@@ -1,5 +1,6 @@
 import { useHashPath } from './lib/useRoute';
-import Home from './pages/Home';
+import Beans from './pages/Beans';
+import BeanDetail from './pages/BeanDetail';
 import NewRecipe from './pages/NewRecipe';
 import RecipeDetail from './pages/RecipeDetail';
 
@@ -11,9 +12,11 @@ export default function App() {
 
   if (path === '/recipes/new') return <NewRecipe />;
 
-  // Single main screen — the recipe list. (Home and the old /recipes list were
-  // duplicates, so they're merged and the bottom tab bar is removed.)
-  if (path === '/' || path === '/recipes' || path === '/recipes/') return <Home />;
+  const beanMatch = /^\/beans\/(.+)$/.exec(path);
+  if (beanMatch) return <BeanDetail key={beanMatch[1]} id={decodeURIComponent(beanMatch[1])} />;
+
+  // Home = bean-centric list (ROB-610). '/recipes' kept as an alias.
+  if (path === '/' || path === '/recipes' || path === '/recipes/') return <Beans />;
 
   return (
     <div className="screen">

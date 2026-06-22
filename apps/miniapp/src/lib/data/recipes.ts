@@ -30,6 +30,18 @@ export async function getRecipeByCode(code: RecipeCode): Promise<RecipeDoc | nul
   return data ? rowToRecipe(data as RecipeRow) : null;
 }
 
+// Active recipes for one bean (ROB-610 bean-centric view), newest first.
+export async function listRecipesByBean(beanId: string): Promise<RecipeDoc[]> {
+  const { data, error } = await supabase
+    .from('recipes')
+    .select(RECIPE_COLUMNS)
+    .eq('bean_id', beanId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false });
+  if (error) throw dbError('listRecipesByBean', error.message);
+  return (data as RecipeRow[]).map(rowToRecipe);
+}
+
 // Anonymous clients can only create human ('manual') recipes — RLS enforces it.
 // AI/agent recipes are created by the MCP server via the service role key.
 export async function createRecipe(input: CreateRecipeInput): Promise<RecipeDoc> {

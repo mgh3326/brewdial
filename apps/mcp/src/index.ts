@@ -66,7 +66,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial (Supabase). The recipe appears in the App-in-Toss mini-app immediately. Returns the COF-NNNN code. If a near-identical recipe already exists it is returned instead (pass force=true to create anyway). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
+      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,8 +78,7 @@ const TOOLS: Tool[] = [
         steps: STEPS_SCHEMA,
         intent: { type: 'array', items: { type: 'string' } },
         notes: { type: 'string' },
-        adjustmentFromPrevious: { type: 'string' },
-        force: { type: 'boolean', description: 'Create even if a near-duplicate exists (default false)' }
+        adjustmentFromPrevious: { type: 'string' }
       },
       required: ['method', 'title']
     }

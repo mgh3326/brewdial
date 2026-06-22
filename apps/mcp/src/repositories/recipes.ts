@@ -149,19 +149,29 @@ function numEq(a: number | undefined, b: number | undefined): boolean {
   if (a == null || b == null) return false;
   return Math.abs(a - b) < 1e-6;
 }
+// Pour-structure fingerprint: ordered (atSec, cumulative waterG) pairs. Different
+// pour counts / timings / amounts yield different signatures.
+function stepSignature(steps: RecipeStep[] | undefined): string {
+  if (!steps || steps.length === 0) return '';
+  return steps
+    .map((s) => `${typeof s.atSec === 'number' ? s.atSec : ''}:${typeof s.waterG === 'number' ? s.waterG : ''}`)
+    .join('|');
+}
 
-/** A candidate is "similar" if method + bean name + dose/water/temp/ratio match. */
+/**
+ * "Similar" = same method + bean + dose/water/temp/ratio AND the same pour
+ * schedule (steps + targetTimeSec). ROB-610: pour structure is part of the key,
+ * so intended variants on the same bean (e.g. 2-pour vs 3-pour) are NOT dupes.
+ */
 export function isSimilarRecipe(existing: RecipeDoc, input: CreateRecipeInput): boolean {
   if (existing.method !== input.method) return false;
   if (norm(existing.beanSnapshot?.name) !== norm(input.beanSnapshot?.name)) return false;
   const ep = existing.params ?? {};
   const ip = input.params ?? {};
-  return (
-    numEq(ep.doseG, ip.doseG) &&
-    numEq(ep.waterG, ip.waterG) &&
-    numEq(ep.tempC, ip.tempC) &&
-    norm(ep.ratio) === norm(ip.ratio)
-  );
+  if (!numEq(ep.doseG, ip.doseG) || !numEq(ep.waterG, ip.waterG)) return false;
+  if (!numEq(ep.tempC, ip.tempC) || norm(ep.ratio) !== norm(ip.ratio)) return false;
+  if (!numEq(ep.targetTimeSec, ip.targetTimeSec)) return false;
+  return stepSignature(existing.steps) === stepSignature(input.steps);
 }
 
 export async function findSimilarRecipes(
