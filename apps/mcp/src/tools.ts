@@ -1,86 +1,166 @@
-import type { RecipeCode } from '@brewdial/shared';
+import type { RecipeCode, RecipeStatus } from '@brewdial/shared';
 import { isRecipeCode, validateCreateFeedbackInput, validateCreateRecipeInput } from '@brewdial/shared';
-import type { CouchConfig } from './config.js';
+import type { SupabaseConfig } from './config.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
 import { createFeedback } from './repositories/feedback.js';
-import { createRecipe } from './repositories/recipes.js';
+import {
+  createRecipe,
+  findSimilarRecipes,
+  setRecipeStatus,
+  supersedeRecipe,
+  updateRecipe,
+  type RecipeUpdate,
+} from './repositories/recipes.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 }
 
+const RECIPE_STATUSES: RecipeStatus[] = ['active', 'superseded', 'archived', 'test'];
+
+function jsonResult(obj: unknown): ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };
+}
+function jsonError(obj: unknown): ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }], isError: true };
+}
+function errorResult(text: string): ToolResult {
+  return { content: [{ type: 'text', text }], isError: true };
+}
+
 export async function handleCreateRecipe(
-  config: CouchConfig,
+  config: SupabaseConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
+  const force = args?.force === true;
   const validation = validateCreateRecipeInput({ ...(args ?? {}), createdBy: 'agent' });
   if (!validation.ok) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            { ok: false, error: 'Invalid recipe input', details: validation.errors },
-            null,
-            2
-          )
-        }
-      ],
-      isError: true
-    };
+    return jsonError({ ok: false, error: 'Invalid recipe input', details: validation.errors });
   }
 
   try {
+    // ROB-607: avoid creating a near-duplicate (same method + bean + dose/water/
+    // temp/ratio). Return the existing recipe(s) unless force:true is passed.
+    if (!force) {
+      const similar = await findSimilarRecipes(config, validation.value);
+      if (similar.length > 0) {
+        return jsonResult({
+          ok: true,
+          duplicate: true,
+          existing: similar.map((s) => ({ code: s.code, title: s.title, status: s.status })),
+          message: `같은 조건의 레시피가 이미 있어요 (${similar
+            .map((s) => s.code)
+            .join(', ')}). 그래도 새로 만들려면 force=true로 다시 호출하세요.`,
+        });
+      }
+    }
+
     const recipe = await createRecipe(config, validation.value);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              ok: true,
-              recipe,
-              display: {
-                code: recipe.code,
-                instruction:
-                  'Include this recipe code in the Discord reply so the user can find and give feedback later.'
-              }
-            },
-            null,
-            2
-          )
-        }
-      ]
-    };
+    if (validation.warnings.length > 0) {
+      return jsonResult({ ok: true, recipe, warnings: validation.warnings, display: { code: recipe.code } });
+    }
+    return jsonResult({
+      ok: true,
+      recipe,
+      display: {
+        code: recipe.code,
+        instruction:
+          'Include this recipe code in the reply so the user can find it and give feedback later.',
+      },
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error creating recipe: ${message}` }],
-      isError: true
-    };
+    return errorResult(`Error creating recipe: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleUpdateRecipe(
+  config: SupabaseConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const code = args?.code;
+  if (typeof code !== 'string' || !isRecipeCode(code)) {
+    return errorResult('Invalid recipe code: expected format COF-NNNN');
+  }
+  const patch: RecipeUpdate = {};
+  if (typeof args?.title === 'string') patch.title = args.title;
+  if (args?.params && typeof args.params === 'object') patch.params = args.params as RecipeUpdate['params'];
+  if (Array.isArray(args?.steps)) patch.steps = args.steps as RecipeUpdate['steps'];
+  if (typeof args?.notes === 'string') patch.notes = args.notes;
+  if (Array.isArray(args?.intent)) patch.intent = args.intent as string[];
+  if (args?.beanSnapshot && typeof args.beanSnapshot === 'object') {
+    patch.beanSnapshot = args.beanSnapshot as RecipeUpdate['beanSnapshot'];
+  }
+  if (typeof args?.adjustmentFromPrevious === 'string') {
+    patch.adjustmentFromPrevious = args.adjustmentFromPrevious;
+  }
+  if (Object.keys(patch).length === 0) {
+    return errorResult('No updatable fields provided (title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious).');
+  }
+
+  try {
+    const recipe = await updateRecipe(config, code as RecipeCode, patch);
+    if (!recipe) return jsonResult({ ok: false, error: `Recipe ${code} not found` });
+    return jsonResult({ ok: true, recipe });
+  } catch (error) {
+    return errorResult(`Error updating recipe: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleArchiveRecipe(
+  config: SupabaseConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const code = args?.code;
+  if (typeof code !== 'string' || !isRecipeCode(code)) {
+    return errorResult('Invalid recipe code: expected format COF-NNNN');
+  }
+  const status = (typeof args?.status === 'string' ? args.status : 'archived') as RecipeStatus;
+  if (!RECIPE_STATUSES.includes(status)) {
+    return errorResult(`Invalid status: expected one of ${RECIPE_STATUSES.join(', ')}`);
+  }
+  try {
+    const recipe = await setRecipeStatus(config, code as RecipeCode, status);
+    if (!recipe) return jsonResult({ ok: false, error: `Recipe ${code} not found` });
+    return jsonResult({ ok: true, recipe: { code: recipe.code, status: recipe.status } });
+  } catch (error) {
+    return errorResult(`Error archiving recipe: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleSupersedeRecipe(
+  config: SupabaseConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const oldCode = args?.oldCode;
+  const newCode = args?.newCode;
+  if (typeof oldCode !== 'string' || !isRecipeCode(oldCode)) {
+    return errorResult('Invalid oldCode: expected format COF-NNNN');
+  }
+  if (typeof newCode !== 'string' || !isRecipeCode(newCode)) {
+    return errorResult('Invalid newCode: expected format COF-NNNN');
+  }
+  try {
+    const result = await supersedeRecipe(config, oldCode as RecipeCode, newCode as RecipeCode);
+    if (!result.old) return jsonResult({ ok: false, error: `Recipe ${oldCode} not found` });
+    if (!result.replacement) return jsonResult({ ok: false, error: `Recipe ${newCode} not found` });
+    return jsonResult({
+      ok: true,
+      superseded: { code: result.old.code, status: result.old.status, supersededBy: result.old.supersededBy },
+      replacement: { code: result.replacement.code, supersedes: result.replacement.supersedes },
+    });
+  } catch (error) {
+    return errorResult(`Error superseding recipe: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 export async function handleCreateFeedback(
-  config: CouchConfig,
+  config: SupabaseConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const validation = validateCreateFeedbackInput(args ?? {});
   if (!validation.ok) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            { ok: false, error: 'Invalid feedback input', details: validation.errors },
-            null,
-            2
-          )
-        }
-      ],
-      isError: true
-    };
+    return jsonError({ ok: false, error: 'Invalid feedback input', details: validation.errors });
   }
 
   const value = validation.value;
@@ -88,88 +168,51 @@ export async function handleCreateFeedback(
 
   try {
     const feedback = await createFeedback(config, value);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              ok: true,
-              feedback: {
-                _id: feedback._id,
-                recipeCode: feedback.recipeCode,
-                rawComment: feedback.rawComment ?? feedback.comment ?? null,
-                quickTags: feedback.quickTags ?? [],
-                ratings: feedback.ratings ?? null,
-                source: feedback.source,
-                createdAt: feedback.createdAt
-              }
-            },
-            null,
-            2
-          )
-        }
-      ]
-    };
+    return jsonResult({
+      ok: true,
+      feedback: {
+        _id: feedback._id,
+        recipeCode: feedback.recipeCode,
+        rawComment: feedback.rawComment ?? feedback.comment ?? null,
+        quickTags: feedback.quickTags ?? [],
+        ratings: feedback.ratings ?? null,
+        source: feedback.source,
+        createdAt: feedback.createdAt,
+      },
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error creating feedback: ${message}` }],
-      isError: true
-    };
+    return errorResult(`Error creating feedback: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 export async function handleGetRecentContext(
-  config: CouchConfig,
+  config: SupabaseConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const rawLimit = args?.limit;
   const limit = typeof rawLimit === 'number' ? rawLimit : undefined;
   const safeLimit = parseContextLimit(limit);
-
   try {
     const context = await buildRecentContext(config, safeLimit);
-    return {
-      content: [{ type: 'text', text: JSON.stringify(context, null, 2) }]
-    };
+    return jsonResult(context);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error fetching recent context: ${message}` }],
-      isError: true
-    };
+    return errorResult(`Error fetching recent context: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 export async function handleGetRecipeContext(
-  config: CouchConfig,
+  config: SupabaseConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const code = args?.code;
-
   if (typeof code !== 'string' || !isRecipeCode(code)) {
-    return {
-      content: [{ type: 'text', text: `Invalid recipe code: expected format COF-NNNN (e.g., COF-0001)` }],
-      isError: true
-    };
+    return errorResult('Invalid recipe code: expected format COF-NNNN (e.g., COF-0001)');
   }
-
   try {
     const context = await buildRecipeContext(config, code as RecipeCode);
-    if (!context) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ found: false, code }, null, 2) }]
-      };
-    }
-    return {
-      content: [{ type: 'text', text: JSON.stringify(context, null, 2) }]
-    };
+    if (!context) return jsonResult({ found: false, code });
+    return jsonResult(context);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error fetching recipe context: ${message}` }],
-      isError: true
-    };
+    return errorResult(`Error fetching recipe context: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
