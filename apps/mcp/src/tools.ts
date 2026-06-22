@@ -33,34 +33,18 @@ export async function handleCreateRecipe(
   config: SupabaseConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
-  const force = args?.force === true;
   const validation = validateCreateRecipeInput({ ...(args ?? {}), createdBy: 'agent' });
   if (!validation.ok) {
     return jsonError({ ok: false, error: 'Invalid recipe input', details: validation.errors });
   }
 
   try {
-    // ROB-607: avoid creating a near-duplicate (same method + bean + dose/water/
-    // temp/ratio). Return the existing recipe(s) unless force:true is passed.
-    if (!force) {
-      const similar = await findSimilarRecipes(config, validation.value);
-      if (similar.length > 0) {
-        return jsonResult({
-          ok: true,
-          duplicate: true,
-          existing: similar.map((s) => ({ code: s.code, title: s.title, status: s.status })),
-          message: `같은 조건의 레시피가 이미 있어요 (${similar
-            .map((s) => s.code)
-            .join(', ')}). 그래도 새로 만들려면 force=true로 다시 호출하세요.`,
-        });
-      }
-    }
-
+    // ROB-610: dedup is a soft WARNING, never a block. Pour structure (steps +
+    // targetTimeSec) is part of the similarity key, so same-bean variants are
+    // allowed; we just surface possibleDuplicateOf so the agent can link lineage.
+    const similar = await findSimilarRecipes(config, validation.value);
     const recipe = await createRecipe(config, validation.value);
-    if (validation.warnings.length > 0) {
-      return jsonResult({ ok: true, recipe, warnings: validation.warnings, display: { code: recipe.code } });
-    }
-    return jsonResult({
+    const out: Record<string, unknown> = {
       ok: true,
       recipe,
       display: {
@@ -68,7 +52,15 @@ export async function handleCreateRecipe(
         instruction:
           'Include this recipe code in the reply so the user can find it and give feedback later.',
       },
-    });
+    };
+    if (similar.length > 0) {
+      out.possibleDuplicateOf = similar.map((s) => ({ code: s.code, title: s.title, status: s.status }));
+      out.note = `비슷한 레시피가 있어요 (${similar
+        .map((s) => s.code)
+        .join(', ')}). 의도된 변형이면 supersede_recipe로 계보를 이어도 좋아요.`;
+    }
+    if (validation.warnings.length > 0) out.warnings = validation.warnings;
+    return jsonResult(out);
   } catch (error) {
     return errorResult(`Error creating recipe: ${error instanceof Error ? error.message : String(error)}`);
   }
