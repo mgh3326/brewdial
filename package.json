@@ -5,13 +5,12 @@
   "description": "Agent-friendly coffee recipe and feedback dial-in system",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @brewdial/web dev",
+    "dev": "pnpm --filter @brewdial/miniapp vite:dev",
     "build": "pnpm -r build",
     "check": "pnpm -r check",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "db:bootstrap": "pnpm --filter @brewdial/web db:bootstrap",
-    "db:health": "pnpm --filter @brewdial/web db:health",
+    "web:build": "pnpm --filter @brewdial/miniapp vite:build",
     "mcp": "pnpm --filter @brewdial/mcp mcp",
     "mcp:dev": "pnpm --filter @brewdial/mcp mcp:dev",
     "mcp:smoke": "pnpm --filter @brewdial/mcp smoke"
