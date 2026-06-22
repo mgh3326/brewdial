@@ -1,6 +1,7 @@
 import { Top } from '@toss/tds-mobile';
 import { useEffect, useMemo, useState } from 'react';
-import { createRecipe, listRecentRecipes } from '../lib/data/recipes';
+import { createRecipe } from '../lib/data/recipes';
+import { listBeans, type BeanSummary } from '../lib/data/beans';
 import {
   validateCreateRecipeInput,
   type BrewMethod,
@@ -56,20 +57,15 @@ export default function NewRecipe() {
 
   const [manualSteps, setManualSteps] = useState<StepRow[] | null>(null); // null = 자동 사용
 
-  const [beanOptions, setBeanOptions] = useState<string[]>([]);
+  const [beans, setBeans] = useState<BeanSummary[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [confirmWarn, setConfirmWarn] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    listRecentRecipes(100)
-      .then((rs) => {
-        const names = Array.from(
-          new Set(rs.map((r) => r.beanSnapshot?.name).filter((n): n is string => !!n))
-        );
-        setBeanOptions(names);
-      })
+    listBeans()
+      .then(setBeans)
       .catch(() => undefined);
   }, []);
 
@@ -155,7 +151,16 @@ export default function NewRecipe() {
       steps: effectiveSteps,
       createdBy: 'manual',
     };
-    if (beanName.trim()) input.beanSnapshot = { name: beanName.trim() };
+    if (beanName.trim()) {
+      // Map onto an existing bean (carry its roaster) so the DB trigger groups
+      // it under the same bean instead of creating a near-duplicate.
+      const matched = beans.find(
+        (b) => b.name.trim().toLowerCase() === beanName.trim().toLowerCase()
+      );
+      input.beanSnapshot = matched
+        ? { name: matched.name, ...(matched.roaster ? { roaster: matched.roaster } : {}) }
+        : { name: beanName.trim() };
+    }
     return input;
   }
 
@@ -254,8 +259,8 @@ export default function NewRecipe() {
             placeholder="예: 에티오피아 예가체프"
           />
           <datalist id="bean-options">
-            {beanOptions.map((n) => (
-              <option key={n} value={n} />
+            {beans.map((b) => (
+              <option key={b.id} value={b.name} />
             ))}
           </datalist>
         </div>

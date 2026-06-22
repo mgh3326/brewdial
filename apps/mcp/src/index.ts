@@ -11,8 +11,10 @@ import {
   handleArchiveRecipe,
   handleCreateFeedback,
   handleCreateRecipe,
+  handleFindBean,
   handleGetRecentContext,
   handleGetRecipeContext,
+  handleListBeans,
   handleSupersedeRecipe,
   handleUpdateRecipe,
   type ToolResult
@@ -66,7 +68,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
+      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -126,6 +128,27 @@ const TOOLS: Tool[] = [
         newCode: { type: 'string', description: 'Replacement recipe, format COF-NNNN' }
       },
       required: ['oldCode', 'newCode']
+    }
+  },
+  {
+    name: 'brew.find_bean',
+    description:
+      'Search existing beans by name/roaster substring. Call this BEFORE create_recipe to map a new recipe onto an existing bean instead of creating a duplicate. Returns id/name/roaster/origin/process/roastLevel + recipeCount (most recipes first).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Bean name or roaster fragment (e.g. "브릴리", "디카프리오")' },
+        limit: { type: 'number', description: '1-25, default 10' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'brew.list_beans',
+    description: 'List recently-active beans (no query needed). Same shape as find_bean.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: '1-50, default 20' } }
     }
   },
   {
@@ -206,6 +229,8 @@ async function main(): Promise<void> {
       case 'brew.update_recipe': result = await handleUpdateRecipe(supabase, a); break;
       case 'brew.archive_recipe': result = await handleArchiveRecipe(supabase, a); break;
       case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
+      case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
+      case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
       case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
       case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
       case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;

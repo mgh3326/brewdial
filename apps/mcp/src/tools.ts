@@ -11,6 +11,7 @@ import {
   updateRecipe,
   type RecipeUpdate,
 } from './repositories/recipes.js';
+import { findBeans, listBeans } from './repositories/beans.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -143,6 +144,34 @@ export async function handleSupersedeRecipe(
     });
   } catch (error) {
     return errorResult(`Error superseding recipe: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleFindBean(
+  config: SupabaseConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const query = typeof args?.query === 'string' ? args.query.trim() : '';
+  if (!query) return errorResult('find_bean: a non-empty "query" is required.');
+  const limit = typeof args?.limit === 'number' ? Math.max(1, Math.min(25, Math.floor(args.limit))) : 10;
+  try {
+    const beans = await findBeans(config, query, limit);
+    return jsonResult({ ok: true, count: beans.length, beans });
+  } catch (error) {
+    return errorResult(`Error finding beans: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleListBeans(
+  config: SupabaseConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const limit = typeof args?.limit === 'number' ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 20;
+  try {
+    const beans = await listBeans(config, limit);
+    return jsonResult({ ok: true, count: beans.length, beans });
+  } catch (error) {
+    return errorResult(`Error listing beans: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

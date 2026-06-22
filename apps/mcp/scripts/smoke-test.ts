@@ -66,6 +66,8 @@ async function smokeTest(): Promise<void> {
       'brew.update_recipe',
       'brew.archive_recipe',
       'brew.supersede_recipe',
+      'brew.find_bean',
+      'brew.list_beans',
       'brew.get_recent_context',
       'brew.get_recipe_context'
     ];
