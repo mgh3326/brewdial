@@ -10,7 +10,7 @@
     "check": "pnpm -r check",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "web:build": "pnpm --filter @brewdial/miniapp vite:build",
+    "web:build": "pnpm --filter @brewdial/miniapp web:build",
     "mcp": "pnpm --filter @brewdial/mcp mcp",
     "mcp:dev": "pnpm --filter @brewdial/mcp mcp:dev",
     "mcp:smoke": "pnpm --filter @brewdial/mcp smoke"
