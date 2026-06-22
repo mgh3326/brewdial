@@ -1,0 +1,283 @@
+:root {
+  color-scheme: light dark;
+  --bg: #faf7f2;
+  --fg: #2a211b;
+  --muted: #7a6a5d;
+  --brand: #6f4e37;
+  --brand-strong: #543a28;
+  --brand-soft: rgba(111, 78, 55, 0.12);
+  --card: #ffffff;
+  --surface-muted: rgba(0, 0, 0, 0.045);
+  --border: rgba(0, 0, 0, 0.12);
+  --ok: #1f8a4c;
+  --warn: #b4690e;
+  --radius: 12px;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  /* aliases used by the ported timer markup */
+  --text: var(--fg);
+  --text-muted: var(--muted);
+  --accent: var(--brand);
+  --accent-strong: var(--brand-strong);
+  --accent-soft: var(--brand-soft);
+  --surface: var(--card);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1613;
+    --fg: #f2ece4;
+    --muted: #a9988a;
+    --brand: #c8a07e;
+    --brand-strong: #e0bd9c;
+    --brand-soft: rgba(200, 160, 126, 0.16);
+    --card: #241e19;
+    --surface-muted: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.14);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Pretendard', system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  min-height: 100dvh;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding-top: env(safe-area-inset-top);
+}
+.app-header-inner {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.app-title {
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.app-nav {
+  display: flex;
+  gap: 14px;
+  font-size: 14px;
+}
+.app-nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.app-nav a.active {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.app-main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 4px 0 0;
+}
+h2 {
+  font-size: 16px;
+  margin: 0;
+}
+h3 {
+  font-size: 15px;
+  margin: 0;
+}
+p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.muted {
+  color: var(--muted);
+}
+.sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.card {
+  display: block;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  color: inherit;
+  text-decoration: none;
+}
+a.card:active {
+  transform: translateY(1px);
+}
+
+.card-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.card-title {
+  font-size: 16px;
+  margin: 4px 0;
+}
+.code {
+  font-family: var(--font-mono);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+.dl dt {
+  color: var(--muted);
+}
+.dl dd {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn,
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--brand);
+  color: #fff;
+  text-decoration: none;
+  border: 1px solid transparent;
+  min-height: 44px;
+  width: auto;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.btn-block {
+  width: 100%;
+}
+
+.badge-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.error-panel {
+  background: rgba(180, 105, 14, 0.12);
+  border: 1px solid rgba(180, 105, 14, 0.4);
+  color: var(--warn);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* ── Debug screen (former Phase-0 spike) ── */
+.status {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 14px;
+}
+.status dt {
+  color: var(--muted);
+}
+.status dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+}
+.log {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+}
