@@ -17,8 +17,8 @@ async function smokeTest(): Promise<void> {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      COUCHDB_URL: 'http://localhost:59999',
-      COUCHDB_DATABASE: 'test'
+      SUPABASE_URL: 'https://brewdial-smoke.invalid',
+      SUPABASE_SERVICE_ROLE_KEY: 'smoke-test-key'
     }
   });
 
@@ -46,8 +46,8 @@ async function smokeTest(): Promise<void> {
       args: [serverPath],
       env: {
         ...process.env,
-        COUCHDB_URL: 'http://localhost:59999',
-        COUCHDB_DATABASE: 'test'
+        SUPABASE_URL: 'https://brewdial-smoke.invalid',
+        SUPABASE_SERVICE_ROLE_KEY: 'smoke-test-key'
       }
     });
 
@@ -63,6 +63,9 @@ async function smokeTest(): Promise<void> {
     const expectedTools = [
       'brew.create_feedback',
       'brew.create_recipe',
+      'brew.update_recipe',
+      'brew.archive_recipe',
+      'brew.supersede_recipe',
       'brew.get_recent_context',
       'brew.get_recipe_context'
     ];
@@ -87,7 +90,7 @@ async function smokeTest(): Promise<void> {
       throw new Error('Expected error for invalid create_recipe input');
     }
 
-    console.log('\n3. Testing brew.get_recent_context (expecting CouchDB error)...');
+    console.log('\n3. Testing brew.get_recent_context (expecting Supabase error)...');
     const recentResult = await client.callTool({
       name: 'brew.get_recent_context',
       arguments: { limit: 3 }
@@ -117,8 +120,8 @@ async function smokeTest(): Promise<void> {
     await client.close();
 
     console.log('\n✅ All smoke tests passed!');
-    console.log('\nNote: Errors related to CouchDB connection are expected');
-    console.log('since the smoke test runs without a real CouchDB instance.');
+    console.log('\nNote: Errors related to Supabase connection are expected');
+    console.log('since the smoke test runs without a reachable Supabase instance.');
 
   } catch (error) {
     console.error('\n❌ Smoke test failed:', error);

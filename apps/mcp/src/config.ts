@@ -1,16 +1,15 @@
-export interface CouchConfig {
-  url: string;
-  database: string;
-  username?: string;
-  password?: string;
+// BrewDial MCP now writes to the SAME Supabase database the App-in-Toss mini-app
+// reads. It uses the SERVICE ROLE key (server-side only) so it can create
+// agent-attributed recipes and manage status/lineage (RLS is bypassed).
+
+export interface SupabaseConfig {
+  url: string; // e.g. https://xxxx.supabase.co  (no /rest/v1 suffix)
+  serviceRoleKey: string;
 }
 
 export interface BrewDialMcpConfig {
-  couch: CouchConfig;
+  supabase: SupabaseConfig;
 }
-
-const DEFAULT_COUCHDB_URL = 'http://127.0.0.1:5984';
-const DEFAULT_COUCHDB_DATABASE = 'coffee';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -22,12 +21,16 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
-export function getMcpConfig(env: Record<string, string | undefined> = process.env): BrewDialMcpConfig {
-  const url = trimTrailingSlash(nonEmpty(env.COUCHDB_URL) ?? DEFAULT_COUCHDB_URL);
-  const database = nonEmpty(env.COUCHDB_DATABASE) ?? DEFAULT_COUCHDB_DATABASE;
-  const username = nonEmpty(env.COUCHDB_USERNAME);
-  const password = nonEmpty(env.COUCHDB_PASSWORD);
-  return {
-    couch: { url, database, username, password }
-  };
+export function getMcpConfig(
+  env: Record<string, string | undefined> = process.env
+): BrewDialMcpConfig {
+  const url = nonEmpty(env.SUPABASE_URL) ?? nonEmpty(env.VITE_SUPABASE_URL);
+  const serviceRoleKey = nonEmpty(env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!url) {
+    throw new Error('Missing SUPABASE_URL (or VITE_SUPABASE_URL) for the BrewDial MCP server');
+  }
+  if (!serviceRoleKey) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY for the BrewDial MCP server');
+  }
+  return { supabase: { url: trimTrailingSlash(url), serviceRoleKey } };
 }
