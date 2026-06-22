@@ -6,10 +6,15 @@ export default defineConfig(({ command, mode }) => {
   // Fail a production build (the .ait bundle) when Supabase env is missing,
   // so we never silently ship an app where every data call hits a placeholder
   // host. The runtime placeholder fallback in supabase.ts stays for dev only.
-  const env = loadEnv(mode, '../../', 'VITE_');
-  if (command === 'build' && (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_PUBLISHABLE_KEY)) {
+  // Accept env from a repo-root .env file (local) OR process env (web hosts like
+  // Cloudflare Pages / Vercel inject build vars there; Vite inlines VITE_* from
+  // process env natively, so only the guard needs the fallback).
+  const fileEnv = loadEnv(mode, '../../', 'VITE_');
+  const url = fileEnv.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = fileEnv.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (command === 'build' && (!url || !key)) {
     throw new Error(
-      '[brewdial] Production build requires VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (set them in the repo-root .env).'
+      '[brewdial] Production build requires VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (repo-root .env locally, or host env vars when deploying to the web).'
     );
   }
 
