@@ -90,6 +90,66 @@ create table if not exists preferences (
   updated_at     timestamptz not null default now()
 );
 
+-- ── beans (1급 원두 엔티티; ROB-610: 레시피 기준 → 원두 기준 그룹핑) ─────────────
+create table if not exists beans (
+  id          text primary key default gen_random_uuid()::text,
+  name        text not null,
+  roaster     text,
+  origin      text,
+  process     text,
+  roast_level text,
+  notes       text,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+-- 원두 신원 = (이름, 로스터) 정규화 — 같은 원두의 표기 흔들림을 한 행으로 모은다.
+create unique index if not exists beans_name_roaster_key
+  on beans (lower(name), coalesce(lower(roaster), ''));
+
+-- recipes.bean_id(text, 기존 컬럼; 현재 전부 null)를 beans.id FK로 연결.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'recipes_bean_id_fkey') then
+    alter table recipes add constraint recipes_bean_id_fkey
+      foreign key (bean_id) references beans(id) on delete set null;
+  end if;
+end $$;
+
+-- bean_snapshot(jsonb)에서 원두를 찾거나 만들어 id 반환. 최신 비어있지-않은 메타 우선.
+-- security definer: anon 레시피 생성 경로(트리거)에서도 beans에 쓸 수 있어야 함.
+create or replace function find_or_create_bean(snap jsonb)
+returns text language plpgsql security definer as $$
+declare
+  v_name text := nullif(trim(snap->>'name'), '');
+  v_roaster text := nullif(trim(snap->>'roaster'), '');
+  v_id text;
+begin
+  if v_name is null then return null; end if;
+  insert into beans (name, roaster, origin, process, roast_level, notes)
+    values (v_name, v_roaster, snap->>'origin', snap->>'process', snap->>'roastLevel', snap->>'notes')
+    on conflict (lower(name), coalesce(lower(roaster), ''))
+      do update set
+        origin      = coalesce(excluded.origin, beans.origin),
+        process     = coalesce(excluded.process, beans.process),
+        roast_level = coalesce(excluded.roast_level, beans.roast_level),
+        notes       = coalesce(excluded.notes, beans.notes),
+        updated_at  = now()
+    returning id into v_id;
+  return v_id;
+end $$;
+
+-- 레시피 insert 시(미니앱 anon / MCP service 모두) bean_id 자동 연결.
+create or replace function recipes_link_bean()
+returns trigger language plpgsql security definer as $$
+begin
+  if new.bean_id is null and new.bean_snapshot is not null then
+    new.bean_id := find_or_create_bean(new.bean_snapshot);
+  end if;
+  return new;
+end $$;
+drop trigger if exists recipes_link_bean_trg on recipes;
+create trigger recipes_link_bean_trg before insert on recipes
+  for each row execute function recipes_link_bean();
+
 drop trigger if exists recipes_set_updated_at on recipes;
 create trigger recipes_set_updated_at before update on recipes
   for each row execute function set_updated_at();
@@ -98,6 +158,9 @@ create trigger feedback_set_updated_at before update on feedback
   for each row execute function set_updated_at();
 drop trigger if exists preferences_set_updated_at on preferences;
 create trigger preferences_set_updated_at before update on preferences
+  for each row execute function set_updated_at();
+drop trigger if exists beans_set_updated_at on beans;
+create trigger beans_set_updated_at before update on beans
   for each row execute function set_updated_at();
 
 -- ── Abuse guardrails (anon writes are public in v1) ─────────────────────────
@@ -132,6 +195,7 @@ end $$;
 alter table recipes     enable row level security;
 alter table feedback    enable row level security;
 alter table preferences enable row level security;
+alter table beans       enable row level security;
 
 drop policy if exists recipes_select on recipes;
 create policy recipes_select on recipes
@@ -154,6 +218,13 @@ create policy preferences_select on preferences
   for select to anon, authenticated using (true);
 -- preferences writes intentionally have no anon policy (service role only).
 
+drop policy if exists beans_select on beans;
+create policy beans_select on beans
+  for select to anon, authenticated using (true);
+-- beans writes have no anon policy: the security-definer find_or_create_bean
+-- (called by the recipes insert trigger) handles bean creation even for anon.
+grant select on beans to anon, authenticated;
+
 insert into preferences (id) values ('global') on conflict (id) do nothing;
 
 -- Migration helper: after importing recipes with explicit COF codes, advance the
@@ -163,3 +234,30 @@ returns bigint language sql as $$
   select setval('recipe_code_seq', greatest(n, 1), true);
 $$;
 revoke all on function set_recipe_code_seq(bigint) from public, anon, authenticated;
+
+-- ── bean_summaries: 원두별 요약(활성 레시피 수/최근/AI 여부) — 미니앱 홈(원두 목록)용 ──
+create or replace view bean_summaries
+  with (security_invoker = on) as
+  select b.id, b.name, b.roaster, b.origin, b.process, b.roast_level, b.notes,
+         count(r.code)     filter (where r.status = 'active') as recipe_count,
+         max(r.created_at) filter (where r.status = 'active') as latest_recipe_at,
+         coalesce(bool_or(r.created_by = 'agent') filter (where r.status = 'active'), false) as has_ai
+  from beans b
+  left join recipes r on r.bean_id = b.id
+  group by b.id;
+grant select on bean_summaries to anon, authenticated;
+
+-- ── Backfill: 기존 레시피(bean_id null)를 원두로 묶는다(오래된→최신, 최신 메타 우선). idempotent.
+do $$
+declare r record;
+begin
+  for r in
+    select code, bean_snapshot from recipes
+    where bean_id is null
+      and bean_snapshot is not null
+      and nullif(trim(bean_snapshot->>'name'), '') is not null
+    order by created_at asc
+  loop
+    update recipes set bean_id = find_or_create_bean(r.bean_snapshot) where code = r.code;
+  end loop;
+end $$;
