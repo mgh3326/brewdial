@@ -9,6 +9,8 @@
     "build": "ait build",
     "vite:dev": "vite",
     "vite:build": "vite build",
+    "web:build": "VITE_TARGET=web vite build",
+    "web:dev": "VITE_TARGET=web vite",
     "check": "tsc -p tsconfig.app.json --noEmit"
   },
   "dependencies": {

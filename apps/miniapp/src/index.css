@@ -470,3 +470,40 @@ a.card:active {
   cursor: pointer;
   padding: 4px;
 }
+
+/* web target (non-TDS) header + button shims (see tds-web-shim.tsx) */
+.web-top {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 14px max(16px, env(safe-area-inset-left)) 0 max(16px, env(safe-area-inset-right));
+}
+.web-top-title {
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+  color: var(--fg);
+}
+.web-top-sub {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.web-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  background: var(--surface-muted);
+  color: var(--brand-strong);
+}
+.web-btn:active {
+  background: var(--line-strong);
+}
