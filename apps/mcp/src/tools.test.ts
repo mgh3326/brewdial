@@ -3,8 +3,10 @@ import {
   handleArchiveRecipe,
   handleCreateFeedback,
   handleCreateRecipe,
+  handleFindBean,
   handleGetRecentContext,
   handleGetRecipeContext,
+  handleListBeans,
   handleSupersedeRecipe,
   handleUpdateRecipe
 } from './tools.js';
@@ -70,6 +72,28 @@ describe('handleSupersedeRecipe', () => {
     const r = await handleSupersedeRecipe(mockConfig, { oldCode: 'COF-0001', newCode: 'x' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Invalid newCode');
+  });
+});
+
+describe('handleFindBean', () => {
+  it('rejects an empty query', async () => {
+    const r = await handleFindBean(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('query');
+  });
+
+  it('errors when Supabase is unreachable but query is valid', async () => {
+    const r = await handleFindBean(mockConfig, { query: '브릴리' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error finding beans');
+  });
+});
+
+describe('handleListBeans', () => {
+  it('errors when Supabase is unreachable', async () => {
+    const r = await handleListBeans(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing beans');
   });
 });
 
