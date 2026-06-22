@@ -254,3 +254,138 @@ describe('validateCreateFeedbackInput (ROB-33)', () => {
     }
   });
 });
+
+describe('validateCreateRecipeInput cross-field/range (ROB-608)', () => {
+  const pourOver = (overrides: Record<string, unknown> = {}) => ({
+    method: 'v60',
+    title: 'V60',
+    params: { doseG: 15, waterG: 240, tempC: 92, targetTimeSec: 150 },
+    steps: [
+      { atSec: 0, endSec: 35, waterG: 40, note: 'Bloom' },
+      { atSec: 45, endSec: 75, waterG: 140, note: 'Pour 1' },
+      { atSec: 85, endSec: 110, waterG: 240, note: 'Pour 2' }
+    ],
+    ...overrides
+  });
+
+  it('accepts a consistent pour-over recipe with no warnings', () => {
+    const r = validateCreateRecipeInput(pourOver());
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings).toEqual([]);
+  });
+
+  it('rejects a step waterG exceeding params.waterG', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({ steps: [{ atSec: 0, endSec: 35, waterG: 300, note: 'Bloom' }] })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/exceeds total/);
+  });
+
+  it('rejects decreasing cumulative step waterG', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({
+        steps: [
+          { atSec: 0, endSec: 35, waterG: 140, note: 'Bloom' },
+          { atSec: 45, endSec: 75, waterG: 100, note: 'Pour 1' },
+          { atSec: 85, endSec: 110, waterG: 240, note: 'Pour 2' }
+        ]
+      })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/decreases/);
+  });
+
+  it('rejects overlapping step times', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({
+        steps: [
+          { atSec: 0, endSec: 50, waterG: 40, note: 'Bloom' },
+          { atSec: 45, endSec: 75, waterG: 240, note: 'Pour 1' }
+        ]
+      })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/overlap/);
+  });
+
+  it('rejects targetTimeSec before the last pour ends', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({ params: { doseG: 15, waterG: 240, tempC: 92, targetTimeSec: 90 } })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/before the last pour/);
+  });
+
+  it('rejects impossible ranges (doseG <= 0, tempC > 100)', () => {
+    expect(validateCreateRecipeInput(pourOver({ params: { doseG: 0, waterG: 240 } })).ok).toBe(false);
+    expect(
+      validateCreateRecipeInput(pourOver({ params: { doseG: 15, waterG: 240, tempC: 130 } })).ok
+    ).toBe(false);
+  });
+
+  it('warns (not rejects) when the final step does not reach params.waterG (COF-0001-like)', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({
+        params: { doseG: 15, waterG: 240, tempC: 92, targetTimeSec: 150 },
+        steps: [
+          { atSec: 0, endSec: 35, waterG: 40, note: 'Bloom' },
+          { atSec: 45, endSec: 110, waterG: 200, note: 'Pour 1' }
+        ]
+      })
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).toMatch(/does not reach/);
+  });
+
+  it('warns on an unrealistic drawdown gap (COF-0023/0040-like)', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({ params: { doseG: 15, waterG: 240, tempC: 92, targetTimeSec: 200 } })
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).toMatch(/drawdown/);
+  });
+
+  it('warns on a ratio that disagrees with waterG/doseG', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({ params: { doseG: 15, waterG: 240, ratio: '1:18', tempC: 92, targetTimeSec: 150 } })
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).toMatch(/ratio/);
+  });
+
+  it('warns when a timed step is missing endSec (COF-0005/0031/0032-like)', () => {
+    const r = validateCreateRecipeInput(
+      pourOver({
+        params: { doseG: 15, waterG: 240, tempC: 92 },
+        steps: [
+          { atSec: 0, waterG: 40, note: 'Bloom' },
+          { atSec: 45, waterG: 240, note: 'Pour 1' }
+        ]
+      })
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).toMatch(/endSec/);
+  });
+
+  it('exempts method=other (instant) from cross-field checks (COF-0018-like)', () => {
+    const r = validateCreateRecipeInput({
+      method: 'other',
+      title: '인스턴트 스틱',
+      params: { waterG: 200 },
+      steps: [{ atSec: 0, waterG: 999, note: 'Stir' }]
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not apply the pour-over water schedule to espresso', () => {
+    const r = validateCreateRecipeInput({
+      method: 'espresso',
+      title: 'Shot',
+      params: { doseG: 18, waterG: 36, tempC: 93 },
+      steps: [{ atSec: 0, waterG: 0, note: 'Pre-infuse' }]
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).not.toMatch(/does not reach/);
+  });
+});

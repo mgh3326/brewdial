@@ -1,5 +1,6 @@
-import type { CreateFeedbackInput, CreateRecipeInput } from './api-types.js';
-import { isRecipeCode } from './schemas.js';
+// Vendored from packages/shared/src/validation.ts. Re-sync if it changes.
+import type { CreateFeedbackInput, CreateRecipeInput } from './api-types';
+import { isRecipeCode } from './schemas';
 import type {
   ActualBrewParams,
   BrewMethod,
@@ -8,8 +9,8 @@ import type {
   QuickFeedbackTag,
   RecipeParams,
   RecipeStep
-} from './types.js';
-import { QUICK_FEEDBACK_TAGS } from './types.js';
+} from './types';
+import { QUICK_FEEDBACK_TAGS } from './types';
 
 export type ValidationResult<T> =
   | { ok: true; value: T; warnings: string[] }

@@ -1,3 +1,8 @@
+// Vendored from packages/shared/src/types.ts (source of truth).
+// Kept in-tree so the Apps-in-Toss bundle has no workspace-package import
+// (the ait packaging step's collect-package-version plugin can't resolve
+// workspace symlinks). Re-sync if packages/shared changes.
+
 export type BrewMethod = 'v60' | 'espresso' | 'aeropress' | 'kalita' | 'other';
 
 export type RecipeCode = `COF-${string}`;
