@@ -1,0 +1,30 @@
+{
+  "name": "@brewdial/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "migrate": "node-pg-migrate -m migrations -j sql up",
+    "migrate:down": "node-pg-migrate -m migrations -j sql down",
+    "codegen": "kysely-codegen --url=$DATABASE_URL --out-file src/types.ts",
+    "test": "vitest run"
+  },
+  "dependencies": { "kysely": "^0.27.0", "pg": "^8.13.0" },
+  "devDependencies": {
+    "node-pg-migrate": "^7.9.0",
+    "kysely-codegen": "^0.17.0",
+    "@types/pg": "^8.11.0",
+    "vitest": "^2.1.0",
+    "typescript": "^5.6.0"
+  }
+}

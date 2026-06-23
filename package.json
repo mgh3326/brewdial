@@ -13,7 +13,13 @@
     "web:build": "pnpm --filter @brewdial/miniapp web:build",
     "mcp": "pnpm --filter @brewdial/mcp mcp",
     "mcp:dev": "pnpm --filter @brewdial/mcp mcp:dev",
-    "mcp:smoke": "pnpm --filter @brewdial/mcp smoke"
+    "mcp:smoke": "pnpm --filter @brewdial/mcp smoke",
+    "db:migrate": "pnpm --filter @brewdial/db migrate",
+    "db:test": "pnpm --filter @brewdial/db test",
+    "db:codegen": "pnpm --filter @brewdial/db codegen",
+    "api:dev": "pnpm --filter @brewdial/api dev",
+    "api:test": "pnpm --filter @brewdial/api test",
+    "api:build": "pnpm --filter @brewdial/api build"
   },
   "packageManager": "pnpm@10.33.2",
   "engines": {
