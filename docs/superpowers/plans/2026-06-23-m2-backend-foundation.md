@@ -287,7 +287,10 @@ Copy verbatim from `supabase/schema.sql` (all vanilla plpgsql): `set_updated_at`
 create or replace function bd_owner_write_allowed()
 returns boolean language plpgsql volatile set search_path = public, pg_temp as $$
 begin
-  return current_setting('bd.owner_write_ok', true) = 'on';
+  -- coalesce: current_setting(...,true) is NULL when the GUC is unset; NULL = 'on'
+  -- would return NULL (not false), making `not bd_owner_write_allowed()` NULL and the
+  -- guard skip its body → owner_id/is_official pass through UNGUARDED. Force false.
+  return coalesce(current_setting('bd.owner_write_ok', true), '') = 'on';
 end $$;
 ```
 
