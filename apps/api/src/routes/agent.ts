@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe } from '@brewdial/db'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference } from '@brewdial/db'
 import { validateCreateRecipeInput } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
@@ -78,6 +78,58 @@ agentRouter.patch('/recipes/:code/status', async (c) => {
     if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'INVALID_STATUS') return c.json({ error: 'invalid status' }, 400)
     throw err
   }
+})
+
+// POST /agent/feedback — agent submits feedback for a recipe
+// source whitelist: {agent, mcp, coffee_profile, api}; default 'agent'.
+const AGENT_FEEDBACK_SOURCES = new Set(['agent', 'mcp', 'coffee_profile', 'api'])
+
+agentRouter.post('/feedback', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
+
+  const b = body as Record<string, unknown>
+  const recipeCode = b['recipeCode']
+  if (typeof recipeCode !== 'string' || !recipeCode) {
+    return c.json({ error: 'recipeCode is required' }, 400)
+  }
+
+  // Validate source if provided; default to 'agent'.
+  const rawSource = b['source']
+  if (rawSource !== undefined && !AGENT_FEEDBACK_SOURCES.has(rawSource as string)) {
+    return c.json(
+      { error: 'invalid source', valid: [...AGENT_FEEDBACK_SOURCES] },
+      400,
+    )
+  }
+  const source = (rawSource as string | undefined) ?? 'agent'
+
+  const db = getDb()
+  try {
+    const row = await insertAgentFeedback(db, {
+      recipeCode,
+      source,
+      beanId: b['beanId'] as string | undefined,
+      ratings: b['ratings'],
+      actual: b['actual'],
+      comment: b['comment'] as string | undefined,
+      rawComment: b['rawComment'] as string | undefined,
+      quickTags: b['quickTags'] as string[] | undefined,
+      desiredDirection: b['desiredDirection'] as string[] | undefined,
+      nextHint: b['nextHint'] as string[] | undefined,
+    })
+    return c.json(row, 201)
+  } catch (err: unknown) {
+    if (err instanceof RecipeNotFoundError) return c.json({ error: 'recipe not found' }, 404)
+    throw err
+  }
+})
+
+// GET /agent/preferences/global — returns the singleton 'global' preferences row.
+agentRouter.get('/preferences/global', async (c) => {
+  const db = getDb()
+  const row = await getGlobalPreference(db)
+  return c.json(row ?? null)
 })
 
 // POST /agent/recipes/supersede — link old → new in a supersede relationship
