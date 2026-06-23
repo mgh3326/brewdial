@@ -1,5 +1,10 @@
 import type { RecipeCode, RecipeStatus } from '@brewdial/shared';
-import { isRecipeCode, validateCreateFeedbackInput, validateCreateRecipeInput } from '@brewdial/shared';
+import {
+  isRecipeCode,
+  validateCreateFeedbackInput,
+  validateCreateRecipeInput,
+  validateUpdateRecipeInput
+} from '@brewdial/shared';
 import type { SupabaseConfig } from './config.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
 import { createFeedback } from './repositories/feedback.js';
@@ -12,6 +17,8 @@ import {
   type RecipeUpdate,
 } from './repositories/recipes.js';
 import { findBeans, listBeans } from './repositories/beans.js';
+import { listGrinders } from './repositories/grinders.js';
+import { listDrippers } from './repositories/drippers.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -75,20 +82,25 @@ export async function handleUpdateRecipe(
   if (typeof code !== 'string' || !isRecipeCode(code)) {
     return errorResult('Invalid recipe code: expected format COF-NNNN');
   }
+  // Validate the partial patch through the shared validators (same trust boundary
+  // as create) so agent-supplied params/grind/steps/beanSnapshot/dripperPortability
+  // cannot reach the DB unchecked.
+  const validation = validateUpdateRecipeInput(args ?? {});
+  if (!validation.ok) {
+    return errorResult(`Invalid recipe update: ${validation.errors.join('; ')}`);
+  }
+  const v = validation.value;
   const patch: RecipeUpdate = {};
-  if (typeof args?.title === 'string') patch.title = args.title;
-  if (args?.params && typeof args.params === 'object') patch.params = args.params as RecipeUpdate['params'];
-  if (Array.isArray(args?.steps)) patch.steps = args.steps as RecipeUpdate['steps'];
-  if (typeof args?.notes === 'string') patch.notes = args.notes;
-  if (Array.isArray(args?.intent)) patch.intent = args.intent as string[];
-  if (args?.beanSnapshot && typeof args.beanSnapshot === 'object') {
-    patch.beanSnapshot = args.beanSnapshot as RecipeUpdate['beanSnapshot'];
-  }
-  if (typeof args?.adjustmentFromPrevious === 'string') {
-    patch.adjustmentFromPrevious = args.adjustmentFromPrevious;
-  }
+  if (v.title !== undefined) patch.title = v.title;
+  if (v.params !== undefined) patch.params = v.params;
+  if (v.steps !== undefined) patch.steps = v.steps;
+  if (v.notes !== undefined) patch.notes = v.notes;
+  if (v.intent !== undefined) patch.intent = v.intent;
+  if (v.beanSnapshot !== undefined) patch.beanSnapshot = v.beanSnapshot;
+  if (v.adjustmentFromPrevious !== undefined) patch.adjustmentFromPrevious = v.adjustmentFromPrevious;
+  if (v.dripperPortability !== undefined) patch.dripperPortability = v.dripperPortability;
   if (Object.keys(patch).length === 0) {
-    return errorResult('No updatable fields provided (title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious).');
+    return errorResult('No updatable fields provided (title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious, dripperPortability).');
   }
 
   try {
@@ -172,6 +184,30 @@ export async function handleListBeans(
     return jsonResult({ ok: true, count: beans.length, beans });
   } catch (error) {
     return errorResult(`Error listing beans: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleListGrinders(
+  config: SupabaseConfig,
+  _args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  try {
+    const grinders = await listGrinders(config);
+    return jsonResult({ ok: true, count: grinders.length, grinders });
+  } catch (error) {
+    return errorResult(`Error listing grinders: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleListDrippers(
+  config: SupabaseConfig,
+  _args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  try {
+    const drippers = await listDrippers(config);
+    return jsonResult({ ok: true, count: drippers.length, drippers });
+  } catch (error) {
+    return errorResult(`Error listing drippers: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

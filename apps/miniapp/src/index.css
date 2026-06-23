@@ -124,6 +124,66 @@ a.card:active {
   background: var(--brand-soft);
   color: var(--brand-strong);
 }
+.badge-official,
+.badge-mine {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+.badge-official {
+  background: #fdebd0;
+  color: #8a4b00;
+}
+.badge-mine {
+  background: #e4eefb;
+  color: #1b4f86;
+}
+.btn-save {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid var(--brand-strong);
+  background: #fff;
+  color: var(--brand-strong);
+}
+.btn-save[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+.btn-save.saved {
+  background: var(--brand-soft);
+  border-color: var(--brand-soft);
+}
+.filter-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.filter-row button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid var(--line, #e5e5e5);
+  background: #fff;
+  color: inherit;
+}
+.filter-row button.active {
+  background: var(--brand-strong);
+  color: #fff;
+  border-color: var(--brand-strong);
+}
 .dl {
   display: grid;
   grid-template-columns: auto 1fr;

@@ -9,7 +9,7 @@ function formatDate(iso: string): string {
     : d.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
-export default function RecipeCard({ recipe }: { recipe: RecipeDoc }) {
+export default function RecipeCard({ recipe, mine }: { recipe: RecipeDoc; mine?: boolean }) {
   const bean = [
     recipe.beanSnapshot?.name,
     recipe.beanSnapshot?.roaster,
@@ -26,6 +26,8 @@ export default function RecipeCard({ recipe }: { recipe: RecipeDoc }) {
         <span className="code">{recipe.code}</span>
         <span className="muted">· {METHOD_LABELS[recipe.method]}</span>
         {recipe.createdBy === 'agent' && <span className="badge-ai">✨ AI 생성</span>}
+        {recipe.isOfficial && <span className="badge-official">⭐ 공식</span>}
+        {mine && <span className="badge-mine">👤 내 레시피</span>}
       </p>
       <p className="card-title">{recipe.title}</p>
       {bean && <p className="card-meta">{bean}</p>}

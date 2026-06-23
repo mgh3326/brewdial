@@ -15,11 +15,39 @@ import { loadSoundPreference, saveSoundPreference } from '../lib/brew-timer/soun
 import { createPourAudio, type PourAudio } from '../lib/brew-timer/pour-audio';
 import { haptic, setKeepAwake } from '../lib/toss';
 import { getRecipeByCode } from '../lib/data/recipes';
+import { getMyCollections, saveRecipe, upsertCalibration } from '../lib/data/user-content';
 import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
-import type { FeedbackDoc, RecipeCode, RecipeDoc } from '../lib/domain';
+import { grindDisplay, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
+import { listGrinders } from '../lib/data/grinders';
+import { listDrippers } from '../lib/data/drippers';
+import { loadGear } from '../lib/gear-preferences';
+import type {
+  Calibration,
+  DripperInfo,
+  FeedbackDoc,
+  GrindSpec,
+  GrinderInfo,
+  RecipeCode,
+  RecipeDoc
+} from '../lib/domain';
+
+const SIZE_MATCH_LABEL: Record<string, string> = {
+  ok: '적정',
+  undersized: '도즈 적음',
+  oversized: '도즈 많음'
+};
+const GRIND_SHIFT_LABEL: Record<string, string> = { coarser: '굵게', finer: '곱게', none: '그대로' };
+const POUR_SHIFT_LABEL: Record<string, string> = {
+  gentler: '교반 ↓',
+  more_agitation: '교반 ↑',
+  fewer_pours: '푸어 횟수 ↓',
+  more_pours: '푸어 횟수 ↑',
+  none: '그대로'
+};
+const CONFIDENCE_LABEL: Record<string, string> = { high: '신뢰 높음', medium: '참고', low: '주의' };
 
 type Tab = 'timer' | 'recipe' | 'feedback';
 
@@ -37,6 +65,92 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('timer');
+  const [saved, setSaved] = useState(false);
+  const [savingSave, setSavingSave] = useState(false);
+  const [grinders, setGrinders] = useState<GrinderInfo[]>([]);
+  const [selGrinder, setSelGrinder] = useState<string>('');
+  const [calibrations, setCalibrations] = useState<Calibration[]>([]);
+  const [calInput, setCalInput] = useState<string>('');
+  const [savingCal, setSavingCal] = useState(false);
+  const [drippers, setDrippers] = useState<DripperInfo[]>([]);
+  const [selDripper, setSelDripper] = useState<string>('');
+
+  // Reflect already-saved state on load (best-effort; web_local/toss_anon identity).
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const mc = await getMyCollections();
+        const codes = new Set(
+          (mc.savedRecipes as Array<{ recipe_code?: string }>)
+            .map((s) => s.recipe_code)
+            .filter((x): x is string => Boolean(x))
+        );
+        if (alive && codes.has(code)) setSaved(true);
+      } catch {
+        // collections unavailable — leave default (unsaved)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
+  // ROB-611: load the grinder registry; default the selector to the user's gear.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await listGrinders();
+        setGrinders(list);
+        const preferred = loadGear().grinder;
+        const match = preferred ? list.find((g) => g.name === preferred) : undefined;
+        setSelGrinder(match ? match.name : (list[0]?.name ?? ''));
+      } catch {
+        // registry unavailable — grind section falls back to target text
+      }
+    })();
+  }, []);
+
+  // ROB-611 (D): load the user's grinder-pair calibrations (best-effort).
+  async function loadCalibrations(): Promise<void> {
+    try {
+      const mc = await getMyCollections();
+      const rows = mc.calibration as Array<{
+        from_label?: string;
+        to_label?: string;
+        anchor_method?: string;
+        samples?: { fromClicks: number; toClicks: number }[];
+      }>;
+      setCalibrations(
+        rows
+          .filter((r) => r.from_label && r.to_label)
+          .map((r) => ({
+            fromGrinder: r.from_label as string,
+            toGrinder: r.to_label as string,
+            anchorMethod: r.anchor_method,
+            samples: Array.isArray(r.samples) ? r.samples : []
+          }))
+      );
+    } catch {
+      // collections unavailable — conversions stay uncalibrated
+    }
+  }
+  useEffect(() => {
+    void loadCalibrations();
+  }, []);
+
+  // ROB-612: load the dripper registry for the adaptation helper.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await listDrippers();
+        setDrippers(list);
+        setSelDripper(list[0]?.name ?? '');
+      } catch {
+        // registry unavailable — dripper section falls back
+      }
+    })();
+  }, []);
 
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
@@ -201,6 +315,36 @@ export default function RecipeDetail({ code }: { code: string }) {
     );
   }
 
+  const grindField = recipe.params.grind;
+  const grindSpec: GrindSpec | null =
+    grindField != null && typeof grindField === 'object' ? grindField : null;
+  const selInfo = grinders.find((g) => g.name === selGrinder) ?? null;
+  const grindSuggestion =
+    grindSpec && selInfo
+      ? suggestGrinderClicks(grindSpec, recipe.method, selInfo, grinders, calibrations)
+      : null;
+  // Calibration is keyed on the grinder the suggestion actually interpolated FROM
+  // (exposed by suggestGrinderClicks), so a saved offset reliably applies on reload.
+  // Only meaningful on the interpolation path (not a direct measured match).
+  const canCalibrate =
+    !!grindSuggestion &&
+    !!grindSuggestion.fromGrinder &&
+    grindSuggestion.fromClicks != null &&
+    (grindSuggestion.basis === 'relative-band' || grindSuggestion.basis === 'calibrated');
+
+  const dripperLayer = recipe.dripperPortability ?? null;
+  const dripperOrigin: DripperInfo | null = dripperLayer
+    ? (drippers.find((d) => d.name.toLowerCase() === dripperLayer.origin.dripper.toLowerCase()) ?? {
+        name: dripperLayer.origin.dripper,
+        class: 'bed_restricted'
+      })
+    : null;
+  const selDripperInfo = drippers.find((d) => d.name === selDripper) ?? null;
+  const dripperAdaptation =
+    dripperLayer && dripperOrigin && selDripperInfo
+      ? suggestDripperAdaptation(dripperOrigin, recipe.params.doseG, selDripperInfo)
+      : null;
+
   return (
     <>
       <Top
@@ -218,6 +362,26 @@ export default function RecipeDetail({ code }: { code: string }) {
             <span className="muted">맛을 확인하고 피드백을 남겨주세요.</span>
           </p>
         )}
+
+        <div className="row">
+          <button
+            type="button"
+            className={`btn-save${saved ? ' saved' : ''}`}
+            disabled={savingSave || saved}
+            onClick={() => {
+              if (savingSave || saved) return;
+              setSavingSave(true);
+              saveRecipe(recipe.code)
+                .then(() => setSaved(true))
+                .catch(() => {
+                  /* best-effort; v1 save is non-critical */
+                })
+                .finally(() => setSavingSave(false));
+            }}
+          >
+            {saved ? '저장됨 ✓' : savingSave ? '저장 중…' : '레시피 저장'}
+          </button>
+        </div>
 
         <div className="seg" role="tablist" aria-label="레시피 보기">
           <button
@@ -354,10 +518,161 @@ export default function RecipeDetail({ code }: { code: string }) {
                   {Object.entries(recipe.params).map(([k, v]) => (
                     <div key={k} style={{ display: 'contents' }}>
                       <dt>{paramLabel(k)}</dt>
-                      <dd>{String(v)}</dd>
+                      <dd>{k === 'grind' ? grindDisplay(v) : String(v)}</dd>
                     </div>
                   ))}
                 </dl>
+              </section>
+            )}
+            {grindSpec && (
+              <section className="stack-tight">
+                <h2>그라인더별 분쇄도</h2>
+                <p className="card-meta muted">
+                  목표: {grindSpec.target.brewMethodPosition ?? '—'}
+                  {grindSpec.target.targetDrawdownSec != null &&
+                    ` · 드로다운 ${grindSpec.target.targetDrawdownSec}초`}
+                  {grindSpec.target.microns != null && ` · ~${grindSpec.target.microns}µm(참고)`}
+                </p>
+                {grinders.length > 0 && (
+                  <div className="stack-tight">
+                    <label className="card-meta">
+                      내 그라인더{' '}
+                      <select
+                        value={selGrinder}
+                        onChange={(e) => setSelGrinder(e.target.value)}
+                        aria-label="그라인더 선택"
+                      >
+                        {grinders.map((g) => (
+                          <option key={g.name} value={g.name}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {grindSuggestion && (
+                      <>
+                        <p className="card-title">
+                          {grindSuggestion.clicks != null
+                            ? `${Math.round(grindSuggestion.clicks)} 클릭${
+                                grindSuggestion.range
+                                  ? ` (${grindSuggestion.range.from}~${grindSuggestion.range.to})`
+                                  : ''
+                              }`
+                            : (grindSpec.target.brewMethodPosition ?? '환산 정보 없음')}{' '}
+                          <span className="muted">
+                            {grindSuggestion.basis === 'calibrated'
+                              ? '· 내 보정 반영'
+                              : grindSuggestion.source === 'measured'
+                                ? '· 측정값'
+                                : grindSuggestion.source === 'dial-in-start'
+                                  ? '· dial-in 시작점'
+                                  : ''}
+                          </span>
+                        </p>
+                        {grindSuggestion.disclaimer && (
+                          <p className="card-meta muted">{grindSuggestion.disclaimer}</p>
+                        )}
+                      </>
+                    )}
+                    {canCalibrate && grindSuggestion && (
+                      <div className="row" style={{ alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="card-meta muted">내 {selGrinder} 실측 클릭</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          value={calInput}
+                          onChange={(e) => setCalInput(e.target.value)}
+                          aria-label="실측 클릭"
+                          style={{ width: 72 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-save"
+                          disabled={savingCal || calInput.trim() === ''}
+                          onClick={() => {
+                            const toClicks = Number(calInput);
+                            const fromG = grindSuggestion.fromGrinder;
+                            const fromC = grindSuggestion.fromClicks;
+                            if (!fromG || fromC == null || !Number.isFinite(toClicks)) return;
+                            setSavingCal(true);
+                            upsertCalibration({
+                              fromLabel: fromG,
+                              toLabel: selGrinder,
+                              anchorMethod: recipe.method,
+                              samples: [{ fromClicks: fromC, toClicks }],
+                              source: 'measured'
+                            })
+                              .then(() => {
+                                setCalInput('');
+                                return loadCalibrations();
+                              })
+                              .catch(() => {
+                                /* best-effort */
+                              })
+                              .finally(() => setSavingCal(false));
+                          }}
+                        >
+                          {savingCal ? '저장 중…' : '보정 저장'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {grindSpec.perGrinder && grindSpec.perGrinder.length > 0 && (
+                  <ul className="pour-list">
+                    {grindSpec.perGrinder.map((pg, i) => (
+                      <li key={`${pg.grinder}-${i}`} className="pour-row">
+                        <span>{pg.grinder}</span>
+                        <span className="muted">
+                          {pg.clicks} 클릭 · {pg.source === 'measured' ? '측정' : 'dial-in'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+            {dripperLayer && (
+              <section className="stack-tight">
+                <h2>드리퍼 이식</h2>
+                <p className="card-meta muted">
+                  원본: {dripperLayer.origin.dripper}
+                  {dripperLayer.origin.sizeModel ? ` ${dripperLayer.origin.sizeModel}` : ''}
+                  {recipe.params.doseG != null ? ` · ${recipe.params.doseG}g` : ''}
+                  {dripperLayer.anchors.ratio ? ` · ${dripperLayer.anchors.ratio}` : ''}
+                </p>
+                {drippers.length > 0 && (
+                  <div className="stack-tight">
+                    <label className="card-meta">
+                      내 드리퍼{' '}
+                      <select
+                        value={selDripper}
+                        onChange={(e) => setSelDripper(e.target.value)}
+                        aria-label="드리퍼 선택"
+                      >
+                        {drippers.map((d) => (
+                          <option key={d.name} value={d.name}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {dripperAdaptation && (
+                      <>
+                        {dripperAdaptation.bedOverflow && dripperAdaptation.warn && (
+                          <p className="error-panel">⚠ {dripperAdaptation.warn}</p>
+                        )}
+                        <p className="card-title">
+                          사이즈 {SIZE_MATCH_LABEL[dripperAdaptation.sizeMatch]} · 분쇄{' '}
+                          {GRIND_SHIFT_LABEL[dripperAdaptation.grindShift]} · 푸어{' '}
+                          {POUR_SHIFT_LABEL[dripperAdaptation.pourShift]}{' '}
+                          <span className="muted">· {CONFIDENCE_LABEL[dripperAdaptation.confidence]}</span>
+                        </p>
+                        <p className="card-meta muted">{dripperAdaptation.disclaimer}</p>
+                      </>
+                    )}
+                  </div>
+                )}
               </section>
             )}
             {brewPhases.length > 0 && (

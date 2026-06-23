@@ -17,6 +17,8 @@ import {
   handleGetRecentContext,
   handleGetRecipeContext,
   handleListBeans,
+  handleListDrippers,
+  handleListGrinders,
   handleSupersedeRecipe,
   handleUpdateRecipe,
   type ToolResult
@@ -44,10 +46,96 @@ const PARAMS_SCHEMA = {
     waterG: { type: 'number' },
     ratio: { type: 'string' },
     tempC: { type: 'number' },
-    grind: { type: 'string' },
+    grind: {
+      // ROB-611: legacy free text OR structured grinder-portable spec.
+      oneOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          required: ['target'],
+          properties: {
+            target: {
+              type: 'object',
+              description:
+                'Grinder-agnostic target. Prefer brewMethodPosition + targetDrawdownSec; microns is advisory only.',
+              properties: {
+                microns: { type: 'number' },
+                brewMethodPosition: { type: 'string' },
+                targetDrawdownSec: { type: 'number' }
+              }
+            },
+            perGrinder: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['grinder', 'clicks', 'source'],
+                properties: {
+                  grinder: { type: 'string' },
+                  grinderId: { type: 'string' },
+                  clicks: { type: ['number', 'string'] },
+                  stepless: { type: 'boolean' },
+                  source: { type: 'string', enum: ['measured', 'dial-in-start'] }
+                }
+              }
+            },
+            legacyText: { type: 'string' }
+          }
+        }
+      ]
+    },
     grinder: { type: 'string' },
     brewer: { type: 'string' },
     targetTimeSec: { type: 'number' }
+  }
+} as const;
+
+const DRIPPER_PORTABILITY_SCHEMA = {
+  type: 'object',
+  description:
+    'ROB-612 dripper-portable layer: fixed anchors (ratio/temp/time) + per-dripper class, size match, and grind/pour adjustment DIRECTIONS (not absolute values).',
+  required: ['origin'],
+  properties: {
+    origin: {
+      type: 'object',
+      required: ['dripper'],
+      properties: {
+        dripper: { type: 'string' },
+        dripperId: { type: 'string' },
+        sizeModel: { type: 'string' }
+      }
+    },
+    anchors: {
+      type: 'object',
+      properties: {
+        ratio: { type: 'string' },
+        tempC: { type: 'number' },
+        targetDrawdownSec: { type: 'number' }
+      }
+    },
+    classNote: { type: 'string' },
+    targets: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['dripper', 'class', 'sizeMatch', 'grindShift', 'pourShift', 'confidence'],
+        properties: {
+          dripper: { type: 'string' },
+          dripperId: { type: 'string' },
+          class: { type: 'string', enum: ['bed_restricted', 'dripper_restricted', 'hybrid', 'immersion'] },
+          sizeMatch: { type: 'string', enum: ['ok', 'undersized', 'oversized'] },
+          bedDepthShift: { type: 'string', enum: ['shallower', 'deeper', 'similar'] },
+          bedOverflow: { type: 'boolean' },
+          grindShift: { type: 'string', enum: ['coarser', 'finer', 'none'] },
+          pourShift: {
+            type: 'string',
+            enum: ['gentler', 'more_agitation', 'fewer_pours', 'more_pours', 'none']
+          },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          warn: { type: 'string' },
+          note: { type: 'string' }
+        }
+      }
+    }
   }
 } as const;
 
@@ -70,7 +158,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
+      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid. GRIND (ROB-611): prefer a STRUCTURED params.grind object over free text — { target: { brewMethodPosition e.g. "v60 medium-fine", targetDrawdownSec }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }. target MUST carry brewMethodPosition OR targetDrawdownSec (microns is advisory only). Put the operator’s MEASURED grinder+clicks in perGrinder; first call brew.list_grinders and use the EXACT registry name so the app can convert clicks to other grinders at read time. Keep the original wording in legacyText. A plain string grind is still accepted for legacy/quick entry. DRIPPER (ROB-612): for portability across drippers, set top-level dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } } — the app derives per-dripper size match + grind/pour DIRECTION + the 40g bed-overflow warning at read time. Call brew.list_drippers and use the EXACT registry name in origin.dripper. params.doseG drives the bed check, so set it (especially for 40g+ large doses).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -82,7 +170,8 @@ const TOOLS: Tool[] = [
         steps: STEPS_SCHEMA,
         intent: { type: 'array', items: { type: 'string' } },
         notes: { type: 'string' },
-        adjustmentFromPrevious: { type: 'string' }
+        adjustmentFromPrevious: { type: 'string' },
+        dripperPortability: DRIPPER_PORTABILITY_SCHEMA
       },
       required: ['method', 'title']
     }
@@ -90,7 +179,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.update_recipe',
     description:
-      'Edit an existing recipe in place (ROB-605). Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate.',
+      'Edit an existing recipe in place (ROB-605). Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params.grind may be upgraded from a legacy string to a structured GrindSpec (see create_recipe / ROB-611).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -101,7 +190,8 @@ const TOOLS: Tool[] = [
         notes: { type: 'string' },
         intent: { type: 'array', items: { type: 'string' } },
         beanSnapshot: BEAN_SNAPSHOT_SCHEMA,
-        adjustmentFromPrevious: { type: 'string' }
+        adjustmentFromPrevious: { type: 'string' },
+        dripperPortability: DRIPPER_PORTABILITY_SCHEMA
       },
       required: ['code']
     }
@@ -152,6 +242,18 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: { limit: { type: 'number', description: '1-50, default 20' } }
     }
+  },
+  {
+    name: 'brew.list_grinders',
+    description:
+      'List the grinder registry (ROB-611): canonical name, per-method click band (brewMethodRanges, e.g. v60: {from,to}), advisory um/click, and stepless flag. Call this BEFORE create_recipe so params.grind.perGrinder uses the EXACT registry name (e.g. "KINGrinder K6", "Comandante C40") — the mini-app only converts clicks to other grinders at read time when names match the registry.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'brew.list_drippers',
+    description:
+      'List the dripper registry (ROB-612): canonical name, class (bed_restricted/dripper_restricted/hybrid/immersion), flow-restriction continuum (0 fast/bed-controlled .. 1 slow/dripper-controlled), recommendedDoseRange, and sizeModels (maxDoseG). Call this BEFORE create_recipe so dripperPortability.origin.dripper uses the EXACT registry name — the mini-app derives per-dripper size match + grind/pour direction + the 40g bed-overflow warning at read time from these values.',
+    inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'brew.get_recent_context',
@@ -234,6 +336,8 @@ async function main(): Promise<void> {
         case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
         case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
         case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
+        case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
+        case 'brew.list_drippers': result = await handleListDrippers(supabase, a); break;
         case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
         case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
         case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;

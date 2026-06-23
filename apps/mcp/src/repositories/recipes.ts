@@ -1,6 +1,7 @@
 import type {
   BeanSnapshot,
   CreateRecipeInput,
+  DripperPortability,
   RecipeCode,
   RecipeDoc,
   RecipeParams,
@@ -74,6 +75,7 @@ export interface RecipeUpdate {
   intent?: string[];
   beanSnapshot?: BeanSnapshot;
   adjustmentFromPrevious?: string;
+  dripperPortability?: DripperPortability;
 }
 
 export async function updateRecipe(
@@ -95,6 +97,7 @@ export async function updateRecipe(
   if (patch.adjustmentFromPrevious !== undefined) {
     row.adjustment_from_previous = patch.adjustmentFromPrevious;
   }
+  if (patch.dripperPortability !== undefined) row.dripper_portability = patch.dripperPortability;
 
   const rows = await updateRows<RecipeRow>(config, 'recipes', eqCode(code), row, RECIPE_COLUMNS, fetchImpl);
   return rows[0] ? rowToRecipe(rows[0]) : null;

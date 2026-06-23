@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   validateCreateFeedbackInput,
-  validateCreateRecipeInput
+  validateCreateRecipeInput,
+  validateUpdateRecipeInput
 } from './validation.js';
 
 describe('validateCreateRecipeInput', () => {
@@ -387,5 +388,255 @@ describe('validateCreateRecipeInput cross-field/range (ROB-608)', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.warnings.join(' ')).not.toMatch(/does not reach/);
+  });
+});
+
+describe('validateCreateRecipeInput — ROB-611 grind portability', () => {
+  it('accepts legacy string grind (backward compatible)', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Legacy',
+      params: { grind: 'KINGrinder K6 102클릭으로 시작' }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params?.grind).toBe('KINGrinder K6 102클릭으로 시작');
+  });
+
+  it('accepts a structured GrindSpec and mirrors targetDrawdownSec into targetTimeSec', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Structured',
+      params: {
+        grind: {
+          target: { brewMethodPosition: 'v60 medium-fine', targetDrawdownSec: 265, microns: 700 },
+          perGrinder: [
+            { grinder: 'KINGrinder K6', clicks: 102, source: 'measured' },
+            { grinder: 'Comandante C40', clicks: '25-28', source: 'dial-in-start' }
+          ]
+        }
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const grind = r.value.params?.grind;
+      expect(typeof grind).toBe('object');
+      if (grind && typeof grind === 'object') {
+        expect(grind.target.targetDrawdownSec).toBe(265);
+        expect(grind.perGrinder?.length).toBe(2);
+      }
+      expect(r.value.params?.targetTimeSec).toBe(265); // mirrored for dedup correctness
+    }
+  });
+
+  it('rejects a GrindSpec target with neither brewMethodPosition nor targetDrawdownSec (microns-only)', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Microns only',
+      params: { grind: { target: { microns: 700 } } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/brewMethodPosition or targetDrawdownSec/);
+  });
+
+  it('rejects a stepless grinder with numeric clicks', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Stepless',
+      params: {
+        grind: {
+          target: { brewMethodPosition: 'v60 medium' },
+          perGrinder: [{ grinder: '1Zpresso', clicks: 12, stepless: true, source: 'measured' }]
+        }
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/stepless/);
+  });
+
+  it('does not overwrite an explicit targetTimeSec with the grind mirror', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Explicit time',
+      params: {
+        targetTimeSec: 200,
+        grind: { target: { brewMethodPosition: 'v60', targetDrawdownSec: 265 } }
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params?.targetTimeSec).toBe(200);
+  });
+});
+
+describe('validateCreateRecipeInput — ROB-612 dripper portability', () => {
+  it('accepts a valid dripperPortability layer', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Dripper-portable',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60', sizeModel: '02' },
+        anchors: { ratio: '1:16', tempC: 92, targetDrawdownSec: 165 },
+        classNote: 'bed-restricted / cone',
+        targets: [
+          {
+            dripper: 'Kalita Wave 185',
+            class: 'dripper_restricted',
+            sizeMatch: 'ok',
+            grindShift: 'coarser',
+            pourShift: 'fewer_pours',
+            confidence: 'medium',
+            warn: 'large dose: keep bed depth similar'
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.dripperPortability?.origin.dripper).toBe('Hario V60');
+      expect(r.value.dripperPortability?.targets?.length).toBe(1);
+    }
+  });
+
+  it('rejects dripperPortability without origin.dripper', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'No origin',
+      dripperPortability: { anchors: { ratio: '1:16' } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/origin\.dripper/);
+  });
+
+  it('rejects an invalid target class', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Bad class',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60' },
+        targets: [
+          {
+            dripper: 'Kalita',
+            class: 'weird',
+            sizeMatch: 'ok',
+            grindShift: 'coarser',
+            pourShift: 'none',
+            confidence: 'low'
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/class must be one of/);
+  });
+});
+
+describe('validator defensive branches (ROB-611/612 caps + enums)', () => {
+  it('rejects a grind perGrinder array over the 10-entry cap', () => {
+    const perGrinder = Array.from({ length: 11 }, (_, i) => ({
+      grinder: `G${i}`,
+      clicks: 100,
+      source: 'measured' as const
+    }));
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Too many grinders',
+      params: { grind: { target: { brewMethodPosition: 'v60' }, perGrinder } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 10/);
+  });
+
+  it('rejects a dripperPortability targets array over the 30-entry cap', () => {
+    const targets = Array.from({ length: 31 }, () => ({
+      dripper: 'Kalita',
+      class: 'dripper_restricted',
+      sizeMatch: 'ok',
+      grindShift: 'coarser',
+      pourShift: 'none',
+      confidence: 'low'
+    }));
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Too many targets',
+      dripperPortability: { origin: { dripper: 'Hario V60' }, targets }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 30/);
+  });
+
+  it('rejects a dripper target warn over 280 chars', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Long warn',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60' },
+        targets: [
+          {
+            dripper: 'Kalita',
+            class: 'dripper_restricted',
+            sizeMatch: 'ok',
+            grindShift: 'none',
+            pourShift: 'none',
+            confidence: 'low',
+            warn: 'x'.repeat(281)
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 280/);
+  });
+
+  it('rejects each invalid dripper target enum (sizeMatch/grindShift/pourShift/confidence)', () => {
+    for (const bad of [
+      { sizeMatch: 'huge' },
+      { grindShift: 'chunky' },
+      { pourShift: 'splash' },
+      { confidence: 'maybe' }
+    ]) {
+      const r = validateCreateRecipeInput({
+        method: 'v60',
+        title: 'Bad enum',
+        dripperPortability: {
+          origin: { dripper: 'Hario V60' },
+          targets: [
+            {
+              dripper: 'Kalita',
+              class: 'dripper_restricted',
+              sizeMatch: 'ok',
+              grindShift: 'none',
+              pourShift: 'none',
+              confidence: 'low',
+              ...bad
+            }
+          ]
+        }
+      });
+      expect(r.ok).toBe(false);
+    }
+  });
+});
+
+describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
+  it('accepts a valid partial patch (notes + dripperPortability)', () => {
+    const r = validateUpdateRecipeInput({
+      notes: 'tweaked',
+      dripperPortability: { origin: { dripper: 'Hario V60' } }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.notes).toBe('tweaked');
+      expect(r.value.dripperPortability?.origin.dripper).toBe('Hario V60');
+    }
+  });
+
+  it('rejects a malformed grind (microns-only) on update — no DB bypass', () => {
+    const r = validateUpdateRecipeInput({ params: { grind: { target: { microns: 700 } } } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/brewMethodPosition or targetDrawdownSec/);
+  });
+
+  it('rejects a non-object input', () => {
+    const r = validateUpdateRecipeInput('nope');
+    expect(r.ok).toBe(false);
   });
 });

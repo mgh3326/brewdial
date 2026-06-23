@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useHashPath } from './lib/useRoute';
+import { migrateLocalGearOnce } from './lib/data/gear';
 import Beans from './pages/Beans';
 import BeanDetail from './pages/BeanDetail';
 import NewRecipe from './pages/NewRecipe';
@@ -6,6 +8,12 @@ import RecipeDetail from './pages/RecipeDetail';
 
 export default function App() {
   const path = useHashPath();
+
+  // One-time: seed the server-side user_gear from the legacy localStorage gear
+  // (also warms the v1 identity). Fire-and-forget; failures are swallowed.
+  useEffect(() => {
+    void migrateLocalGearOnce();
+  }, []);
 
   const recipeMatch = /^\/recipes\/(COF-[A-Za-z0-9-]+)$/.exec(path);
   if (recipeMatch) return <RecipeDetail key={recipeMatch[1]} code={recipeMatch[1]} />;
