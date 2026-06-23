@@ -20,17 +20,34 @@ import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
-import { grindDisplay, parseClicks, suggestGrinderClicks } from '../lib/domain';
+import { grindDisplay, parseClicks, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
 import { listGrinders } from '../lib/data/grinders';
+import { listDrippers } from '../lib/data/drippers';
 import { loadGear } from '../lib/gear-preferences';
 import type {
   Calibration,
+  DripperInfo,
   FeedbackDoc,
   GrindSpec,
   GrinderInfo,
   RecipeCode,
   RecipeDoc
 } from '../lib/domain';
+
+const SIZE_MATCH_LABEL: Record<string, string> = {
+  ok: '적정',
+  undersized: '도즈 적음',
+  oversized: '도즈 많음'
+};
+const GRIND_SHIFT_LABEL: Record<string, string> = { coarser: '굵게', finer: '곱게', none: '그대로' };
+const POUR_SHIFT_LABEL: Record<string, string> = {
+  gentler: '교반 ↓',
+  more_agitation: '교반 ↑',
+  fewer_pours: '푸어 횟수 ↓',
+  more_pours: '푸어 횟수 ↑',
+  none: '그대로'
+};
+const CONFIDENCE_LABEL: Record<string, string> = { high: '신뢰 높음', medium: '참고', low: '주의' };
 
 type Tab = 'timer' | 'recipe' | 'feedback';
 
@@ -55,6 +72,8 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [calibrations, setCalibrations] = useState<Calibration[]>([]);
   const [calInput, setCalInput] = useState<string>('');
   const [savingCal, setSavingCal] = useState(false);
+  const [drippers, setDrippers] = useState<DripperInfo[]>([]);
+  const [selDripper, setSelDripper] = useState<string>('');
 
   // Reflect already-saved state on load (best-effort; web_local/toss_anon identity).
   useEffect(() => {
@@ -118,6 +137,19 @@ export default function RecipeDetail({ code }: { code: string }) {
   }
   useEffect(() => {
     void loadCalibrations();
+  }, []);
+
+  // ROB-612: load the dripper registry for the adaptation helper.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await listDrippers();
+        setDrippers(list);
+        setSelDripper(list[0]?.name ?? '');
+      } catch {
+        // registry unavailable — dripper section falls back
+      }
+    })();
   }, []);
 
   const [elapsed, setElapsed] = useState(0);
@@ -300,6 +332,19 @@ export default function RecipeDetail({ code }: { code: string }) {
     !!grindRef &&
     grindRefClicks != null &&
     (grindSuggestion?.basis === 'relative-band' || grindSuggestion?.basis === 'calibrated');
+
+  const dripperLayer = recipe.dripperPortability ?? null;
+  const dripperOrigin: DripperInfo | null = dripperLayer
+    ? (drippers.find((d) => d.name.toLowerCase() === dripperLayer.origin.dripper.toLowerCase()) ?? {
+        name: dripperLayer.origin.dripper,
+        class: 'bed_restricted'
+      })
+    : null;
+  const selDripperInfo = drippers.find((d) => d.name === selDripper) ?? null;
+  const dripperAdaptation =
+    dripperLayer && dripperOrigin && selDripperInfo
+      ? suggestDripperAdaptation(dripperOrigin, recipe.params.doseG, selDripperInfo)
+      : null;
 
   return (
     <>
@@ -583,6 +628,49 @@ export default function RecipeDetail({ code }: { code: string }) {
                       </li>
                     ))}
                   </ul>
+                )}
+              </section>
+            )}
+            {dripperLayer && (
+              <section className="stack-tight">
+                <h2>드리퍼 이식</h2>
+                <p className="card-meta muted">
+                  원본: {dripperLayer.origin.dripper}
+                  {dripperLayer.origin.sizeModel ? ` ${dripperLayer.origin.sizeModel}` : ''}
+                  {recipe.params.doseG != null ? ` · ${recipe.params.doseG}g` : ''}
+                  {dripperLayer.anchors.ratio ? ` · ${dripperLayer.anchors.ratio}` : ''}
+                </p>
+                {drippers.length > 0 && (
+                  <div className="stack-tight">
+                    <label className="card-meta">
+                      내 드리퍼{' '}
+                      <select
+                        value={selDripper}
+                        onChange={(e) => setSelDripper(e.target.value)}
+                        aria-label="드리퍼 선택"
+                      >
+                        {drippers.map((d) => (
+                          <option key={d.name} value={d.name}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {dripperAdaptation && (
+                      <>
+                        {dripperAdaptation.bedOverflow && dripperAdaptation.warn && (
+                          <p className="error-panel">⚠ {dripperAdaptation.warn}</p>
+                        )}
+                        <p className="card-title">
+                          사이즈 {SIZE_MATCH_LABEL[dripperAdaptation.sizeMatch]} · 분쇄{' '}
+                          {GRIND_SHIFT_LABEL[dripperAdaptation.grindShift]} · 푸어{' '}
+                          {POUR_SHIFT_LABEL[dripperAdaptation.pourShift]}{' '}
+                          <span className="muted">· {CONFIDENCE_LABEL[dripperAdaptation.confidence]}</span>
+                        </p>
+                        <p className="card-meta muted">{dripperAdaptation.disclaimer}</p>
+                      </>
+                    )}
+                  </div>
                 )}
               </section>
             )}
