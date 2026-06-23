@@ -300,6 +300,12 @@ create table if not exists bd_migration_meta (
   value      text,
   created_at timestamptz not null default now()
 );
+-- Internal/service-only table. RLS on + NO policy = deny-all to anon/authenticated
+-- (the schema-apply role and service_role bypass RLS). This also clears Supabase
+-- Studio's "tables without RLS" warning so the safe "Run without RLS" path applies
+-- the script verbatim. (DO NOT use Studio's "Run and enable RLS" — its auto-rewrite
+-- mis-parses the plpgsql `select ... into v_uid` bodies → 42P01 relation "v_uid".)
+alter table bd_migration_meta enable row level security;
 -- Captured exactly ONCE (first apply). Re-applying schema.sql never moves it.
 insert into bd_migration_meta (key, value)
   values ('phase0_cutoff', now()::text)
