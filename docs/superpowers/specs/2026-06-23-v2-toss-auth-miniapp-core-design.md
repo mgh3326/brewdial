@@ -1,5 +1,7 @@
 # BrewDial v2 — 미니앱 토스 로그인 인증 코어 (설계)
 
+> **⚠️ 부분 대체 예정 (2026-06-23):** 아키텍처가 Supabase → OCI 자체호스팅(플레인 Postgres + 커스텀 3-tier 백엔드)으로 피벗됨. 이 문서의 **Supabase 특정 메커니즘(GoTrue 세션·custom-JWT·RLS `auth.uid()`·SECURITY DEFINER RPC 키스톤·§6.2/6.3/6.6)은 무효** — 백엔드가 신뢰 경계가 되어 그 고민들이 소멸. **상위 결정(A안: 웹 토스 로그인 보류, 최소 스코프, appLogin mTLS 흐름, toss_anon→toss_login 병합)은 유효.** 선행 기반은 `2026-06-23-supabase-to-oci-3tier-migration-design.md`. 이 v2 스펙은 그 기반 위에서 재작성 예정(Spec 2).
+
 - **작성일:** 2026-06-23
 - **결정:** A안 (웹 동기화 보류 · 미니앱 인증 우선)
 - **Linear:** 에픽 ROB-613 / ROB-614(파트너 서버+mTLS) · ROB-615(미니앱 appLogin) · ROB-617(병합+인증 RLS) — **v2 범위**. ROB-616(웹 토스 로그인) — **보류(계약 게이트)**.
