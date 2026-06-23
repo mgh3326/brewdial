@@ -7,7 +7,7 @@
   "scripts": {
     "migrate": "node-pg-migrate -m migrations -j sql up",
     "migrate:down": "node-pg-migrate -m migrations -j sql down",
-    "codegen": "kysely-codegen --out-file src/types.ts",
+    "codegen": "kysely-codegen --url=$DATABASE_URL --out-file src/types.ts",
     "test": "vitest run"
   },
   "dependencies": { "kysely": "^0.27.0", "pg": "^8.13.0" },
