@@ -9,7 +9,9 @@ beans.get('/', async (c) => {
   const q = c.req.query('q')
   if (q !== undefined && q !== '') {
     const limitParam = c.req.query('limit')
-    const limit = limitParam ? parseInt(limitParam, 10) : undefined
+    const parsed = limitParam ? parseInt(limitParam, 10) : NaN
+    // Guard against non-numeric ?limit= (e.g. ?limit=abc) — fall back to default.
+    const limit = Number.isFinite(parsed) ? parsed : undefined
     const rows = await findBeans(db, q, limit)
     return c.json(rows)
   }

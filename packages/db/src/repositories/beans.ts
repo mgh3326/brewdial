@@ -42,8 +42,10 @@ export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
 }
 
 export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<BeanRow[]> {
-  const clampedLimit = Math.min(25, Math.max(1, limit ?? 25))
-  const pattern = `%${q}%`
+  // Default limit 10 to match MCP find_bean disambiguation order.
+  // Intentional divergence: we cap at 25 (MCP has no max); callers should not rely on >25 rows.
+  const clampedLimit = Math.min(25, Math.max(1, limit ?? 10))
+  const pattern = `%${q.trim()}%`
   return db
     .selectFrom('bean_summaries')
     .select(BEAN_COLS)
@@ -52,7 +54,9 @@ export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<Be
       eb('roaster', 'ilike', pattern),
     ]))
     .where('recipe_count', '>', '0')
-    .orderBy('latest_recipe_at', 'desc')
+    // MCP disambiguation order: most-used beans first (recipe_count DESC).
+    // recipe_count is stored as Int8/string; ORDER BY works correctly at the DB level.
+    .orderBy('recipe_count', 'desc')
     .limit(clampedLimit)
     .execute() as unknown as Promise<BeanRow[]>
 }

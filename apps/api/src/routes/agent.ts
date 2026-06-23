@@ -142,6 +142,11 @@ agentRouter.post('/recipes/supersede', async (c) => {
     return c.json({ error: 'oldCode and newCode are required' }, 400)
   }
 
+  // Self-supersede guard: a recipe cannot supersede itself.
+  if (oldCode === newCode) {
+    return c.json({ error: 'cannot supersede a recipe with itself' }, 400)
+  }
+
   try {
     const result = await supersedeRecipe(db, oldCode, newCode)
     return c.json(result)

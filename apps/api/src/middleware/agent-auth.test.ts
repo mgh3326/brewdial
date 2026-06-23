@@ -52,14 +52,14 @@ test('correct Bearer token → 200', async () => {
   expect(body).toEqual({ ok: true })
 })
 
-test('AGENT_TOKEN unset → throws (fail closed)', async () => {
+test('AGENT_TOKEN unset → 503 (fail closed, no stack trace)', async () => {
   delete process.env.AGENT_TOKEN
   const app = makeApp()
-  // The middleware throws when AGENT_TOKEN is unset; Hono surfaces it as 500
+  // The middleware returns a clean 503 when AGENT_TOKEN is unset (no throw, no stderr stack trace).
   const res = await app.request('/agent/x', {
     headers: { Authorization: 'Bearer test-token' },
   })
-  // Either 500 (Hono default error handler) is acceptable; the key property
-  // is that the request is NOT allowed through (not 200)
-  expect(res.status).not.toBe(200)
+  expect(res.status).toBe(503)
+  const body = await res.json()
+  expect(body).toEqual({ ok: false, error: 'agent auth not configured' })
 })

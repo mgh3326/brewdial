@@ -157,6 +157,32 @@ test('POST /api/agent/recipes/supersede → old.status=superseded + superseded_b
   expect(replacement['code']).toBe(newRow.code)
 })
 
+test('POST /api/agent/recipes/supersede with oldCode===newCode → 400 (self-supersede guard)', async () => {
+  const db = getDb()
+  const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage SelfSupersede ${SEED_SUFFIX}` })
+  createdCodes.push(row.code)
+
+  const res = await app.request(
+    agentReq('/api/agent/recipes/supersede', {
+      method: 'POST',
+      body: JSON.stringify({ oldCode: row.code, newCode: row.code }),
+    })
+  )
+  expect(res.status).toBe(400)
+  const body: Record<string, unknown> = await res.json()
+  expect(body['error']).toBe('cannot supersede a recipe with itself')
+
+  // Verify no self-referential row was written.
+  const fresh = await db
+    .selectFrom('recipes')
+    .select(['status', 'superseded_by', 'supersedes'])
+    .where('code', '=', row.code)
+    .executeTakeFirst()
+  expect(fresh?.status).toBe('active')
+  expect(fresh?.superseded_by).toBeNull()
+  expect(fresh?.supersedes).toBeNull()
+})
+
 test('POST /api/agent/recipes/supersede with unknown oldCode → 404', async () => {
   const db = getDb()
   const newRow = await insertAgentRecipe(db, { method: 'v60', title: `Lineage Supersede404 ${SEED_SUFFIX}` })

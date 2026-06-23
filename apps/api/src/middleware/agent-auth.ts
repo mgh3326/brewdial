@@ -11,8 +11,8 @@ function constantTimeEqual(a: string, b: string): boolean {
 export async function agentAuth(c: Context, next: Next) {
   const agentToken = process.env.AGENT_TOKEN
   if (!agentToken) {
-    // Fail closed: if AGENT_TOKEN is unconfigured, reject every request
-    throw new Error('AGENT_TOKEN is not set')
+    // Fail closed: if AGENT_TOKEN is unconfigured, return a clean 503 (no stack trace on stderr).
+    return c.json({ ok: false, error: 'agent auth not configured' }, 503)
   }
 
   const authHeader = c.req.header('Authorization')
