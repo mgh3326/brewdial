@@ -98,6 +98,7 @@ export function recipeToInsertRow(input: CreateRecipeInput): Record<string, unkn
     intent: input.intent ?? null,
     notes: input.notes ?? null,
     adjustment_from_previous: input.adjustmentFromPrevious ?? null,
+    dripper_portability: input.dripperPortability ?? null,
     created_by: input.createdBy ?? 'agent',
     status: lineage.status ?? 'active',
   };

@@ -1,6 +1,7 @@
 import type {
   ActualBrewParams,
   BrewMethod,
+  DripperPortability,
   FeedbackDoc,
   FeedbackRatings,
   FeedbackSource,
@@ -30,6 +31,7 @@ export interface CreateRecipeInput {
   notes?: string;
   adjustmentFromPrevious?: string;
   createdBy?: 'agent' | 'manual';
+  dripperPortability?: DripperPortability; // ROB-612 dripper-portable layer
 }
 
 export interface CreateRecipeResponse {

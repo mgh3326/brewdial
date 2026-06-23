@@ -465,3 +465,65 @@ describe('validateCreateRecipeInput — ROB-611 grind portability', () => {
     if (r.ok) expect(r.value.params?.targetTimeSec).toBe(200);
   });
 });
+
+describe('validateCreateRecipeInput — ROB-612 dripper portability', () => {
+  it('accepts a valid dripperPortability layer', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Dripper-portable',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60', sizeModel: '02' },
+        anchors: { ratio: '1:16', tempC: 92, targetDrawdownSec: 165 },
+        classNote: 'bed-restricted / cone',
+        targets: [
+          {
+            dripper: 'Kalita Wave 185',
+            class: 'dripper_restricted',
+            sizeMatch: 'ok',
+            grindShift: 'coarser',
+            pourShift: 'fewer_pours',
+            confidence: 'medium',
+            warn: 'large dose: keep bed depth similar'
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.dripperPortability?.origin.dripper).toBe('Hario V60');
+      expect(r.value.dripperPortability?.targets?.length).toBe(1);
+    }
+  });
+
+  it('rejects dripperPortability without origin.dripper', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'No origin',
+      dripperPortability: { anchors: { ratio: '1:16' } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/origin\.dripper/);
+  });
+
+  it('rejects an invalid target class', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Bad class',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60' },
+        targets: [
+          {
+            dripper: 'Kalita',
+            class: 'weird',
+            sizeMatch: 'ok',
+            grindShift: 'coarser',
+            pourShift: 'none',
+            confidence: 'low'
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/class must be one of/);
+  });
+});

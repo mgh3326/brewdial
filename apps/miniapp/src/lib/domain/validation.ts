@@ -4,12 +4,18 @@ import { isRecipeCode } from './schemas';
 import type {
   ActualBrewParams,
   BrewMethod,
+  Confidence,
+  DripperClass,
+  DripperPortability,
+  DripperTarget,
   FeedbackRatings,
   FeedbackSource,
+  GrindShift,
   GrindSource,
   GrindSpec,
   GrindTarget,
   PerGrinderGrind,
+  PourShift,
   QuickFeedbackTag,
   RecipeParams,
   RecipeStep
@@ -240,6 +246,111 @@ function validateGrindSpec(
   return spec;
 }
 
+const DRIPPER_CLASSES = ['bed_restricted', 'dripper_restricted', 'hybrid', 'immersion'] as const;
+const SIZE_MATCHES = ['ok', 'undersized', 'oversized'] as const;
+const BED_DEPTH_SHIFTS = ['shallower', 'deeper', 'similar'] as const;
+const GRIND_SHIFTS = ['coarser', 'finer', 'none'] as const;
+const POUR_SHIFTS = ['gentler', 'more_agitation', 'fewer_pours', 'more_pours', 'none'] as const;
+const CONFIDENCES = ['high', 'medium', 'low'] as const;
+
+// ROB-612: validate the dripper-portability layer (anchors + class + size match +
+// adjustment directions). Whitelist-copy; lives outside params.
+function validateDripperPortability(
+  raw: Record<string, unknown>,
+  errors: string[]
+): DripperPortability | undefined {
+  const origin = raw.origin;
+  if (!isPlainObject(origin) || typeof origin.dripper !== 'string' || origin.dripper.trim() === '') {
+    errors.push('dripperPortability.origin.dripper is required');
+    return undefined;
+  }
+  const out: DripperPortability = { origin: { dripper: origin.dripper }, anchors: {} };
+  if (typeof origin.dripperId === 'string') out.origin.dripperId = origin.dripperId;
+  if (typeof origin.sizeModel === 'string') out.origin.sizeModel = origin.sizeModel;
+
+  const anchors = raw.anchors;
+  if (anchors !== undefined) {
+    if (!isPlainObject(anchors)) {
+      errors.push('dripperPortability.anchors must be an object');
+    } else {
+      if (typeof anchors.ratio === 'string') out.anchors.ratio = anchors.ratio;
+      if (typeof anchors.tempC === 'number') out.anchors.tempC = anchors.tempC;
+      if (typeof anchors.targetDrawdownSec === 'number') {
+        out.anchors.targetDrawdownSec = anchors.targetDrawdownSec;
+      }
+    }
+  }
+
+  if (raw.classNote !== undefined) {
+    if (typeof raw.classNote !== 'string') errors.push('dripperPortability.classNote must be a string');
+    else out.classNote = raw.classNote;
+  }
+
+  if (raw.targets !== undefined) {
+    if (!Array.isArray(raw.targets)) {
+      errors.push('dripperPortability.targets must be an array');
+    } else if (raw.targets.length > 30) {
+      errors.push('dripperPortability.targets must have at most 30 entries');
+    } else {
+      const targets: DripperTarget[] = [];
+      raw.targets.forEach((t, i) => {
+        const p = `dripperPortability.targets[${i}]`;
+        if (!isPlainObject(t)) {
+          errors.push(`${p} must be an object`);
+          return;
+        }
+        if (typeof t.dripper !== 'string' || t.dripper.trim() === '') {
+          errors.push(`${p}.dripper must be a non-empty string`);
+          return;
+        }
+        if (!(DRIPPER_CLASSES as readonly string[]).includes(t.class as string)) {
+          errors.push(`${p}.class must be one of ${DRIPPER_CLASSES.join(', ')}`);
+          return;
+        }
+        if (!(SIZE_MATCHES as readonly string[]).includes(t.sizeMatch as string)) {
+          errors.push(`${p}.sizeMatch must be one of ${SIZE_MATCHES.join(', ')}`);
+          return;
+        }
+        if (!(GRIND_SHIFTS as readonly string[]).includes(t.grindShift as string)) {
+          errors.push(`${p}.grindShift must be one of ${GRIND_SHIFTS.join(', ')}`);
+          return;
+        }
+        if (!(POUR_SHIFTS as readonly string[]).includes(t.pourShift as string)) {
+          errors.push(`${p}.pourShift must be one of ${POUR_SHIFTS.join(', ')}`);
+          return;
+        }
+        if (!(CONFIDENCES as readonly string[]).includes(t.confidence as string)) {
+          errors.push(`${p}.confidence must be one of ${CONFIDENCES.join(', ')}`);
+          return;
+        }
+        const entry: DripperTarget = {
+          dripper: t.dripper,
+          class: t.class as DripperClass,
+          sizeMatch: t.sizeMatch as DripperTarget['sizeMatch'],
+          grindShift: t.grindShift as GrindShift,
+          pourShift: t.pourShift as PourShift,
+          confidence: t.confidence as Confidence
+        };
+        if (typeof t.dripperId === 'string') entry.dripperId = t.dripperId;
+        if ((BED_DEPTH_SHIFTS as readonly string[]).includes(t.bedDepthShift as string)) {
+          entry.bedDepthShift = t.bedDepthShift as DripperTarget['bedDepthShift'];
+        }
+        if (typeof t.bedOverflow === 'boolean') entry.bedOverflow = t.bedOverflow;
+        if (t.warn !== undefined) {
+          if (typeof t.warn !== 'string') errors.push(`${p}.warn must be a string`);
+          else if (t.warn.length > 280) errors.push(`${p}.warn must be at most 280 characters`);
+          else entry.warn = t.warn;
+        }
+        if (typeof t.note === 'string') entry.note = t.note;
+        targets.push(entry);
+      });
+      if (targets.length > 0) out.targets = targets;
+    }
+  }
+
+  return out;
+}
+
 function validateRecipeSteps(
   raw: unknown,
   errors: string[]
@@ -424,6 +535,15 @@ export function validateCreateRecipeInput(
   const params = validateRecipeParams(input.params, errors);
   const steps = validateRecipeSteps(input.steps, errors);
 
+  let dripperPortability: DripperPortability | undefined;
+  if (input.dripperPortability !== undefined) {
+    if (!isPlainObject(input.dripperPortability)) {
+      errors.push('dripperPortability must be an object');
+    } else {
+      dripperPortability = validateDripperPortability(input.dripperPortability, errors);
+    }
+  }
+
   let intent: string[] | undefined;
   if (input.intent !== undefined) {
     if (!isStringArray(input.intent)) errors.push('intent must be a string array');
@@ -465,6 +585,7 @@ export function validateCreateRecipeInput(
   if (notes !== undefined) value.notes = notes;
   if (adjustmentFromPrevious !== undefined) value.adjustmentFromPrevious = adjustmentFromPrevious;
   if (createdBy !== undefined) value.createdBy = createdBy;
+  if (dripperPortability !== undefined) value.dripperPortability = dripperPortability;
 
   const warnings: string[] = [];
   validateRecipeCrossFields(value, errors, warnings);

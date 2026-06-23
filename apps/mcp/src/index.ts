@@ -86,6 +86,56 @@ const PARAMS_SCHEMA = {
   }
 } as const;
 
+const DRIPPER_PORTABILITY_SCHEMA = {
+  type: 'object',
+  description:
+    'ROB-612 dripper-portable layer: fixed anchors (ratio/temp/time) + per-dripper class, size match, and grind/pour adjustment DIRECTIONS (not absolute values).',
+  required: ['origin'],
+  properties: {
+    origin: {
+      type: 'object',
+      required: ['dripper'],
+      properties: {
+        dripper: { type: 'string' },
+        dripperId: { type: 'string' },
+        sizeModel: { type: 'string' }
+      }
+    },
+    anchors: {
+      type: 'object',
+      properties: {
+        ratio: { type: 'string' },
+        tempC: { type: 'number' },
+        targetDrawdownSec: { type: 'number' }
+      }
+    },
+    classNote: { type: 'string' },
+    targets: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['dripper', 'class', 'sizeMatch', 'grindShift', 'pourShift', 'confidence'],
+        properties: {
+          dripper: { type: 'string' },
+          dripperId: { type: 'string' },
+          class: { type: 'string', enum: ['bed_restricted', 'dripper_restricted', 'hybrid', 'immersion'] },
+          sizeMatch: { type: 'string', enum: ['ok', 'undersized', 'oversized'] },
+          bedDepthShift: { type: 'string', enum: ['shallower', 'deeper', 'similar'] },
+          bedOverflow: { type: 'boolean' },
+          grindShift: { type: 'string', enum: ['coarser', 'finer', 'none'] },
+          pourShift: {
+            type: 'string',
+            enum: ['gentler', 'more_agitation', 'fewer_pours', 'more_pours', 'none']
+          },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          warn: { type: 'string' },
+          note: { type: 'string' }
+        }
+      }
+    }
+  }
+} as const;
+
 const STEPS_SCHEMA = {
   type: 'array',
   items: {
@@ -117,7 +167,8 @@ const TOOLS: Tool[] = [
         steps: STEPS_SCHEMA,
         intent: { type: 'array', items: { type: 'string' } },
         notes: { type: 'string' },
-        adjustmentFromPrevious: { type: 'string' }
+        adjustmentFromPrevious: { type: 'string' },
+        dripperPortability: DRIPPER_PORTABILITY_SCHEMA
       },
       required: ['method', 'title']
     }
@@ -136,7 +187,8 @@ const TOOLS: Tool[] = [
         notes: { type: 'string' },
         intent: { type: 'array', items: { type: 'string' } },
         beanSnapshot: BEAN_SNAPSHOT_SCHEMA,
-        adjustmentFromPrevious: { type: 'string' }
+        adjustmentFromPrevious: { type: 'string' },
+        dripperPortability: DRIPPER_PORTABILITY_SCHEMA
       },
       required: ['code']
     }
