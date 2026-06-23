@@ -6,13 +6,13 @@
 
 **Architecture:** New pnpm workspaces `apps/api` (Hono HTTP server, Node 22) and `packages/db` (migrations + Kysely client + canonical row types). The DB layer ports the *keep-subset* of `supabase/schema.sql` (tables, `recipe_code_seq`, triggers, `resolve_app_user` verbatim, `bd_guard_recipe_owner_immutable`) while **dropping** all Supabase-isms (RLS policies, `anon`/`authenticated`/`service_role` GRANTs, PostgREST `request.jwt.claims` GUC). No real endpoints yet beyond health — this is the foundation M3/M4 build on.
 
-**Tech Stack:** Node 22 (ESM, NodeNext), TypeScript, Hono + `@hono/node-server`, `pg` (node-postgres), Kysely (+ `kysely-codegen`), `node-pg-migrate`, Vitest, Docker Compose (postgres:16), `@sentry/node` (already in repo), pnpm 10 workspaces.
+**Tech Stack:** Node 22 (ESM, NodeNext), TypeScript, Hono + `@hono/node-server`, `pg` (node-postgres), Kysely (+ `kysely-codegen`), `node-pg-migrate`, Vitest, local Homebrew **PostgreSQL 17** (no Docker), `@sentry/node` (already in repo), pnpm 10 workspaces.
 
 ## Global Constraints
 
 - **Node:** `>=22` (matches repo `engines`). ESM only (`"type": "module"`). TS `module`/`moduleResolution`: `NodeNext`, `target`: `ES2022` (match `apps/mcp`).
 - **Package manager:** pnpm `10.33.2`. New packages join existing `apps/*` / `packages/*` workspace globs (no `pnpm-workspace.yaml` change needed).
-- **Postgres:** target **≥15** (the prod OCI requirement); local dev uses `postgres:16`. Only extension: `pgcrypto` (`create extension if not exists pgcrypto`).
+- **Postgres:** target **≥15** (the prod OCI requirement). Local dev uses the **already-running Homebrew PostgreSQL 17** — databases `brewdial_dev` (dev server) and `brewdial_test` (Vitest), owned by local superuser `mgh3326`, trust auth on `localhost:5432`. **No Docker.** Only extension: `pgcrypto` (already enabled in both DBs). Dev server uses `DATABASE_URL=postgres://mgh3326@localhost:5432/brewdial_dev`; tests use `.../brewdial_test`.
 - **Source of truth for DDL:** the *keep-subset* of `/Users/mgh3326/work/brewdial.toss-login2/supabase/schema.sql`. **Never apply `schema.sql` verbatim** — it fails on plain PG at the first `to anon` GRANT / `enable row level security` policy. Port via migrations that **strip**: every `create policy`, every `enable row level security`, every `grant ... to anon|authenticated|service_role`, every `revoke ... from anon|authenticated|service_role`, and the PostgREST `request.jwt.claims` branch of `bd_owner_write_allowed()`.
 - **Keep verbatim (vendor-neutral primitives):** `recipe_code_seq`, `resolve_app_user` (advisory-lock identity resolve — do NOT replace with `ON CONFLICT`), `set_updated_at`, `find_or_create_bean`, `recipes_link_bean`, `bd_guard_recipe_owner_immutable`, `merge_app_users`, `bean_summaries` view, all tables/FK/CHECK/unique indexes.
 - **Secrets:** `DATABASE_URL` (and later tokens) come from env only — never committed, never logged, never `VITE_`-prefixed.
@@ -42,7 +42,7 @@
 - `src/server.ts` — `@hono/node-server` entry
 
 **Repo root**
-- `docker-compose.yml` — local `postgres:16` for dev/test
+- (local Postgres = existing Homebrew PG17; no compose file)
 - `package.json` — add `db:*` / `api:*` convenience scripts
 
 ---
@@ -58,23 +58,16 @@
 **Interfaces:**
 - Produces: `getDb(): Kysely<DB>` and `getPool(): Pool` from `@brewdial/db` (db.ts); `closeDb(): Promise<void>`.
 
-- [ ] **Step 1: Create `docker-compose.yml`**
+- [ ] **Step 1: Confirm local databases** (created during planning — no Docker)
 
-```yaml
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: brewdial
-      POSTGRES_PASSWORD: devpass
-      POSTGRES_DB: brewdial
-    ports:
-      - "5433:5432"
-    volumes:
-      - brewdial_pgdata:/var/lib/postgresql/data
-volumes:
-  brewdial_pgdata:
+```bash
+# Homebrew PostgreSQL 17 already running (brew services list | grep postgres).
+# DBs were created during planning:
+#   createdb brewdial_dev && createdb brewdial_test
+#   psql brewdial_test -c 'create extension if not exists pgcrypto;'
+psql -lqt | grep -E 'brewdial_(dev|test)'   # confirm both exist
 ```
+Local superuser `mgh3326`, trust auth, `localhost:5432`.
 
 - [ ] **Step 2: Create `packages/db/package.json`**
 
@@ -193,8 +186,7 @@ test('connects to postgres and runs select 1', async () => {
 
 ```bash
 pnpm install
-docker compose up -d db
-export DATABASE_URL='postgres://brewdial:devpass@localhost:5433/brewdial'
+export DATABASE_URL='postgres://mgh3326@localhost:5432/brewdial_test'
 pnpm --filter @brewdial/db test
 ```
 Expected: PASS (`select 1` returns 1). If `DATABASE_URL` unset → fails with "DATABASE_URL is not set" (confirms the guard).
@@ -202,7 +194,7 @@ Expected: PASS (`select 1` returns 1). If `DATABASE_URL` unset → fails with "D
 - [ ] **Step 8: Commit**
 
 ```bash
-git add docker-compose.yml packages/db apps/api pnpm-lock.yaml package.json
+git add packages/db apps/api pnpm-lock.yaml package.json
 git commit -m "feat(api): scaffold apps/api + packages/db with local postgres + db client"
 ```
 
@@ -260,7 +252,7 @@ test('recipe_code_seq and pgcrypto present', async () => {
 - [ ] **Step 4: Run migration + test to verify it fails then passes**
 
 ```bash
-export DATABASE_URL='postgres://brewdial:devpass@localhost:5433/brewdial'
+export DATABASE_URL='postgres://mgh3326@localhost:5432/brewdial_test'
 pnpm --filter @brewdial/db exec node-pg-migrate -m migrations -j sql up
 pnpm --filter @brewdial/db test
 ```
@@ -430,7 +422,7 @@ git commit -m "feat(db): port resolve_app_user (advisory lock) + merge_app_users
 - [ ] **Step 1: Generate types**
 
 ```bash
-export DATABASE_URL='postgres://brewdial:devpass@localhost:5433/brewdial'
+export DATABASE_URL='postgres://mgh3326@localhost:5432/brewdial_test'
 pnpm --filter @brewdial/db codegen
 ```
 This overwrites `src/types.ts` with the real `DB` interface (Grinders, Drippers, Recipes, ...). Commit-safe (generated, deterministic from schema).
@@ -563,7 +555,7 @@ serve({ fetch: app.fetch, port: cfg.port }, (i) => console.log(`brewdial-api on 
 - [ ] **Step 4: Run test (fail→pass)**
 
 ```bash
-export DATABASE_URL='postgres://brewdial:devpass@localhost:5433/brewdial'
+export DATABASE_URL='postgres://mgh3326@localhost:5432/brewdial_test'
 pnpm --filter @brewdial/api test
 ```
 Expected: both health tests PASS.
