@@ -15,6 +15,7 @@ import { loadSoundPreference, saveSoundPreference } from '../lib/brew-timer/soun
 import { createPourAudio, type PourAudio } from '../lib/brew-timer/pour-audio';
 import { haptic, setKeepAwake } from '../lib/toss';
 import { getRecipeByCode } from '../lib/data/recipes';
+import { saveRecipe } from '../lib/data/user-content';
 import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
@@ -37,6 +38,8 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('timer');
+  const [saved, setSaved] = useState(false);
+  const [savingSave, setSavingSave] = useState(false);
 
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
@@ -218,6 +221,26 @@ export default function RecipeDetail({ code }: { code: string }) {
             <span className="muted">맛을 확인하고 피드백을 남겨주세요.</span>
           </p>
         )}
+
+        <div className="row">
+          <button
+            type="button"
+            className={`btn-save${saved ? ' saved' : ''}`}
+            disabled={savingSave || saved}
+            onClick={() => {
+              if (savingSave || saved) return;
+              setSavingSave(true);
+              saveRecipe(recipe.code)
+                .then(() => setSaved(true))
+                .catch(() => {
+                  /* best-effort; v1 save is non-critical */
+                })
+                .finally(() => setSavingSave(false));
+            }}
+          >
+            {saved ? '저장됨 ✓' : savingSave ? '저장 중…' : '레시피 저장'}
+          </button>
+        </div>
 
         <div className="seg" role="tablist" aria-label="레시피 보기">
           <button
