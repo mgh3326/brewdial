@@ -15,6 +15,7 @@ import {
   handleGetRecentContext,
   handleGetRecipeContext,
   handleListBeans,
+  handleListGrinders,
   handleSupersedeRecipe,
   handleUpdateRecipe,
   type ToolResult
@@ -104,7 +105,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid.',
+      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid. GRIND (ROB-611): prefer a STRUCTURED params.grind object over free text — { target: { brewMethodPosition e.g. "v60 medium-fine", targetDrawdownSec }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }. target MUST carry brewMethodPosition OR targetDrawdownSec (microns is advisory only). Put the operator’s MEASURED grinder+clicks in perGrinder; first call brew.list_grinders and use the EXACT registry name so the app can convert clicks to other grinders at read time. Keep the original wording in legacyText. A plain string grind is still accepted for legacy/quick entry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -124,7 +125,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.update_recipe',
     description:
-      'Edit an existing recipe in place (ROB-605). Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate.',
+      'Edit an existing recipe in place (ROB-605). Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params.grind may be upgraded from a legacy string to a structured GrindSpec (see create_recipe / ROB-611).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -186,6 +187,12 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: { limit: { type: 'number', description: '1-50, default 20' } }
     }
+  },
+  {
+    name: 'brew.list_grinders',
+    description:
+      'List the grinder registry (ROB-611): canonical name, per-method click band (brewMethodRanges, e.g. v60: {from,to}), advisory um/click, and stepless flag. Call this BEFORE create_recipe so params.grind.perGrinder uses the EXACT registry name (e.g. "KINGrinder K6", "Comandante C40") — the mini-app only converts clicks to other grinders at read time when names match the registry.',
+    inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'brew.get_recent_context',
@@ -267,6 +274,7 @@ async function main(): Promise<void> {
       case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
       case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
       case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
+      case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
       case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
       case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
       case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;

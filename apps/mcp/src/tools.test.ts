@@ -7,6 +7,7 @@ import {
   handleGetRecentContext,
   handleGetRecipeContext,
   handleListBeans,
+  handleListGrinders,
   handleSupersedeRecipe,
   handleUpdateRecipe
 } from './tools.js';
@@ -94,6 +95,14 @@ describe('handleListBeans', () => {
     const r = await handleListBeans(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing beans');
+  });
+});
+
+describe('handleListGrinders', () => {
+  it('errors when Supabase is unreachable', async () => {
+    const r = await handleListGrinders(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing grinders');
   });
 });
 
