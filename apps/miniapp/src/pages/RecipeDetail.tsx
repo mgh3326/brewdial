@@ -20,8 +20,10 @@ import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
-import { grindDisplay } from '../lib/domain';
-import type { FeedbackDoc, RecipeCode, RecipeDoc } from '../lib/domain';
+import { grindDisplay, suggestGrinderClicks } from '../lib/domain';
+import { listGrinders } from '../lib/data/grinders';
+import { loadGear } from '../lib/gear-preferences';
+import type { FeedbackDoc, GrindSpec, GrinderInfo, RecipeCode, RecipeDoc } from '../lib/domain';
 
 type Tab = 'timer' | 'recipe' | 'feedback';
 
@@ -41,6 +43,8 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [tab, setTab] = useState<Tab>('timer');
   const [saved, setSaved] = useState(false);
   const [savingSave, setSavingSave] = useState(false);
+  const [grinders, setGrinders] = useState<GrinderInfo[]>([]);
+  const [selGrinder, setSelGrinder] = useState<string>('');
 
   // Reflect already-saved state on load (best-effort; web_local/toss_anon identity).
   useEffect(() => {
@@ -62,6 +66,21 @@ export default function RecipeDetail({ code }: { code: string }) {
       alive = false;
     };
   }, [code]);
+
+  // ROB-611: load the grinder registry; default the selector to the user's gear.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await listGrinders();
+        setGrinders(list);
+        const preferred = loadGear().grinder;
+        const match = preferred ? list.find((g) => g.name === preferred) : undefined;
+        setSelGrinder(match ? match.name : (list[0]?.name ?? ''));
+      } catch {
+        // registry unavailable — grind section falls back to target text
+      }
+    })();
+  }, []);
 
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
@@ -225,6 +244,13 @@ export default function RecipeDetail({ code }: { code: string }) {
       </div>
     );
   }
+
+  const grindField = recipe.params.grind;
+  const grindSpec: GrindSpec | null =
+    grindField != null && typeof grindField === 'object' ? grindField : null;
+  const selInfo = grinders.find((g) => g.name === selGrinder) ?? null;
+  const grindSuggestion =
+    grindSpec && selInfo ? suggestGrinderClicks(grindSpec, recipe.method, selInfo, grinders) : null;
 
   return (
     <>
@@ -403,6 +429,70 @@ export default function RecipeDetail({ code }: { code: string }) {
                     </div>
                   ))}
                 </dl>
+              </section>
+            )}
+            {grindSpec && (
+              <section className="stack-tight">
+                <h2>그라인더별 분쇄도</h2>
+                <p className="card-meta muted">
+                  목표: {grindSpec.target.brewMethodPosition ?? '—'}
+                  {grindSpec.target.targetDrawdownSec != null &&
+                    ` · 드로다운 ${grindSpec.target.targetDrawdownSec}초`}
+                  {grindSpec.target.microns != null && ` · ~${grindSpec.target.microns}µm(참고)`}
+                </p>
+                {grinders.length > 0 && (
+                  <div className="stack-tight">
+                    <label className="card-meta">
+                      내 그라인더{' '}
+                      <select
+                        value={selGrinder}
+                        onChange={(e) => setSelGrinder(e.target.value)}
+                        aria-label="그라인더 선택"
+                      >
+                        {grinders.map((g) => (
+                          <option key={g.name} value={g.name}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {grindSuggestion && (
+                      <>
+                        <p className="card-title">
+                          {grindSuggestion.clicks != null
+                            ? `${Math.round(grindSuggestion.clicks)} 클릭${
+                                grindSuggestion.range
+                                  ? ` (${grindSuggestion.range.from}~${grindSuggestion.range.to})`
+                                  : ''
+                              }`
+                            : (grindSpec.target.brewMethodPosition ?? '환산 정보 없음')}{' '}
+                          <span className="muted">
+                            {grindSuggestion.source === 'measured'
+                              ? '· 측정값'
+                              : grindSuggestion.source === 'dial-in-start'
+                                ? '· dial-in 시작점'
+                                : ''}
+                          </span>
+                        </p>
+                        {grindSuggestion.disclaimer && (
+                          <p className="card-meta muted">{grindSuggestion.disclaimer}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+                {grindSpec.perGrinder && grindSpec.perGrinder.length > 0 && (
+                  <ul className="pour-list">
+                    {grindSpec.perGrinder.map((pg, i) => (
+                      <li key={`${pg.grinder}-${i}`} className="pour-row">
+                        <span>{pg.grinder}</span>
+                        <span className="muted">
+                          {pg.clicks} 클릭 · {pg.source === 'measured' ? '측정' : 'dial-in'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             )}
             {brewPhases.length > 0 && (
