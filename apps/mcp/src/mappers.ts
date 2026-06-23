@@ -8,6 +8,7 @@ import type {
   BeanSnapshot,
   BrewMethod,
   CreateFeedbackInput,
+  DripperPortability,
   CreateRecipeInput,
   FeedbackDoc,
   FeedbackRatings,
@@ -34,6 +35,9 @@ export interface RecipeRow {
   notes: string | null;
   adjustment_from_previous: string | null;
   created_by: string;
+  owner_id?: string | null;
+  is_official?: boolean;
+  dripper_portability?: DripperPortability | null;
   status: string;
   supersedes: string | null;
   superseded_by: string | null;
@@ -43,7 +47,7 @@ export interface RecipeRow {
 }
 
 export const RECIPE_COLUMNS =
-  'id,code,method,title,version,params,steps,bean_id,bean_snapshot,intent,notes,adjustment_from_previous,created_by,status,supersedes,superseded_by,parent_code,created_at,updated_at';
+  'id,code,method,title,version,params,steps,bean_id,bean_snapshot,intent,notes,adjustment_from_previous,created_by,owner_id,is_official,dripper_portability,status,supersedes,superseded_by,parent_code,created_at,updated_at';
 
 export function rowToRecipe(r: RecipeRow): RecipeDoc {
   const doc: RecipeDoc = {
@@ -68,6 +72,9 @@ export function rowToRecipe(r: RecipeRow): RecipeDoc {
   if (r.intent != null) doc.intent = r.intent;
   if (r.notes != null) doc.notes = r.notes;
   if (r.adjustment_from_previous != null) doc.adjustmentFromPrevious = r.adjustment_from_previous;
+  if (r.owner_id != null) doc.ownerId = r.owner_id;
+  doc.isOfficial = r.is_official ?? false;
+  if (r.dripper_portability != null) doc.dripperPortability = r.dripper_portability;
   return doc;
 }
 

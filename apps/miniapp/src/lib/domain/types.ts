@@ -44,6 +44,33 @@ export interface RecipeStep {
   note: string;
 }
 
+// ── ROB-612: dripper-portable layer (own recipes.dripper_portability column).
+// No single scalar invariant; class-based start point + dial-in. Anchors (ratio,
+// temp, target time) are fixed across drippers. Absent on legacy V60-only recipes.
+export type DripperClass = 'bed_restricted' | 'dripper_restricted' | 'hybrid' | 'immersion';
+export type GrindShift = 'coarser' | 'finer' | 'none';
+export type PourShift = 'gentler' | 'more_agitation' | 'fewer_pours' | 'more_pours' | 'none';
+export type Confidence = 'high' | 'medium' | 'low';
+export interface DripperTarget {
+  dripper: string;
+  dripperId?: string;
+  class: DripperClass;
+  sizeMatch: 'ok' | 'undersized' | 'oversized';
+  bedDepthShift?: 'shallower' | 'deeper' | 'similar';
+  bedOverflow?: boolean;
+  grindShift: GrindShift;
+  pourShift: PourShift;
+  confidence: Confidence;
+  warn?: string;
+  note?: string;
+}
+export interface DripperPortability {
+  origin: { dripper: string; dripperId?: string; sizeModel?: string };
+  anchors: { ratio?: string; tempC?: number; targetDrawdownSec?: number };
+  classNote?: string;
+  targets?: DripperTarget[];
+}
+
 export interface RecipeDoc {
   _id: string;
   _rev?: string;
@@ -60,6 +87,11 @@ export interface RecipeDoc {
   notes?: string;
   adjustmentFromPrevious?: string;
   createdBy: 'agent' | 'manual';
+  // Phase 0 identity/ownership (independent axes): ownerId NULL/absent = anonymous
+  // public UGC; isOfficial = operator/agent-curated badge (real column, default false).
+  ownerId?: string;
+  isOfficial?: boolean;
+  dripperPortability?: DripperPortability; // ROB-612 dripper-portable layer
   status?: RecipeStatus;
   supersedes?: RecipeCode;
   supersededBy?: RecipeCode;
