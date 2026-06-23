@@ -8,3 +8,4 @@ export * from './feedback-rules';
 export * from './api-types';
 export * from './validation';
 export * from './grinder';
+export * from './dripper';

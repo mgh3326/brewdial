@@ -1144,3 +1144,23 @@ insert into drippers (name, class, geometry, continuum_position, filter_type, re
   ('Melitta',        'dripper_restricted', 'wedge', 0.80, 'paper_wedge', '{"minG":12,"maxG":30}'::jsonb),
   ('Chemex',         'bed_restricted',     'cone',  0.15, 'paper_thick', '{"minG":30,"maxG":60}'::jsonb)
 on conflict (lower(name)) do nothing;
+
+-- 6b) ROB-612 Slice B: correct continuum_position to FLOW RESTRICTION (0 = fast /
+--     bed-controlled like V60·Origami cone .. 1 = slow / dripper-controlled like
+--     Kalita·Melitta; Chemex is bed-shaped but its thick bonded paper slows a lot).
+--     Add size_models (maxDoseG) for the 40g bed-overflow check. Idempotent upsert.
+insert into drippers (name, class, continuum_position, recommended_dose_range, size_models) values
+  ('Hario V60',       'bed_restricted',     0.10, '{"minG":12,"maxG":30}'::jsonb,
+   '[{"model":"01","maxDoseG":18},{"model":"02","maxDoseG":30},{"model":"03","maxDoseG":45}]'::jsonb),
+  ('Origami',         'hybrid',             0.05, '{"minG":12,"maxG":30}'::jsonb,
+   '[{"model":"S","maxDoseG":20},{"model":"M","maxDoseG":36}]'::jsonb),
+  ('Chemex',          'bed_restricted',     0.50, '{"minG":30,"maxG":70}'::jsonb,
+   '[{"model":"3cup","maxDoseG":30},{"model":"6cup","maxDoseG":55},{"model":"8cup","maxDoseG":70}]'::jsonb),
+  ('Kalita Wave 185', 'dripper_restricted', 0.85, '{"minG":15,"maxG":35}'::jsonb,
+   '[{"model":"155","maxDoseG":20},{"model":"185","maxDoseG":35}]'::jsonb),
+  ('Melitta',         'dripper_restricted', 0.80, '{"minG":12,"maxG":30}'::jsonb,
+   '[{"model":"1x2","maxDoseG":24},{"model":"1x4","maxDoseG":40}]'::jsonb)
+on conflict (lower(name)) do update set
+  continuum_position     = excluded.continuum_position,
+  recommended_dose_range = excluded.recommended_dose_range,
+  size_models            = excluded.size_models;
