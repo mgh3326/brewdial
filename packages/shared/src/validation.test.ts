@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   validateCreateFeedbackInput,
-  validateCreateRecipeInput
+  validateCreateRecipeInput,
+  validateUpdateRecipeInput
 } from './validation.js';
 
 describe('validateCreateRecipeInput', () => {
@@ -525,5 +526,117 @@ describe('validateCreateRecipeInput — ROB-612 dripper portability', () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.join(' ')).toMatch(/class must be one of/);
+  });
+});
+
+describe('validator defensive branches (ROB-611/612 caps + enums)', () => {
+  it('rejects a grind perGrinder array over the 10-entry cap', () => {
+    const perGrinder = Array.from({ length: 11 }, (_, i) => ({
+      grinder: `G${i}`,
+      clicks: 100,
+      source: 'measured' as const
+    }));
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Too many grinders',
+      params: { grind: { target: { brewMethodPosition: 'v60' }, perGrinder } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 10/);
+  });
+
+  it('rejects a dripperPortability targets array over the 30-entry cap', () => {
+    const targets = Array.from({ length: 31 }, () => ({
+      dripper: 'Kalita',
+      class: 'dripper_restricted',
+      sizeMatch: 'ok',
+      grindShift: 'coarser',
+      pourShift: 'none',
+      confidence: 'low'
+    }));
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Too many targets',
+      dripperPortability: { origin: { dripper: 'Hario V60' }, targets }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 30/);
+  });
+
+  it('rejects a dripper target warn over 280 chars', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Long warn',
+      dripperPortability: {
+        origin: { dripper: 'Hario V60' },
+        targets: [
+          {
+            dripper: 'Kalita',
+            class: 'dripper_restricted',
+            sizeMatch: 'ok',
+            grindShift: 'none',
+            pourShift: 'none',
+            confidence: 'low',
+            warn: 'x'.repeat(281)
+          }
+        ]
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at most 280/);
+  });
+
+  it('rejects each invalid dripper target enum (sizeMatch/grindShift/pourShift/confidence)', () => {
+    for (const bad of [
+      { sizeMatch: 'huge' },
+      { grindShift: 'chunky' },
+      { pourShift: 'splash' },
+      { confidence: 'maybe' }
+    ]) {
+      const r = validateCreateRecipeInput({
+        method: 'v60',
+        title: 'Bad enum',
+        dripperPortability: {
+          origin: { dripper: 'Hario V60' },
+          targets: [
+            {
+              dripper: 'Kalita',
+              class: 'dripper_restricted',
+              sizeMatch: 'ok',
+              grindShift: 'none',
+              pourShift: 'none',
+              confidence: 'low',
+              ...bad
+            }
+          ]
+        }
+      });
+      expect(r.ok).toBe(false);
+    }
+  });
+});
+
+describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
+  it('accepts a valid partial patch (notes + dripperPortability)', () => {
+    const r = validateUpdateRecipeInput({
+      notes: 'tweaked',
+      dripperPortability: { origin: { dripper: 'Hario V60' } }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.notes).toBe('tweaked');
+      expect(r.value.dripperPortability?.origin.dripper).toBe('Hario V60');
+    }
+  });
+
+  it('rejects a malformed grind (microns-only) on update — no DB bypass', () => {
+    const r = validateUpdateRecipeInput({ params: { grind: { target: { microns: 700 } } } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/brewMethodPosition or targetDrawdownSec/);
+  });
+
+  it('rejects a non-object input', () => {
+    const r = validateUpdateRecipeInput('nope');
+    expect(r.ok).toBe(false);
   });
 });

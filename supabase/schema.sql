@@ -326,7 +326,7 @@ insert into bd_migration_meta (key, value)
 -- PostgREST changes claim shape, only this one function changes.)
 -- ════════════════════════════════════════════════════════════════════════════
 create or replace function bd_owner_write_allowed()
-returns boolean language plpgsql volatile as $$
+returns boolean language plpgsql volatile set search_path = public, pg_temp as $$
 declare v_flag text; v_claims text;
 begin
   -- (a) txn-local flag set by our own definer RPCs (legitimate owned writes).
@@ -432,9 +432,9 @@ create index if not exists recipes_owner_idx
 -- !!! maintenance change is quietly neutralized. Always wrap on->work->off so a
 -- !!! raised error can never leave the flag stuck 'on' for the rest of the txn.
 create or replace function bd_guard_recipe_owner_immutable()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public, pg_temp as $$
 begin
-  if not bd_owner_write_allowed() then
+  if not public.bd_owner_write_allowed() then
     if tg_op = 'INSERT' then
       -- anon/public path: can never stamp an owner or mint official content.
       new.owner_id    := null;
@@ -804,6 +804,12 @@ returns uuid language plpgsql security definer set search_path = public, pg_temp
 declare v_uid uuid; v_id uuid;
 begin
   v_uid := resolve_app_user(p_provider, p_external_key);
+  -- One default per (app_user, kind): clear the prior default before inserting a new
+  -- default, else user_gear_one_default_uidx raises on the 2nd default of a kind.
+  if coalesce((p_gear->>'isDefault')::boolean, false) then
+    update user_gear set is_default = false
+      where app_user_id = v_uid and kind = p_gear->>'kind' and is_default;
+  end if;
   insert into user_gear (app_user_id, kind, grinder_id, dripper_id, label, details, is_default)
   values (v_uid, p_gear->>'kind',
           nullif(p_gear->>'grinderId','')::uuid, nullif(p_gear->>'dripperId','')::uuid,

@@ -42,6 +42,10 @@ export interface ClickSuggestion {
   range?: GrinderBand; // suggested band around the start (when interpolated/banded)
   source: 'measured' | 'dial-in-start' | 'unknown';
   basis: SuggestionBasis;
+  // The reference grinder this suggestion interpolated from (relative-band/calibrated).
+  // Calibration must be keyed on THIS, not the recipe's first measured entry.
+  fromGrinder?: string;
+  fromClicks?: number;
   disclaimer: string;
 }
 
@@ -127,9 +131,11 @@ export function suggestGrinderClicks(
         return {
           grinder: toGrinder.name,
           clicks: start,
-          range: { from: start - 2, to: start + 2 },
+          range: { from: Math.max(0, start - 2), to: start + 2 },
           source: 'dial-in-start',
           basis,
+          fromGrinder: ref.grinder,
+          fromClicks: refClicks,
           disclaimer: DIAL_IN_DISCLAIMER
         };
       }

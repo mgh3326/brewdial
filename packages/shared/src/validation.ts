@@ -593,6 +593,58 @@ export function validateCreateRecipeInput(
   return { ok: true, value, warnings };
 }
 
+// ROB-605/611/612: validate a partial recipe UPDATE. Only present fields are
+// validated (no required method/title), through the SAME validators as create so
+// agent-supplied params/grind/steps/beanSnapshot/dripperPortability cannot reach
+// the DB unchecked on the update path.
+export function validateUpdateRecipeInput(
+  input: unknown
+): ValidationResult<Partial<CreateRecipeInput>> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const value: Partial<CreateRecipeInput> = {};
+  if (input.title !== undefined) {
+    if (!isNonEmptyString(input.title)) errors.push('title must be a non-empty string');
+    else value.title = (input.title as string).trim();
+  }
+  if (input.params !== undefined) {
+    const p = validateRecipeParams(input.params, errors);
+    if (p !== undefined) value.params = p;
+  }
+  if (input.steps !== undefined) {
+    const s = validateRecipeSteps(input.steps, errors);
+    if (s !== undefined) value.steps = s;
+  }
+  if (input.notes !== undefined) {
+    const n = pickString(input, 'notes', errors, 'input');
+    if (n !== undefined) value.notes = n;
+  }
+  if (input.intent !== undefined) {
+    if (!isStringArray(input.intent)) errors.push('intent must be a string array');
+    else value.intent = input.intent;
+  }
+  if (input.beanSnapshot !== undefined) {
+    const b = validateBeanSnapshot(input.beanSnapshot, errors);
+    if (b !== undefined) value.beanSnapshot = b;
+  }
+  if (input.adjustmentFromPrevious !== undefined) {
+    const a = pickString(input, 'adjustmentFromPrevious', errors, 'input');
+    if (a !== undefined) value.adjustmentFromPrevious = a;
+  }
+  if (input.dripperPortability !== undefined) {
+    if (!isPlainObject(input.dripperPortability)) {
+      errors.push('dripperPortability must be an object');
+    } else {
+      const d = validateDripperPortability(input.dripperPortability, errors);
+      if (d !== undefined) value.dripperPortability = d;
+    }
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
+}
+
 function validateRatings(
   raw: unknown,
   errors: string[]

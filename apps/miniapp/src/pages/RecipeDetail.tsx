@@ -20,7 +20,7 @@ import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
-import { grindDisplay, parseClicks, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
+import { grindDisplay, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
 import { listGrinders } from '../lib/data/grinders';
 import { listDrippers } from '../lib/data/drippers';
 import { loadGear } from '../lib/gear-preferences';
@@ -323,15 +323,14 @@ export default function RecipeDetail({ code }: { code: string }) {
     grindSpec && selInfo
       ? suggestGrinderClicks(grindSpec, recipe.method, selInfo, grinders, calibrations)
       : null;
-  const grindRef =
-    grindSpec?.perGrinder?.find((p) => p.source === 'measured') ?? grindSpec?.perGrinder?.[0] ?? null;
-  const grindRefClicks = grindRef ? parseClicks(grindRef.clicks) : null;
-  // Calibration only makes sense for an INTERPOLATED grinder (not a direct measured
-  // match), since the offset is applied inside the band-interpolation path.
+  // Calibration is keyed on the grinder the suggestion actually interpolated FROM
+  // (exposed by suggestGrinderClicks), so a saved offset reliably applies on reload.
+  // Only meaningful on the interpolation path (not a direct measured match).
   const canCalibrate =
-    !!grindRef &&
-    grindRefClicks != null &&
-    (grindSuggestion?.basis === 'relative-band' || grindSuggestion?.basis === 'calibrated');
+    !!grindSuggestion &&
+    !!grindSuggestion.fromGrinder &&
+    grindSuggestion.fromClicks != null &&
+    (grindSuggestion.basis === 'relative-band' || grindSuggestion.basis === 'calibrated');
 
   const dripperLayer = recipe.dripperPortability ?? null;
   const dripperOrigin: DripperInfo | null = dripperLayer
@@ -575,7 +574,7 @@ export default function RecipeDetail({ code }: { code: string }) {
                         )}
                       </>
                     )}
-                    {canCalibrate && grindRef && (
+                    {canCalibrate && grindSuggestion && (
                       <div className="row" style={{ alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span className="card-meta muted">내 {selGrinder} 실측 클릭</span>
                         <input
@@ -592,13 +591,15 @@ export default function RecipeDetail({ code }: { code: string }) {
                           disabled={savingCal || calInput.trim() === ''}
                           onClick={() => {
                             const toClicks = Number(calInput);
-                            if (grindRefClicks == null || !Number.isFinite(toClicks)) return;
+                            const fromG = grindSuggestion.fromGrinder;
+                            const fromC = grindSuggestion.fromClicks;
+                            if (!fromG || fromC == null || !Number.isFinite(toClicks)) return;
                             setSavingCal(true);
                             upsertCalibration({
-                              fromLabel: grindRef.grinder,
+                              fromLabel: fromG,
                               toLabel: selGrinder,
                               anchorMethod: recipe.method,
-                              samples: [{ fromClicks: grindRefClicks, toClicks }],
+                              samples: [{ fromClicks: fromC, toClicks }],
                               source: 'measured'
                             })
                               .then(() => {
