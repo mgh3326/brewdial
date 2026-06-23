@@ -389,3 +389,79 @@ describe('validateCreateRecipeInput cross-field/range (ROB-608)', () => {
     if (r.ok) expect(r.warnings.join(' ')).not.toMatch(/does not reach/);
   });
 });
+
+describe('validateCreateRecipeInput — ROB-611 grind portability', () => {
+  it('accepts legacy string grind (backward compatible)', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Legacy',
+      params: { grind: 'KINGrinder K6 102클릭으로 시작' }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params?.grind).toBe('KINGrinder K6 102클릭으로 시작');
+  });
+
+  it('accepts a structured GrindSpec and mirrors targetDrawdownSec into targetTimeSec', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Structured',
+      params: {
+        grind: {
+          target: { brewMethodPosition: 'v60 medium-fine', targetDrawdownSec: 265, microns: 700 },
+          perGrinder: [
+            { grinder: 'KINGrinder K6', clicks: 102, source: 'measured' },
+            { grinder: 'Comandante C40', clicks: '25-28', source: 'dial-in-start' }
+          ]
+        }
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const grind = r.value.params?.grind;
+      expect(typeof grind).toBe('object');
+      if (grind && typeof grind === 'object') {
+        expect(grind.target.targetDrawdownSec).toBe(265);
+        expect(grind.perGrinder?.length).toBe(2);
+      }
+      expect(r.value.params?.targetTimeSec).toBe(265); // mirrored for dedup correctness
+    }
+  });
+
+  it('rejects a GrindSpec target with neither brewMethodPosition nor targetDrawdownSec (microns-only)', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Microns only',
+      params: { grind: { target: { microns: 700 } } }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/brewMethodPosition or targetDrawdownSec/);
+  });
+
+  it('rejects a stepless grinder with numeric clicks', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Stepless',
+      params: {
+        grind: {
+          target: { brewMethodPosition: 'v60 medium' },
+          perGrinder: [{ grinder: '1Zpresso', clicks: 12, stepless: true, source: 'measured' }]
+        }
+      }
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/stepless/);
+  });
+
+  it('does not overwrite an explicit targetTimeSec with the grind mirror', () => {
+    const r = validateCreateRecipeInput({
+      method: 'v60',
+      title: 'Explicit time',
+      params: {
+        targetTimeSec: 200,
+        grind: { target: { brewMethodPosition: 'v60', targetDrawdownSec: 265 } }
+      }
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params?.targetTimeSec).toBe(200);
+  });
+});

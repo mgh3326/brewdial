@@ -25,15 +25,55 @@ export interface BeanSnapshot {
   notes?: string;
 }
 
+// ── ROB-611: grinder-portable grind. params.grind is string (legacy free text)
+// | GrindSpec (structured). Absolute clicks/microns are unreliable across grinders;
+// the robust anchors are brew-method position + target drawdown time.
+export type GrindSource = 'measured' | 'dial-in-start';
+export interface GrindTarget {
+  microns?: number; // SECONDARY/advisory only (absolute unreliable)
+  brewMethodPosition?: string; // PRIMARY anchor #1, e.g. "v60 medium-fine"
+  targetDrawdownSec?: number; // PRIMARY anchor #2 (robust cross-grinder invariant)
+}
+export interface PerGrinderGrind {
+  grinder: string; // free text OR grinders.name
+  grinderId?: string; // optional FK into grinders registry
+  clicks: number | string; // string supports stepless(무단), e.g. "1.5 rev"
+  stepless?: boolean;
+  source: GrindSource; // 'measured' = trusted; 'dial-in-start' = show disclaimer
+}
+export interface GrindSpec {
+  target: GrindTarget; // REQUIRED; must carry >=1 of brewMethodPosition|targetDrawdownSec
+  perGrinder?: PerGrinderGrind[];
+  legacyText?: string; // original free text, preserved verbatim
+}
+export type GrindField = string | GrindSpec;
+
 export interface RecipeParams {
   doseG?: number;
   waterG?: number;
   ratio?: string;
   tempC?: number;
-  grind?: string;
+  grind?: GrindField; // ROB-611: was string; now string | GrindSpec (legacy-compatible)
   grinder?: string;
   brewer?: string;
   targetTimeSec?: number;
+}
+
+// ── ROB-611 backward-compat read accessors (every grind reader must use these).
+export function readGrind(g: GrindField | undefined): GrindSpec {
+  if (g == null) return { target: {} };
+  if (typeof g === 'string') return { target: {}, legacyText: g };
+  return g;
+}
+export function grindDisplay(g: GrindField | undefined): string {
+  if (g == null) return '';
+  if (typeof g === 'string') return g;
+  return (
+    g.legacyText ??
+    (g.perGrinder?.[0] ? `${g.perGrinder[0].grinder} ${g.perGrinder[0].clicks}` : undefined) ??
+    g.target.brewMethodPosition ??
+    ''
+  );
 }
 
 export interface RecipeStep {

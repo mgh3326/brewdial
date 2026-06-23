@@ -20,6 +20,7 @@ import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
+import { grindDisplay } from '../lib/domain';
 import type { FeedbackDoc, RecipeCode, RecipeDoc } from '../lib/domain';
 
 type Tab = 'timer' | 'recipe' | 'feedback';
@@ -398,7 +399,7 @@ export default function RecipeDetail({ code }: { code: string }) {
                   {Object.entries(recipe.params).map(([k, v]) => (
                     <div key={k} style={{ display: 'contents' }}>
                       <dt>{paramLabel(k)}</dt>
-                      <dd>{String(v)}</dd>
+                      <dd>{k === 'grind' ? grindDisplay(v) : String(v)}</dd>
                     </div>
                   ))}
                 </dl>

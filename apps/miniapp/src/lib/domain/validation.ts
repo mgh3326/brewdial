@@ -6,6 +6,10 @@ import type {
   BrewMethod,
   FeedbackRatings,
   FeedbackSource,
+  GrindSource,
+  GrindSpec,
+  GrindTarget,
+  PerGrinderGrind,
   QuickFeedbackTag,
   RecipeParams,
   RecipeStep
@@ -30,7 +34,7 @@ const FEEDBACK_SOURCES = ['web', 'coffee_profile', 'api', 'agent', 'mcp'] as con
 const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
-const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grind', 'grinder', 'brewer'] as const;
+const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grinder', 'brewer'] as const;
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -128,7 +132,112 @@ function validateRecipeParams(
     }
     out[key] = v;
   }
+  // ROB-611: grind is string (legacy free text) | GrindSpec (structured).
+  const g = raw.grind;
+  if (g !== undefined) {
+    if (typeof g === 'string') {
+      out.grind = g; // legacy, preserved verbatim
+    } else if (isPlainObject(g)) {
+      const spec = validateGrindSpec(g, errors);
+      if (spec) {
+        out.grind = spec;
+        // Mirror the cross-grinder invariant into the canonical drawdown field so
+        // dedup (ROB-610) stays field-correct with no future params rewrite.
+        if (spec.target.targetDrawdownSec !== undefined && out.targetTimeSec === undefined) {
+          out.targetTimeSec = spec.target.targetDrawdownSec;
+        }
+      }
+    } else {
+      errors.push('params.grind must be a string or a GrindSpec object');
+    }
+  }
   return out;
+}
+
+function validateGrindSpec(
+  raw: Record<string, unknown>,
+  errors: string[]
+): GrindSpec | undefined {
+  const target = raw.target;
+  if (!isPlainObject(target)) {
+    errors.push('params.grind.target must be an object');
+    return undefined;
+  }
+  const t: GrindTarget = {};
+  if (target.microns !== undefined) {
+    if (typeof target.microns !== 'number' || Number.isNaN(target.microns)) {
+      errors.push('params.grind.target.microns must be a number');
+    } else {
+      t.microns = target.microns;
+    }
+  }
+  if (target.brewMethodPosition !== undefined) {
+    if (typeof target.brewMethodPosition !== 'string') {
+      errors.push('params.grind.target.brewMethodPosition must be a string');
+    } else {
+      t.brewMethodPosition = target.brewMethodPosition;
+    }
+  }
+  if (target.targetDrawdownSec !== undefined) {
+    if (typeof target.targetDrawdownSec !== 'number' || !Number.isFinite(target.targetDrawdownSec)) {
+      errors.push('params.grind.target.targetDrawdownSec must be a finite number');
+    } else {
+      t.targetDrawdownSec = target.targetDrawdownSec;
+    }
+  }
+  // 611 trust order: absolute microns are unreliable; require a robust anchor.
+  if (t.brewMethodPosition === undefined && t.targetDrawdownSec === undefined) {
+    errors.push('params.grind.target must include brewMethodPosition or targetDrawdownSec');
+    return undefined;
+  }
+  const spec: GrindSpec = { target: t };
+  if (raw.perGrinder !== undefined) {
+    if (!Array.isArray(raw.perGrinder)) {
+      errors.push('params.grind.perGrinder must be an array');
+    } else if (raw.perGrinder.length > 10) {
+      errors.push('params.grind.perGrinder must have at most 10 entries');
+    } else {
+      const pg: PerGrinderGrind[] = [];
+      raw.perGrinder.forEach((item, i) => {
+        if (!isPlainObject(item)) {
+          errors.push(`params.grind.perGrinder[${i}] must be an object`);
+          return;
+        }
+        if (typeof item.grinder !== 'string' || item.grinder.trim().length === 0) {
+          errors.push(`params.grind.perGrinder[${i}].grinder must be a non-empty string`);
+          return;
+        }
+        if (typeof item.clicks !== 'number' && typeof item.clicks !== 'string') {
+          errors.push(`params.grind.perGrinder[${i}].clicks must be a number or string`);
+          return;
+        }
+        if (item.source !== 'measured' && item.source !== 'dial-in-start') {
+          errors.push(`params.grind.perGrinder[${i}].source must be 'measured' or 'dial-in-start'`);
+          return;
+        }
+        const entry: PerGrinderGrind = {
+          grinder: item.grinder,
+          clicks: item.clicks,
+          source: item.source as GrindSource
+        };
+        if (typeof item.grinderId === 'string') entry.grinderId = item.grinderId;
+        if (typeof item.stepless === 'boolean') entry.stepless = item.stepless;
+        if (entry.stepless && typeof item.clicks !== 'string') {
+          errors.push(`params.grind.perGrinder[${i}].clicks must be a string for a stepless grinder`);
+        }
+        pg.push(entry);
+      });
+      if (pg.length > 0) spec.perGrinder = pg;
+    }
+  }
+  if (raw.legacyText !== undefined) {
+    if (typeof raw.legacyText !== 'string') {
+      errors.push('params.grind.legacyText must be a string');
+    } else {
+      spec.legacyText = raw.legacyText;
+    }
+  }
+  return spec;
 }
 
 function validateRecipeSteps(

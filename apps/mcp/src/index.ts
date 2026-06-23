@@ -42,7 +42,43 @@ const PARAMS_SCHEMA = {
     waterG: { type: 'number' },
     ratio: { type: 'string' },
     tempC: { type: 'number' },
-    grind: { type: 'string' },
+    grind: {
+      // ROB-611: legacy free text OR structured grinder-portable spec.
+      oneOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          required: ['target'],
+          properties: {
+            target: {
+              type: 'object',
+              description:
+                'Grinder-agnostic target. Prefer brewMethodPosition + targetDrawdownSec; microns is advisory only.',
+              properties: {
+                microns: { type: 'number' },
+                brewMethodPosition: { type: 'string' },
+                targetDrawdownSec: { type: 'number' }
+              }
+            },
+            perGrinder: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['grinder', 'clicks', 'source'],
+                properties: {
+                  grinder: { type: 'string' },
+                  grinderId: { type: 'string' },
+                  clicks: { type: ['number', 'string'] },
+                  stepless: { type: 'boolean' },
+                  source: { type: 'string', enum: ['measured', 'dial-in-start'] }
+                }
+              }
+            },
+            legacyText: { type: 'string' }
+          }
+        }
+      ]
+    },
     grinder: { type: 'string' },
     brewer: { type: 'string' },
     targetTimeSec: { type: 'number' }
