@@ -181,6 +181,111 @@ export interface InsertManualRecipePayload {
   dripperPortability?: unknown
 }
 
+// ── Agent recipe update / status / supersede ─────────────────────────────────
+
+export interface UpdateRecipePatch {
+  title?: string
+  params?: unknown
+  steps?: unknown
+  notes?: string
+  intent?: string[]
+  beanSnapshot?: unknown
+  adjustmentFromPrevious?: string
+  dripperPortability?: unknown
+}
+
+/**
+ * Update a recipe's editable fields and bump the version by 1.
+ * NEVER writes owner_id / is_official / created_by (guard-protected columns).
+ * Returns the updated RecipeRow, or throws if the code does not exist.
+ */
+export async function updateRecipe(
+  db: Kysely<DB>,
+  code: string,
+  patch: UpdateRecipePatch
+): Promise<RecipeRow> {
+  const current = await getRecipeAnyStatus(db, code)
+  if (!current) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+
+  const set: Record<string, unknown> = {
+    version: (current.version ?? 1) + 1,
+  }
+  if (patch.title !== undefined) set.title = patch.title
+  if (patch.params !== undefined) set.params = patch.params
+  if (patch.steps !== undefined) set.steps = patch.steps
+  if (patch.notes !== undefined) set.notes = patch.notes
+  if (patch.intent !== undefined) set.intent = patch.intent
+  if (patch.beanSnapshot !== undefined) set.bean_snapshot = patch.beanSnapshot
+  if (patch.adjustmentFromPrevious !== undefined) set.adjustment_from_previous = patch.adjustmentFromPrevious
+  if (patch.dripperPortability !== undefined) set.dripper_portability = patch.dripperPortability
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = await (db.updateTable('recipes') as any)
+    .set(set)
+    .where('code', '=', code)
+    .returning(RECIPE_COLS)
+    .executeTakeFirst() as RecipeRow | undefined
+  if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+  return row
+}
+
+const VALID_STATUSES = new Set(['active', 'archived', 'superseded', 'test'])
+
+/**
+ * Set a recipe's status field. Allowed values: active | archived | superseded | test.
+ * Returns the updated RecipeRow, or throws if the code does not exist.
+ */
+export async function setRecipeStatus(
+  db: Kysely<DB>,
+  code: string,
+  status: string
+): Promise<RecipeRow> {
+  if (!VALID_STATUSES.has(status)) {
+    throw Object.assign(new Error(`invalid status: ${status}`), { code: 'INVALID_STATUS' })
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = await (db.updateTable('recipes') as any)
+    .set({ status })
+    .where('code', '=', code)
+    .returning(RECIPE_COLS)
+    .executeTakeFirst() as RecipeRow | undefined
+  if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+  return row
+}
+
+/**
+ * Link two recipes in a supersede relationship inside a single transaction:
+ *   old.status = 'superseded', old.superseded_by = newCode
+ *   new.supersedes = oldCode
+ * Returns { old: RecipeRow, replacement: RecipeRow }.
+ * Throws (code NOT_FOUND) if either code does not exist.
+ */
+export async function supersedeRecipe(
+  db: Kysely<DB>,
+  oldCode: string,
+  newCode: string
+): Promise<{ old: RecipeRow; replacement: RecipeRow }> {
+  return db.transaction().execute(async (trx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oldRow = await (trx.updateTable('recipes') as any)
+      .set({ status: 'superseded', superseded_by: newCode })
+      .where('code', '=', oldCode)
+      .returning(RECIPE_COLS)
+      .executeTakeFirst() as RecipeRow | undefined
+    if (!oldRow) throw Object.assign(new Error(`recipe not found: ${oldCode}`), { code: 'NOT_FOUND' })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newRow = await (trx.updateTable('recipes') as any)
+      .set({ supersedes: oldCode })
+      .where('code', '=', newCode)
+      .returning(RECIPE_COLS)
+      .executeTakeFirst() as RecipeRow | undefined
+    if (!newRow) throw Object.assign(new Error(`recipe not found: ${newCode}`), { code: 'NOT_FOUND' })
+
+    return { old: oldRow, replacement: newRow }
+  })
+}
+
 export function insertManualRecipe(
   db: Kysely<DB>,
   payload: InsertManualRecipePayload
