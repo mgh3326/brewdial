@@ -7,6 +7,7 @@ import {
   handleGetRecentContext,
   handleGetRecipeContext,
   handleListBeans,
+  handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
   handleUpdateRecipe
@@ -103,6 +104,14 @@ describe('handleListGrinders', () => {
     const r = await handleListGrinders(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing grinders');
+  });
+});
+
+describe('handleListDrippers', () => {
+  it('errors when Supabase is unreachable', async () => {
+    const r = await handleListDrippers(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing drippers');
   });
 });
 

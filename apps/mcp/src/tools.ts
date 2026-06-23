@@ -13,6 +13,7 @@ import {
 } from './repositories/recipes.js';
 import { findBeans, listBeans } from './repositories/beans.js';
 import { listGrinders } from './repositories/grinders.js';
+import { listDrippers } from './repositories/drippers.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -185,6 +186,18 @@ export async function handleListGrinders(
     return jsonResult({ ok: true, count: grinders.length, grinders });
   } catch (error) {
     return errorResult(`Error listing grinders: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleListDrippers(
+  config: SupabaseConfig,
+  _args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  try {
+    const drippers = await listDrippers(config);
+    return jsonResult({ ok: true, count: drippers.length, drippers });
+  } catch (error) {
+    return errorResult(`Error listing drippers: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
