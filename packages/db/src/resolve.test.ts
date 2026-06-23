@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { getDb, closeDb } from './db.js'
 
@@ -6,7 +7,7 @@ afterAll(() => closeDb())
 const db = getDb()
 
 test('concurrent first-touch of same identity yields one app_user and zero orphans', async () => {
-  const key = 'concurrencytestkey_' + '0'.repeat(20) // >=16 chars
+  const key = 'concurrencytestkey_' + randomUUID().replace(/-/g, '') // >=16 chars, fresh each run
   const calls = Array.from({ length: 20 }, () =>
     sql<{ resolve_app_user: string }>`select resolve_app_user('toss_anon', ${key}) as resolve_app_user`.execute(db))
   const results = await Promise.all(calls)
