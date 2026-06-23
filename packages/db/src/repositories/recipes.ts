@@ -1,4 +1,4 @@
-import { type Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 
 // Row shape matching the client mapper's RecipeRow
@@ -83,6 +83,88 @@ export function listRecipesByBean(db: Kysely<DB>, beanId: string): Promise<Recip
     .where('bean_id', '=', beanId)
     .where('status', '=', 'active')
     .orderBy('created_at', 'desc')
+    .execute() as unknown as Promise<RecipeRow[]>
+}
+
+// ── Agent recipe functions ────────────────────────────────────────────────────
+
+export interface InsertAgentRecipePayload {
+  method: string
+  title: string
+  beanId?: string | null
+  beanSnapshot?: unknown
+  params?: unknown
+  steps?: unknown
+  intent?: string[]
+  notes?: string
+  adjustmentFromPrevious?: string
+  dripperPortability?: unknown
+}
+
+/**
+ * Insert a recipe on behalf of an agent. Runs inside a transaction that first
+ * sets the `bd.owner_write_ok` session flag so the guard allows `created_by='agent'`.
+ */
+export async function insertAgentRecipe(
+  db: Kysely<DB>,
+  payload: InsertAgentRecipePayload
+): Promise<RecipeRow> {
+  return db.transaction().execute(async (trx) => {
+    // Set the owner-write flag so the guard permits created_by='agent'.
+    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+
+    const values: Record<string, unknown> = {
+      method: payload.method,
+      title: payload.title,
+      created_by: 'agent',
+      version: 1,
+      status: 'active',
+      owner_id: null,
+    }
+    // Leave bean_id null when caller didn't supply one so the
+    // recipes_link_bean BEFORE-INSERT trigger can link/dedup by bean_snapshot.
+    if (payload.beanId != null) values.bean_id = payload.beanId
+    if (payload.beanSnapshot !== undefined) values.bean_snapshot = payload.beanSnapshot as unknown
+    if (payload.params !== undefined) values.params = payload.params as unknown
+    if (payload.steps !== undefined) values.steps = payload.steps as unknown
+    if (payload.intent !== undefined) values.intent = payload.intent
+    if (payload.notes !== undefined) values.notes = payload.notes
+    if (payload.adjustmentFromPrevious !== undefined)
+      values.adjustment_from_previous = payload.adjustmentFromPrevious
+    if (payload.dripperPortability !== undefined)
+      values.dripper_portability = payload.dripperPortability as unknown
+
+    return trx
+      .insertInto('recipes')
+      .values(values as Parameters<ReturnType<typeof trx.insertInto<'recipes'>>['values']>[0])
+      .returning(RECIPE_COLS)
+      .executeTakeFirstOrThrow() as unknown as Promise<RecipeRow>
+  })
+}
+
+/**
+ * Get a recipe by code with NO status filter — returns test/superseded rows too.
+ * Used by agent-facing endpoints that need to read any-status recipes.
+ */
+export function getRecipeAnyStatus(db: Kysely<DB>, code: string): Promise<RecipeRow | undefined> {
+  return db
+    .selectFrom('recipes')
+    .select(RECIPE_COLS)
+    .where('code', '=', code)
+    .executeTakeFirst() as unknown as Promise<RecipeRow | undefined>
+}
+
+/**
+ * List recent recipes with NO status filter — returns test/superseded rows too.
+ * Clamps limit to 1..100.
+ */
+export function listRecentRecipesAnyStatus(db: Kysely<DB>, limit = 20): Promise<RecipeRow[]> {
+  const n = Math.min(100, Math.max(1, limit))
+  return db
+    .selectFrom('recipes')
+    .select(RECIPE_COLS)
+    .orderBy('created_at', 'desc')
+    .limit(n)
     .execute() as unknown as Promise<RecipeRow[]>
 }
 
