@@ -98,14 +98,16 @@ test('POST /me/saved-recipes with test-status code does NOT appear in savedRecip
     },
     body: JSON.stringify({ code: testCode }),
   })
-  // The route itself succeeds (upsert completes, but inserts no snapshot row for test-status).
+  // The route itself succeeds (the upsert runs), but saveRecipe skips the
+  // snapshot insert for non-active recipes, so zero snapshot rows are recorded.
   expect(saveRes.status).toBe(201)
 
   const colRes = await app.request('/api/me/collections', {
     headers: { 'X-BrewDial-Identity': IDENTITY_KEY },
   })
   const collections = await colRes.json()
-  // A row may exist but snapshot should be null for test-status (no recipe was selected).
+  // No snapshot row is written for test-status recipes, so the code either
+  // does not appear in savedRecipes or appears with a null snapshot.
   const saved = collections.savedRecipes.find(
     (r: Record<string, unknown>) => r['recipe_code'] === testCode
   )
@@ -256,6 +258,28 @@ test('PUT /me/calibration upserts, same pair → one row (idempotent update)', a
   // Should have the updated samples.
   const updatedSamples = cals[0]!['samples'] as Array<Record<string, unknown>>
   expect(updatedSamples[0]!['fromClicks']).toBe(110)
+})
+
+test('PUT /me/calibration with fromGrinderId:"" → 200 (empty string coerced to null, not 500)', async () => {
+  // Fix 3: empty-string grinder id must be treated as null, not sent as ''::uuid.
+  const res = await app.request('/api/me/calibration', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_KEY,
+    },
+    body: JSON.stringify({
+      fromLabel: `EmptyGrinderA_${SEED_SUFFIX}`,
+      toLabel: `EmptyGrinderB_${SEED_SUFFIX}`,
+      fromGrinderId: '',  // empty string → must be coerced to null
+      toGrinderId: '',    // empty string → must be coerced to null
+      anchorMethod: '',   // empty string → must be coerced to null
+      samples: [{ fromClicks: 50, toClicks: 13 }],
+    }),
+  })
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(typeof body.id).toBe('string')
 })
 
 // ─── GET /api/me/collections top-level shape ─────────────────────────────────

@@ -66,9 +66,10 @@ me.put('/calibration', requireIdentity, async (c) => {
   const cal: CalibrationInput = {
     fromLabel: body.fromLabel,
     toLabel: body.toLabel,
-    anchorMethod: body.anchorMethod ?? null,
-    fromGrinderId: body.fromGrinderId ?? null,
-    toGrinderId: body.toGrinderId ?? null,
+    // Fix 3: coerce empty strings to null (mirrors old RPC nullif(...,'')::uuid).
+    anchorMethod: body.anchorMethod || null,
+    fromGrinderId: body.fromGrinderId || null,
+    toGrinderId: body.toGrinderId || null,
     samples: body.samples ?? [],
     source: body.source ?? 'measured',
     notes: body.notes ?? null,

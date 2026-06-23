@@ -115,3 +115,80 @@ test('POST /api/recipes/:code/feedback {rawComment} → 201, source defaults to 
   expect(typeof fb['id']).toBe('string')
   createdFeedbackIds.push(fb['id'] as string)
 })
+
+// ─── Feedback source restriction (Fix 1) ─────────────────────────────────────
+
+test('POST feedback with source:agent → 400 (anon caller must not self-declare agent)', async () => {
+  const recipeRes = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'v60', title: 'Write Test Source Restriction' }),
+  })
+  expect(recipeRes.status).toBe(201)
+  const recipe: Record<string, unknown> = await recipeRes.json()
+  const code = recipe['code'] as string
+  createdCodes.push(code)
+
+  const res = await app.request(`/api/recipes/${code}/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rawComment: 'Trying agent source', source: 'agent' }),
+  })
+  expect(res.status).toBe(400)
+  const body: Record<string, unknown> = await res.json()
+  expect(body['error']).toBe('invalid source')
+})
+
+test('POST feedback with source:mcp → 400', async () => {
+  const recipeRes = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'v60', title: 'Write Test Source Restriction MCP' }),
+  })
+  expect(recipeRes.status).toBe(201)
+  const recipe: Record<string, unknown> = await recipeRes.json()
+  const code = recipe['code'] as string
+  createdCodes.push(code)
+
+  const res = await app.request(`/api/recipes/${code}/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rawComment: 'Trying mcp source', source: 'mcp' }),
+  })
+  expect(res.status).toBe(400)
+})
+
+test('POST feedback with source:coffee_profile → 201 (allowed anon source)', async () => {
+  const recipeRes = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'v60', title: 'Write Test Source Coffee Profile' }),
+  })
+  expect(recipeRes.status).toBe(201)
+  const recipe: Record<string, unknown> = await recipeRes.json()
+  const code = recipe['code'] as string
+  createdCodes.push(code)
+
+  const res = await app.request(`/api/recipes/${code}/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rawComment: 'From coffee profile', source: 'coffee_profile' }),
+  })
+  expect(res.status).toBe(201)
+  const fb: Record<string, unknown> = await res.json()
+  expect(fb['source']).toBe('coffee_profile')
+  createdFeedbackIds.push(fb['id'] as string)
+})
+
+// ─── Nonexistent recipe code → 404 (Fix 2) ───────────────────────────────────
+
+test('POST feedback to a nonexistent recipe code → 404', async () => {
+  const res = await app.request('/api/recipes/DOES-NOT-EXIST-999/feedback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rawComment: 'Ghost recipe' }),
+  })
+  expect(res.status).toBe(404)
+  const body: Record<string, unknown> = await res.json()
+  expect(body['error']).toBe('recipe not found')
+})
