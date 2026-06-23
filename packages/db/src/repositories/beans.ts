@@ -41,6 +41,22 @@ export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
     .execute() as unknown as Promise<BeanRow[]>
 }
 
+export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<BeanRow[]> {
+  const clampedLimit = Math.min(25, Math.max(1, limit ?? 25))
+  const pattern = `%${q}%`
+  return db
+    .selectFrom('bean_summaries')
+    .select(BEAN_COLS)
+    .where((eb) => eb.or([
+      eb('name', 'ilike', pattern),
+      eb('roaster', 'ilike', pattern),
+    ]))
+    .where('recipe_count', '>', '0')
+    .orderBy('latest_recipe_at', 'desc')
+    .limit(clampedLimit)
+    .execute() as unknown as Promise<BeanRow[]>
+}
+
 export function getBean(db: Kysely<DB>, id: string): Promise<BeanRow | undefined> {
   return db
     .selectFrom('bean_summaries')
