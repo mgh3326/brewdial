@@ -60,6 +60,51 @@ export interface InsertFeedbackPayload {
   source?: string
 }
 
+// Typed error for recipe-not-found, lets routes return 404 instead of a raw FK 500.
+export class RecipeNotFoundError extends Error {
+  code = 'RECIPE_NOT_FOUND' as const
+  constructor(recipeCode: string) {
+    super(`Recipe not found: ${recipeCode}`)
+    this.name = 'RecipeNotFoundError'
+  }
+}
+
+// Source values allowed from the agent/MCP API surface.
+const AGENT_ALLOWED_SOURCES = new Set(['agent', 'mcp', 'coffee_profile', 'api'])
+
+export interface InsertAgentFeedbackPayload extends InsertFeedbackPayload {
+  source?: string
+}
+
+/**
+ * insertAgentFeedback — like insertFeedback but:
+ *   - source defaults to 'agent'; rejects sources outside AGENT_ALLOWED_SOURCES.
+ *   - Verifies recipe exists before insert (→ RecipeNotFoundError on miss).
+ */
+export async function insertAgentFeedback(
+  db: Kysely<DB>,
+  payload: InsertAgentFeedbackPayload
+): Promise<FeedbackRow> {
+  const source = payload.source ?? 'agent'
+  if (!AGENT_ALLOWED_SOURCES.has(source)) {
+    const err = new Error(`invalid source: ${source}`) as Error & { code: string }
+    err.code = 'INVALID_SOURCE'
+    throw err
+  }
+
+  // Verify recipe exists — avoids FK violation 500.
+  const recipeCheck = await db
+    .selectFrom('recipes')
+    .select('code')
+    .where('code', '=', payload.recipeCode)
+    .executeTakeFirst()
+  if (!recipeCheck) {
+    throw new RecipeNotFoundError(payload.recipeCode)
+  }
+
+  return insertFeedback(db, { ...payload, source })
+}
+
 export function insertFeedback(
   db: Kysely<DB>,
   payload: InsertFeedbackPayload
