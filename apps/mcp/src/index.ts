@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import './instrument.js'; // must be first — initialises Sentry before any other module
+import * as Sentry from '@sentry/node';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -326,20 +328,27 @@ async function main(): Promise<void> {
     const { name, arguments: args } = request.params;
     const a = args as Record<string, unknown> | undefined;
     let result: ToolResult;
-    switch (name) {
-      case 'brew.create_recipe': result = await handleCreateRecipe(supabase, a); break;
-      case 'brew.update_recipe': result = await handleUpdateRecipe(supabase, a); break;
-      case 'brew.archive_recipe': result = await handleArchiveRecipe(supabase, a); break;
-      case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
-      case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
-      case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
-      case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
-      case 'brew.list_drippers': result = await handleListDrippers(supabase, a); break;
-      case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
-      case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
-      case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;
-      default:
-        result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+    try {
+      switch (name) {
+        case 'brew.create_recipe': result = await handleCreateRecipe(supabase, a); break;
+        case 'brew.update_recipe': result = await handleUpdateRecipe(supabase, a); break;
+        case 'brew.archive_recipe': result = await handleArchiveRecipe(supabase, a); break;
+        case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
+        case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
+        case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
+        case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
+        case 'brew.list_drippers': result = await handleListDrippers(supabase, a); break;
+        case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
+        case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
+        case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;
+        default:
+          result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+      }
+    } catch (error) {
+      // The MCP SDK turns a thrown handler into a generic error response, so
+      // capture it here (tagged with the tool) before rethrowing.
+      Sentry.captureException(error, { tags: { mcp_tool: name } });
+      throw error;
     }
     return result as { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
   });
@@ -349,7 +358,10 @@ async function main(): Promise<void> {
   console.error('BrewDial MCP server running on stdio (Supabase)');
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error('Fatal error:', error);
+  Sentry.captureException(error);
+  // Give the SDK a moment to deliver the event before the process exits.
+  await Sentry.close(2000);
   process.exit(1);
 });
