@@ -46,3 +46,40 @@ export function listFeedbackByRecipe(db: Kysely<DB>, code: string): Promise<Feed
     .orderBy('created_at', 'desc')
     .execute() as unknown as Promise<FeedbackRow[]>
 }
+
+export interface InsertFeedbackPayload {
+  recipeCode: string
+  beanId?: string | null
+  ratings?: unknown
+  actual?: unknown
+  comment?: string
+  rawComment?: string
+  quickTags?: string[]
+  desiredDirection?: string[]
+  nextHint?: string[]
+  source?: string
+}
+
+export function insertFeedback(
+  db: Kysely<DB>,
+  payload: InsertFeedbackPayload
+): Promise<FeedbackRow> {
+  const values: Record<string, unknown> = {
+    recipe_code: payload.recipeCode,
+    source: payload.source ?? 'web',
+  }
+  if (payload.beanId != null) values.bean_id = payload.beanId
+  if (payload.ratings !== undefined) values.ratings = payload.ratings as unknown
+  if (payload.actual !== undefined) values.actual = payload.actual as unknown
+  if (payload.comment !== undefined) values.comment = payload.comment
+  if (payload.rawComment !== undefined) values.raw_comment = payload.rawComment
+  if (payload.quickTags !== undefined) values.quick_tags = payload.quickTags
+  if (payload.desiredDirection !== undefined) values.desired_direction = payload.desiredDirection
+  if (payload.nextHint !== undefined) values.next_hint = payload.nextHint
+
+  return db
+    .insertInto('feedback')
+    .values(values as Parameters<ReturnType<typeof db.insertInto<'feedback'>>['values']>[0])
+    .returning(FEEDBACK_COLS)
+    .executeTakeFirstOrThrow() as unknown as Promise<FeedbackRow>
+}

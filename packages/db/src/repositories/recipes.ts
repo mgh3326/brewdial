@@ -85,3 +85,47 @@ export function listRecipesByBean(db: Kysely<DB>, beanId: string): Promise<Recip
     .orderBy('created_at', 'desc')
     .execute() as unknown as Promise<RecipeRow[]>
 }
+
+export interface InsertManualRecipePayload {
+  method: string
+  title: string
+  beanId?: string | null
+  beanSnapshot?: unknown
+  params?: unknown
+  steps?: unknown
+  intent?: string[]
+  notes?: string
+  adjustmentFromPrevious?: string
+  dripperPortability?: unknown
+}
+
+export function insertManualRecipe(
+  db: Kysely<DB>,
+  payload: InsertManualRecipePayload
+): Promise<RecipeRow> {
+  const values: Record<string, unknown> = {
+    method: payload.method,
+    title: payload.title,
+    created_by: 'manual',
+    version: 1,
+    status: 'active',
+  }
+  // Leave bean_id null when client didn't supply one so the
+  // recipes_link_bean BEFORE-INSERT trigger can link/dedup by bean_snapshot.
+  if (payload.beanId != null) values.bean_id = payload.beanId
+  if (payload.beanSnapshot !== undefined) values.bean_snapshot = payload.beanSnapshot as unknown
+  if (payload.params !== undefined) values.params = payload.params as unknown
+  if (payload.steps !== undefined) values.steps = payload.steps as unknown
+  if (payload.intent !== undefined) values.intent = payload.intent
+  if (payload.notes !== undefined) values.notes = payload.notes
+  if (payload.adjustmentFromPrevious !== undefined)
+    values.adjustment_from_previous = payload.adjustmentFromPrevious
+  if (payload.dripperPortability !== undefined)
+    values.dripper_portability = payload.dripperPortability as unknown
+
+  return db
+    .insertInto('recipes')
+    .values(values as Parameters<ReturnType<typeof db.insertInto<'recipes'>>['values']>[0])
+    .returning(RECIPE_COLS)
+    .executeTakeFirstOrThrow() as unknown as Promise<RecipeRow>
+}

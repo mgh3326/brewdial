@@ -13,6 +13,9 @@ importers:
       '@brewdial/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@brewdial/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.15)
