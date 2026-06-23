@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@brewdial/db": "workspace:*",
-    "@brewdial/shared": "workspace:*",
     "@hono/node-server": "^1.13.0",
     "@sentry/node": "^8.0.0",
     "hono": "^4.6.0",
