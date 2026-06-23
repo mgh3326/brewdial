@@ -815,6 +815,40 @@ end $$;
 revoke all on function rpc_upsert_gear(text, text, jsonb) from public;
 grant execute on function rpc_upsert_gear(text, text, jsonb) to anon, authenticated, service_role;
 
+-- ROB-611 (D): per-user grinder-pair calibration upsert. Resolves identity and
+-- scopes the row to it. Conflict target matches grinder_calibration_pair_uidx
+-- (coalesce-stable pair key). from_label/to_label are required.
+create or replace function rpc_upsert_calibration(
+  p_provider text, p_external_key text, p_cal jsonb)
+returns uuid language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_uid uuid; v_id uuid;
+begin
+  v_uid := resolve_app_user(p_provider, p_external_key);
+  insert into grinder_calibration (app_user_id, from_grinder_id, to_grinder_id,
+                                   from_label, to_label, anchor_method, samples, source, notes)
+  values (
+    v_uid,
+    nullif(p_cal->>'fromGrinderId','')::uuid,
+    nullif(p_cal->>'toGrinderId','')::uuid,
+    p_cal->>'fromLabel',
+    p_cal->>'toLabel',
+    nullif(p_cal->>'anchorMethod',''),
+    coalesce(p_cal->'samples','[]'::jsonb),
+    coalesce(nullif(p_cal->>'source',''), 'measured'),
+    p_cal->>'notes')
+  on conflict (app_user_id,
+               coalesce(from_grinder_id::text, lower(from_label)),
+               coalesce(to_grinder_id::text,   lower(to_label)),
+               coalesce(anchor_method, ''))
+  do update set samples = excluded.samples,
+                source  = excluded.source,
+                notes   = excluded.notes
+  returning id into v_id;
+  return v_id;
+end $$;
+revoke all on function rpc_upsert_calibration(text, text, jsonb) from public;
+grant execute on function rpc_upsert_calibration(text, text, jsonb) to anon, authenticated, service_role;
+
 -- EVO FIX: rpc_save_recipe ALWAYS populates snapshot server-side by looking up the
 -- recipe row by code inside the definer fn. "Saved recipes render offline" is now
 -- true by construction — no future backfill. p_note is the only client free-text.
@@ -1073,6 +1107,34 @@ insert into grinders (name) values
   ('KINGrinder K6'),('Comandante C40'),('1Zpresso J-Max'),('1Zpresso JX-Pro'),
   ('Timemore C3'),('Baratza Encore'),('Fellow Ode Gen2'),('Wilfa Uniform')
 on conflict (lower(name)) do nothing;
+
+-- 5b) ROB-611: enrich the registry with metadata for the conversion helper.
+--     um_per_click_est is ADVISORY (absolute microns unreliable). The robust
+--     cross-grinder anchor is brew_method_ranges (each grinder's V60 click band).
+--     Adds 'Comandante C40 Red Clix' (finer stepped axle). Idempotent upsert.
+insert into grinders (name, um_per_click_est, um_per_click_source, brew_method_ranges, anchor_point, notes) values
+  ('KINGrinder K6', 7.5, 'estimated',
+   '{"v60":{"from":90,"to":108}}'::jsonb,
+   '{"method":"v60","clicks":102,"targetDrawdownSec":265,"note":"40g/620g 4:25-4:45 = medium"}'::jsonb,
+   'Dial label 16µm/click is the dial scale, not real particle output (~7.5µm/click effective).'),
+  ('Comandante C40', 30, 'estimated',
+   '{"v60":{"from":22,"to":30}}'::jsonb,
+   '{"method":"v60","clicks":26}'::jsonb,
+   'Standard axle; community estimates ~25-30µm/click.'),
+  ('Comandante C40 Red Clix', 15, 'estimated',
+   '{"v60":{"from":44,"to":60}}'::jsonb,
+   '{"method":"v60","clicks":52}'::jsonb,
+   'Red Clix finer-stepped axle (~15µm/click); roughly 2x the click count of the standard axle.'),
+  ('1Zpresso J-Max', 8.8, 'estimated',
+   '{"v60":{"from":50,"to":68}}'::jsonb,
+   null,
+   '8.8µm/click external-adjust hand grinder.')
+on conflict (lower(name)) do update set
+  um_per_click_est    = excluded.um_per_click_est,
+  um_per_click_source = excluded.um_per_click_source,
+  brew_method_ranges  = excluded.brew_method_ranges,
+  anchor_point        = excluded.anchor_point,
+  notes               = excluded.notes;
 
 -- 6) Seed dripper registry with corrected coffee-domain classification.
 insert into drippers (name, class, geometry, continuum_position, filter_type, recommended_dose_range) values
