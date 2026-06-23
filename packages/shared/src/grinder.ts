@@ -22,7 +22,21 @@ export interface GrinderInfo {
   notes?: string;
 }
 
-export type SuggestionBasis = 'measured' | 'relative-band' | 'band-midpoint' | 'none';
+export type SuggestionBasis = 'measured' | 'calibrated' | 'relative-band' | 'band-midpoint' | 'none';
+
+// ROB-611 (Slice D): a user's one-time grinder-pair calibration. A sample records
+// "on grinder FROM at fromClicks, my grinder TO actually wanted toClicks" — used to
+// shift the band prediction by the measured delta for that pair.
+export interface CalibrationSample {
+  fromClicks: number;
+  toClicks: number;
+}
+export interface Calibration {
+  fromGrinder: string;
+  toGrinder: string;
+  anchorMethod?: string;
+  samples: CalibrationSample[];
+}
 
 export interface ClickSuggestion {
   grinder: string;
@@ -55,6 +69,12 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
 }
 
+// Relative-band map: keep the same coarseness position within each grinder's band.
+function bandInterp(fromClicks: number, fromBand: GrinderBand, toBand: GrinderBand): number {
+  const pos = clamp((fromClicks - fromBand.from) / (fromBand.to - fromBand.from), 0, 1);
+  return toBand.from + pos * (toBand.to - toBand.from);
+}
+
 // Suggest dial-in clicks for `toGrinder` from a recipe's grind spec.
 //   method: the brew method key (e.g. 'v60') used to look up each grinder's band.
 //   registry: known grinders (to resolve a measured reference grinder's band).
@@ -62,7 +82,8 @@ export function suggestGrinderClicks(
   grind: GrindSpec,
   method: string,
   toGrinder: GrinderInfo,
-  registry: GrinderInfo[]
+  registry: GrinderInfo[],
+  calibrations: Calibration[] = []
 ): ClickSuggestion {
   const m = norm(method);
 
@@ -80,22 +101,37 @@ export function suggestGrinderClicks(
 
   const toBand = toGrinder.brewMethodRanges[m];
 
-  // 2) Relative-band interpolation from a measured reference grinder. Keeps the
-  //    extraction position (relative coarseness within each grinder's band) fixed.
+  // 2) Relative-band interpolation from a measured reference grinder, optionally
+  //    corrected by the user's one-time pair calibration (ROB-611 Slice D).
   if (toBand && toBand.to !== toBand.from && grind.perGrinder) {
     for (const ref of grind.perGrinder) {
       const refInfo = registry.find((g) => norm(g.name) === norm(ref.grinder));
       const refBand = refInfo?.brewMethodRanges[m];
       const refClicks = parseClicks(ref.clicks);
       if (refBand && refBand.to !== refBand.from && refClicks != null) {
-        const pos = clamp((refClicks - refBand.from) / (refBand.to - refBand.from), 0, 1);
-        const start = Math.round(toBand.from + pos * (toBand.to - toBand.from));
+        let predicted = bandInterp(refClicks, refBand, toBand);
+        let basis: SuggestionBasis = 'relative-band';
+        const cal = calibrations.find(
+          (c) =>
+            norm(c.fromGrinder) === norm(ref.grinder) &&
+            norm(c.toGrinder) === norm(toGrinder.name) &&
+            (!c.anchorMethod || norm(c.anchorMethod) === m) &&
+            c.samples.length > 0
+        );
+        if (cal) {
+          // One-time pair offset: shift the band prediction by the user's measured
+          // delta at their sample point.
+          const s = cal.samples[0];
+          predicted += s.toClicks - bandInterp(s.fromClicks, refBand, toBand);
+          basis = 'calibrated';
+        }
+        const start = Math.round(predicted);
         return {
           grinder: toGrinder.name,
           clicks: start,
-          range: { from: Math.max(toBand.from, start - 2), to: Math.min(toBand.to, start + 2) },
+          range: { from: start - 2, to: start + 2 },
           source: 'dial-in-start',
-          basis: 'relative-band',
+          basis,
           disclaimer: DIAL_IN_DISCLAIMER
         };
       }

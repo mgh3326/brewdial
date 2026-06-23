@@ -15,15 +15,22 @@ import { loadSoundPreference, saveSoundPreference } from '../lib/brew-timer/soun
 import { createPourAudio, type PourAudio } from '../lib/brew-timer/pour-audio';
 import { haptic, setKeepAwake } from '../lib/toss';
 import { getRecipeByCode } from '../lib/data/recipes';
-import { getMyCollections, saveRecipe } from '../lib/data/user-content';
+import { getMyCollections, saveRecipe, upsertCalibration } from '../lib/data/user-content';
 import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
-import { grindDisplay, suggestGrinderClicks } from '../lib/domain';
+import { grindDisplay, parseClicks, suggestGrinderClicks } from '../lib/domain';
 import { listGrinders } from '../lib/data/grinders';
 import { loadGear } from '../lib/gear-preferences';
-import type { FeedbackDoc, GrindSpec, GrinderInfo, RecipeCode, RecipeDoc } from '../lib/domain';
+import type {
+  Calibration,
+  FeedbackDoc,
+  GrindSpec,
+  GrinderInfo,
+  RecipeCode,
+  RecipeDoc
+} from '../lib/domain';
 
 type Tab = 'timer' | 'recipe' | 'feedback';
 
@@ -45,6 +52,9 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [savingSave, setSavingSave] = useState(false);
   const [grinders, setGrinders] = useState<GrinderInfo[]>([]);
   const [selGrinder, setSelGrinder] = useState<string>('');
+  const [calibrations, setCalibrations] = useState<Calibration[]>([]);
+  const [calInput, setCalInput] = useState<string>('');
+  const [savingCal, setSavingCal] = useState(false);
 
   // Reflect already-saved state on load (best-effort; web_local/toss_anon identity).
   useEffect(() => {
@@ -80,6 +90,34 @@ export default function RecipeDetail({ code }: { code: string }) {
         // registry unavailable — grind section falls back to target text
       }
     })();
+  }, []);
+
+  // ROB-611 (D): load the user's grinder-pair calibrations (best-effort).
+  async function loadCalibrations(): Promise<void> {
+    try {
+      const mc = await getMyCollections();
+      const rows = mc.calibration as Array<{
+        from_label?: string;
+        to_label?: string;
+        anchor_method?: string;
+        samples?: { fromClicks: number; toClicks: number }[];
+      }>;
+      setCalibrations(
+        rows
+          .filter((r) => r.from_label && r.to_label)
+          .map((r) => ({
+            fromGrinder: r.from_label as string,
+            toGrinder: r.to_label as string,
+            anchorMethod: r.anchor_method,
+            samples: Array.isArray(r.samples) ? r.samples : []
+          }))
+      );
+    } catch {
+      // collections unavailable — conversions stay uncalibrated
+    }
+  }
+  useEffect(() => {
+    void loadCalibrations();
   }, []);
 
   const [elapsed, setElapsed] = useState(0);
@@ -250,7 +288,18 @@ export default function RecipeDetail({ code }: { code: string }) {
     grindField != null && typeof grindField === 'object' ? grindField : null;
   const selInfo = grinders.find((g) => g.name === selGrinder) ?? null;
   const grindSuggestion =
-    grindSpec && selInfo ? suggestGrinderClicks(grindSpec, recipe.method, selInfo, grinders) : null;
+    grindSpec && selInfo
+      ? suggestGrinderClicks(grindSpec, recipe.method, selInfo, grinders, calibrations)
+      : null;
+  const grindRef =
+    grindSpec?.perGrinder?.find((p) => p.source === 'measured') ?? grindSpec?.perGrinder?.[0] ?? null;
+  const grindRefClicks = grindRef ? parseClicks(grindRef.clicks) : null;
+  // Calibration only makes sense for an INTERPOLATED grinder (not a direct measured
+  // match), since the offset is applied inside the band-interpolation path.
+  const canCalibrate =
+    !!grindRef &&
+    grindRefClicks != null &&
+    (grindSuggestion?.basis === 'relative-band' || grindSuggestion?.basis === 'calibrated');
 
   return (
     <>
@@ -467,17 +516,59 @@ export default function RecipeDetail({ code }: { code: string }) {
                               }`
                             : (grindSpec.target.brewMethodPosition ?? '환산 정보 없음')}{' '}
                           <span className="muted">
-                            {grindSuggestion.source === 'measured'
-                              ? '· 측정값'
-                              : grindSuggestion.source === 'dial-in-start'
-                                ? '· dial-in 시작점'
-                                : ''}
+                            {grindSuggestion.basis === 'calibrated'
+                              ? '· 내 보정 반영'
+                              : grindSuggestion.source === 'measured'
+                                ? '· 측정값'
+                                : grindSuggestion.source === 'dial-in-start'
+                                  ? '· dial-in 시작점'
+                                  : ''}
                           </span>
                         </p>
                         {grindSuggestion.disclaimer && (
                           <p className="card-meta muted">{grindSuggestion.disclaimer}</p>
                         )}
                       </>
+                    )}
+                    {canCalibrate && grindRef && (
+                      <div className="row" style={{ alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="card-meta muted">내 {selGrinder} 실측 클릭</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          value={calInput}
+                          onChange={(e) => setCalInput(e.target.value)}
+                          aria-label="실측 클릭"
+                          style={{ width: 72 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-save"
+                          disabled={savingCal || calInput.trim() === ''}
+                          onClick={() => {
+                            const toClicks = Number(calInput);
+                            if (grindRefClicks == null || !Number.isFinite(toClicks)) return;
+                            setSavingCal(true);
+                            upsertCalibration({
+                              fromLabel: grindRef.grinder,
+                              toLabel: selGrinder,
+                              anchorMethod: recipe.method,
+                              samples: [{ fromClicks: grindRefClicks, toClicks }],
+                              source: 'measured'
+                            })
+                              .then(() => {
+                                setCalInput('');
+                                return loadCalibrations();
+                              })
+                              .catch(() => {
+                                /* best-effort */
+                              })
+                              .finally(() => setSavingCal(false));
+                          }}
+                        >
+                          {savingCal ? '저장 중…' : '보정 저장'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

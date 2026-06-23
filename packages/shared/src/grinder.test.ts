@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseClicks, suggestGrinderClicks, type GrinderInfo } from './grinder.js';
+import { parseClicks, suggestGrinderClicks, type Calibration, type GrinderInfo } from './grinder.js';
 import type { GrindSpec } from './types.js';
 
 const REGISTRY: GrinderInfo[] = [
@@ -55,6 +55,23 @@ describe('suggestGrinderClicks (ROB-611)', () => {
     expect(s.basis).toBe('band-midpoint');
     expect(s.clicks).toBe(99); // (90+108)/2
     expect(s.source).toBe('dial-in-start');
+  });
+
+  it('applies a one-time pair calibration offset (Slice D)', () => {
+    const grind: GrindSpec = {
+      target: { brewMethodPosition: 'v60 medium' },
+      perGrinder: [{ grinder: 'KINGrinder K6', clicks: 102, source: 'measured' }]
+    };
+    // band-interp K6 102 → Comandante ≈ 27; user measured it actually wanted 30.
+    const cal: Calibration = {
+      fromGrinder: 'KINGrinder K6',
+      toGrinder: 'Comandante C40',
+      anchorMethod: 'v60',
+      samples: [{ fromClicks: 102, toClicks: 30 }]
+    };
+    const s = suggestGrinderClicks(grind, 'v60', comandante, REGISTRY, [cal]);
+    expect(s.basis).toBe('calibrated');
+    expect(s.clicks).toBe(30); // shifted from ~27 to the user's measured 30
   });
 
   it('returns null clicks when the grinder has no band and is not measured', () => {

@@ -91,3 +91,26 @@ export async function createOwnedRecipe(recipe: Record<string, unknown>): Promis
   if (error) throw error;
   return (data as string | null) ?? null;
 }
+
+export interface CalibrationInput {
+  fromLabel: string;
+  toLabel: string;
+  anchorMethod?: string;
+  fromGrinderId?: string;
+  toGrinderId?: string;
+  samples: { fromClicks: number; toClicks: number }[];
+  source?: 'measured' | 'dial-in-start';
+  notes?: string;
+}
+
+// ROB-611 (D): save a per-user grinder-pair calibration (one-time offset).
+export async function upsertCalibration(cal: CalibrationInput): Promise<string | null> {
+  const { provider, externalKey } = await resolveIdentity();
+  const { data, error } = await supabase.rpc('rpc_upsert_calibration', {
+    p_provider: provider,
+    p_external_key: externalKey,
+    p_cal: cal,
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
