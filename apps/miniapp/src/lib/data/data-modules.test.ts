@@ -119,11 +119,19 @@ describe('getRecipeByCode', () => {
     expect(doc!.isOfficial).toBe(true);
   });
 
-  it('returns null when API returns null', async () => {
-    mockFetch(200, null);
+  it('returns null when API returns 404', async () => {
+    mockFetch(404, 'not found');
     const { getRecipeByCode } = await import('./recipes');
     const doc = await getRecipeByCode('COF-999');
     expect(doc).toBeNull();
+  });
+
+  it('throws ApiError when API returns 500', async () => {
+    mockFetch(500, 'internal server error');
+    const { getRecipeByCode } = await import('./recipes');
+    const { ApiError } = await import('../api');
+    await expect(getRecipeByCode('COF-999')).rejects.toBeInstanceOf(ApiError);
+    await expect(getRecipeByCode('COF-999')).rejects.toMatchObject({ status: 500 });
   });
 });
 
@@ -231,11 +239,19 @@ describe('getBean', () => {
     expect(bean!.hasAi).toBe(false);
   });
 
-  it('returns null when API returns null', async () => {
-    mockFetch(200, null);
+  it('returns null when API returns 404', async () => {
+    mockFetch(404, 'not found');
     const { getBean } = await import('./beans');
     const bean = await getBean('bean-999');
     expect(bean).toBeNull();
+  });
+
+  it('throws ApiError when API returns 500', async () => {
+    mockFetch(500, 'internal server error');
+    const { getBean } = await import('./beans');
+    const { ApiError } = await import('../api');
+    await expect(getBean('bean-999')).rejects.toBeInstanceOf(ApiError);
+    await expect(getBean('bean-999')).rejects.toMatchObject({ status: 500 });
   });
 });
 

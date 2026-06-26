@@ -2,7 +2,7 @@ import type { CreateRecipeInput, RecipeCode, RecipeDoc } from '../domain';
 import { validateCreateRecipeInput } from '../domain';
 import { supabase } from '../supabase';
 import { dbError } from '../labels';
-import { apiGet } from '../api';
+import { apiGet, apiGetOrNull } from '../api';
 import { RECIPE_COLUMNS, rowToRecipe, type RecipeRow } from './mappers';
 
 const DEFAULT_LIMIT = 20;
@@ -15,7 +15,7 @@ export async function listRecentRecipes(limit = DEFAULT_LIMIT): Promise<RecipeDo
 }
 
 export async function getRecipeByCode(code: RecipeCode): Promise<RecipeDoc | null> {
-  const row = await apiGet<RecipeRow | null>(`/recipes/${encodeURIComponent(code)}`);
+  const row = await apiGetOrNull<RecipeRow>(`/recipes/${encodeURIComponent(code)}`);
   return row ? rowToRecipe(row) : null;
 }
 

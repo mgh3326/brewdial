@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setApiBaseUrl, apiGet, apiSend, ApiError } from './api';
+import { setApiBaseUrl, apiGet, apiGetOrNull, apiSend, ApiError } from './api';
 
 const BASE = 'https://test.brewdial.invalid';
 
@@ -56,6 +56,39 @@ describe('apiGet', () => {
       `${altBase}/ping`,
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+});
+
+// ── apiGetOrNull ───────────────────────────────────────────────────────────────
+
+describe('apiGetOrNull', () => {
+  it('returns parsed JSON on 200', async () => {
+    const data = { id: 'r1', title: 'V60' };
+    mockFetch(200, data);
+
+    const result = await apiGetOrNull<typeof data>('/recipes/r1');
+    expect(result).toEqual(data);
+  });
+
+  it('returns null on 404', async () => {
+    mockFetch(404, 'not found');
+
+    const result = await apiGetOrNull('/recipes/missing');
+    expect(result).toBeNull();
+  });
+
+  it('throws ApiError on 500 (not swallowed as null)', async () => {
+    mockFetch(500, 'internal server error');
+
+    await expect(apiGetOrNull('/recipes/r1')).rejects.toBeInstanceOf(ApiError);
+    await expect(apiGetOrNull('/recipes/r1')).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('throws ApiError on 401 (not swallowed as null)', async () => {
+    mockFetch(401, 'unauthorized');
+
+    await expect(apiGetOrNull('/me/profile')).rejects.toBeInstanceOf(ApiError);
+    await expect(apiGetOrNull('/me/profile')).rejects.toMatchObject({ status: 401 });
   });
 });
 

@@ -114,6 +114,21 @@ export function apiGet<T>(path: string, opts?: RequestOpts): Promise<T> {
   return request<T>('GET', path, undefined, opts);
 }
 
+/**
+ * GET `${base}${path}` → parsed JSON of type T, or **null** on 404.
+ * All other non-2xx responses are re-thrown as `ApiError` (same as `apiGet`).
+ * Use this for single-resource lookups where a missing resource is a valid
+ * outcome (e.g. getRecipeByCode, getBean).
+ */
+export async function apiGetOrNull<T>(path: string, opts?: RequestOpts): Promise<T | null> {
+  try {
+    return await request<T>('GET', path, undefined, opts);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
 /** POST / PUT / PATCH / DELETE with optional JSON body → parsed response of type T. */
 export function apiSend<T>(
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',

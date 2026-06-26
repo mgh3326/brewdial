@@ -1,4 +1,4 @@
-import { apiGet } from '../api';
+import { apiGet, apiGetOrNull } from '../api';
 
 // Row from the `bean_summaries` view (bean + active-recipe rollup).
 interface BeanSummaryRow {
@@ -50,6 +50,6 @@ export async function listBeans(): Promise<BeanSummary[]> {
 }
 
 export async function getBean(id: string): Promise<BeanSummary | null> {
-  const row = await apiGet<BeanSummaryRow | null>(`/beans/${encodeURIComponent(id)}`);
+  const row = await apiGetOrNull<BeanSummaryRow>(`/beans/${encodeURIComponent(id)}`);
   return row ? rowToBean(row) : null;
 }
