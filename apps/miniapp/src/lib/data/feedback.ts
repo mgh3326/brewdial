@@ -1,9 +1,7 @@
 import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '../domain';
 import { validateCreateFeedbackInput } from '../domain';
-import { supabase } from '../supabase';
-import { dbError } from '../labels';
-import { apiGet } from '../api';
-import { FEEDBACK_COLUMNS, rowToFeedback, type FeedbackRow } from './mappers';
+import { apiGet, apiSend } from '../api';
+import { rowToFeedback, type FeedbackRow } from './mappers';
 
 export async function listFeedbackByRecipe(code: RecipeCode): Promise<FeedbackDoc[]> {
   const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`);
@@ -15,7 +13,7 @@ export async function createFeedback(input: CreateFeedbackInput): Promise<Feedba
   if (!result.ok) throw new Error(result.errors.join('; '));
   const f = result.value;
 
-  const row = {
+  const body = {
     recipe_code: f.recipeCode,
     ratings: f.ratings ?? null,
     actual: f.actual ?? null,
@@ -27,11 +25,6 @@ export async function createFeedback(input: CreateFeedbackInput): Promise<Feedba
     source: f.source ?? 'web',
   };
 
-  const { data, error } = await supabase
-    .from('feedback')
-    .insert(row)
-    .select(FEEDBACK_COLUMNS)
-    .single();
-  if (error) throw dbError('createFeedback', error.message);
-  return rowToFeedback(data as FeedbackRow);
+  const row = await apiSend<FeedbackRow>('POST', `/recipes/${encodeURIComponent(f.recipeCode)}/feedback`, body);
+  return rowToFeedback(row);
 }
