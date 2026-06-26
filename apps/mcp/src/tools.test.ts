@@ -116,7 +116,7 @@ describe('handleListDrippers', () => {
 });
 
 describe('handleGetRecentContext', () => {
-  it('returns error when Supabase is unreachable', async () => {
+  it('returns error when backend is unreachable', async () => {
     const result = await handleGetRecentContext(mockConfig, {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error');
