@@ -51,8 +51,8 @@ export async function getMyCollections(): Promise<MyCollections> {
 // Upsert a piece of the user's gear (grinder/dripper).
 export async function upsertGear(gear: GearInput): Promise<string | null> {
   const identity = await resolveIdentity();
-  const data = await apiSend<string | null>('PUT', '/me/gear', gear, { identity });
-  return data ?? null;
+  const data = await apiSend<{ ok: boolean; id: string | null }>('PUT', '/me/gear', gear, { identity });
+  return data?.id ?? null;
 }
 
 export interface CalibrationInput {
@@ -69,6 +69,6 @@ export interface CalibrationInput {
 // ROB-611 (D): save a per-user grinder-pair calibration (one-time offset).
 export async function upsertCalibration(cal: CalibrationInput): Promise<string | null> {
   const identity = await resolveIdentity();
-  const data = await apiSend<string | null>('PUT', '/me/calibration', cal, { identity });
-  return data ?? null;
+  const data = await apiSend<{ ok: boolean; id: string | null }>('PUT', '/me/calibration', cal, { identity });
+  return data?.id ?? null;
 }

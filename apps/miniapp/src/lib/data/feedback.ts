@@ -14,14 +14,13 @@ export async function createFeedback(input: CreateFeedbackInput): Promise<Feedba
   const f = result.value;
 
   const body = {
-    recipe_code: f.recipeCode,
     ratings: f.ratings ?? null,
     actual: f.actual ?? null,
     comment: f.comment ?? null,
-    raw_comment: f.rawComment ?? null,
-    quick_tags: f.quickTags ?? null,
-    desired_direction: f.desiredDirection ?? null,
-    next_hint: f.nextHint ?? null,
+    rawComment: f.rawComment ?? null,
+    quickTags: f.quickTags ?? null,
+    desiredDirection: f.desiredDirection ?? null,
+    nextHint: f.nextHint ?? null,
     source: f.source ?? 'web',
   };
 

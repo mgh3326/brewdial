@@ -134,9 +134,13 @@ describe('createFeedback', () => {
     expect(url).toBe(`${BASE}/recipes/COF-0001/feedback`);
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string);
-    expect(body.recipe_code).toBe('COF-0001');
+    // Body must use camelCase — backend validateCreateFeedbackInput reads camelCase
+    expect(body.rawComment).toBe('great');
     expect(body.comment).toBe('great');
     expect(body.source).toBe('web');
+    // recipe_code must NOT be in body (backend uses URL path param)
+    expect(body.recipe_code).toBeUndefined();
+    expect(body.recipeCode).toBeUndefined();
     // maps to FeedbackDoc
     expect(doc._id).toBe('feedback:COF-0001:fb-new');
     expect(doc.recipeCode).toBe('COF-0001');
@@ -269,7 +273,8 @@ describe('getMyCollections', () => {
 describe('upsertGear', () => {
   it('PUT /me/gear with gear body and identity header', async () => {
     const gearId = 'gear-uuid-123';
-    mockFetch(200, gearId);
+    // Backend returns { ok: true, id } — mock the real response shape
+    mockFetch(200, { ok: true, id: gearId });
 
     const { upsertGear } = await import('./user-content');
     const result = await upsertGear({ kind: 'grinder', label: 'Commandante C40', isDefault: true });
@@ -285,11 +290,12 @@ describe('upsertGear', () => {
     expect(headers['X-BrewDial-Identity']).toBe(
       `${TEST_IDENTITY.provider}:${TEST_IDENTITY.externalKey}`,
     );
+    // Must return the bare id string, not the response object
     expect(result).toBe(gearId);
   });
 
-  it('returns null when API returns null', async () => {
-    mockFetch(200, null);
+  it('returns null when API returns null id', async () => {
+    mockFetch(200, { ok: true, id: null });
     const { upsertGear } = await import('./user-content');
     const result = await upsertGear({ kind: 'dripper', label: 'V60' });
     expect(result).toBeNull();
@@ -301,7 +307,8 @@ describe('upsertGear', () => {
 describe('upsertCalibration', () => {
   it('PUT /me/calibration with calibration body and identity header', async () => {
     const calId = 'cal-uuid-456';
-    mockFetch(200, calId);
+    // Backend returns { ok: true, id } — mock the real response shape
+    mockFetch(200, { ok: true, id: calId });
 
     const { upsertCalibration } = await import('./user-content');
     const cal = {
@@ -324,6 +331,7 @@ describe('upsertCalibration', () => {
     expect(headers['X-BrewDial-Identity']).toBe(
       `${TEST_IDENTITY.provider}:${TEST_IDENTITY.externalKey}`,
     );
+    // Must return the bare id string, not the response object
     expect(result).toBe(calId);
   });
 });
