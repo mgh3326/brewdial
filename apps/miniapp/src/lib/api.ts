@@ -7,6 +7,7 @@
 //      at module load so we never black-screen on missing env.
 
 import type { Identity } from './identity';
+import { localizeMessage } from './labels.js';
 
 // ── Base URL ──────────────────────────────────────────────────────────────────
 
@@ -30,18 +31,22 @@ export function getApiBaseUrl(): string {
 
 /**
  * Error thrown on non-2xx HTTP responses.
- * The message is phrased so localizeMessage() / dbError() in labels.ts map it
- * to a friendly Korean string:
- *   - 401 → 'permission denied' → '권한이 없어요…'
- *   - network → 'failed to fetch' → '네트워크 연결을 확인해 주세요.'
- *   - other  → generic 문제가 발생했어요.
+ * `.message` is already localized to Korean via localizeMessage() so every
+ * UI catch site can display it directly.
+ * `.rawMessage` preserves the original English / body text for logging.
+ *   - 401 → '권한이 없어요. 잠시 후 다시 시도해 주세요.'
+ *   - network → '네트워크 연결을 확인해 주세요.'
+ *   - other  → '문제가 발생했어요. 잠시 후 다시 시도해 주세요.'
  */
 export class ApiError extends Error {
+  public readonly rawMessage: string;
   constructor(
     public readonly status: number,
-    message: string,
+    rawText: string,
   ) {
-    super(message);
+    const localized = localizeMessage(rawText);
+    super(localized);
+    this.rawMessage = rawText;
     this.name = 'ApiError';
   }
 }

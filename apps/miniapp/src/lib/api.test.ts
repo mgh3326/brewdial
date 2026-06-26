@@ -139,22 +139,28 @@ describe('apiSend', () => {
 // ── Error handling ─────────────────────────────────────────────────────────────
 
 describe('error handling', () => {
-  it('throws ApiError on 500', async () => {
+  it('throws ApiError on 500 with localized Korean message', async () => {
     mockFetch(500, 'internal server error');
 
-    await expect(apiGet('/recipes')).rejects.toBeInstanceOf(ApiError);
-    await expect(apiGet('/recipes')).rejects.toMatchObject({ status: 500 });
+    const err = await apiGet('/recipes').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(500);
+    // message must be Korean fallback, not raw English
+    expect((err as ApiError).message).toBe('문제가 발생했어요. 잠시 후 다시 시도해 주세요.');
   });
 
-  it('throws ApiError on 401 with permission/login message', async () => {
+  it('throws ApiError on 401 with localized Korean permission message', async () => {
     mockFetch(401, 'unauthorized');
 
     const err = await apiGet('/me').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
-    // Message must match localizeMessage's 'permission' branch
-    expect((err as ApiError).message).toMatch(/permission/i);
+    // message is localized — must be the Korean permission string
+    expect((err as ApiError).message).toBe('권한이 없어요. 잠시 후 다시 시도해 주세요.');
+    // rawMessage preserves the original English for logging
+    expect((err as ApiError).rawMessage).toContain('permission');
   });
 
   it('throws ApiError on 404', async () => {

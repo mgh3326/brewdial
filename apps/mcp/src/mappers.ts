@@ -1,4 +1,4 @@
-// Map Supabase rows (snake_case, relational) to/from the @brewdial/shared
+// Map backend API rows (snake_case, relational) to/from the @brewdial/shared
 // document shapes (RecipeDoc / FeedbackDoc), so all shared logic — validation,
 // context summaries, feedback rules — reuses unchanged. (Mirrors the mini-app's
 // data/mappers.ts; MCP imports the shared package directly.)
@@ -7,9 +7,7 @@ import type {
   ActualBrewParams,
   BeanSnapshot,
   BrewMethod,
-  CreateFeedbackInput,
   DripperPortability,
-  CreateRecipeInput,
   FeedbackDoc,
   FeedbackRatings,
   FeedbackSource,
@@ -78,36 +76,6 @@ export function rowToRecipe(r: RecipeRow): RecipeDoc {
   return doc;
 }
 
-// CreateRecipeInput → recipes insert row. `code` is omitted so the DB sequence
-// assigns COF-NNNN. Defaults: created_by 'agent', status 'active'.
-export function recipeToInsertRow(input: CreateRecipeInput): Record<string, unknown> {
-  const lineage = input as CreateRecipeInput & {
-    status?: RecipeStatus;
-    supersedes?: string;
-    supersededBy?: string;
-    parentCode?: string;
-  };
-  const row: Record<string, unknown> = {
-    method: input.method,
-    title: input.title,
-    version: 1,
-    params: input.params ?? {},
-    steps: input.steps ?? [],
-    bean_id: input.beanId ?? null,
-    bean_snapshot: input.beanSnapshot ?? null,
-    intent: input.intent ?? null,
-    notes: input.notes ?? null,
-    adjustment_from_previous: input.adjustmentFromPrevious ?? null,
-    dripper_portability: input.dripperPortability ?? null,
-    created_by: input.createdBy ?? 'agent',
-    status: lineage.status ?? 'active',
-  };
-  if (lineage.supersedes != null) row.supersedes = lineage.supersedes;
-  if (lineage.supersededBy != null) row.superseded_by = lineage.supersededBy;
-  if (lineage.parentCode != null) row.parent_code = lineage.parentCode;
-  return row;
-}
-
 export interface FeedbackRow {
   id: string;
   recipe_code: string;
@@ -148,22 +116,3 @@ export function rowToFeedback(r: FeedbackRow): FeedbackDoc {
   return doc;
 }
 
-// CreateFeedbackInput → feedback insert row. Mirrors rawComment into the legacy
-// comment column so older readers stay compatible.
-export function feedbackToInsertRow(
-  input: CreateFeedbackInput,
-  beanId: string | null = null
-): Record<string, unknown> {
-  return {
-    recipe_code: input.recipeCode,
-    bean_id: beanId,
-    ratings: input.ratings && Object.keys(input.ratings).length > 0 ? input.ratings : null,
-    actual: input.actual ?? null,
-    comment: input.comment ?? input.rawComment ?? null,
-    raw_comment: input.rawComment ?? null,
-    quick_tags: input.quickTags && input.quickTags.length > 0 ? input.quickTags : null,
-    desired_direction: input.desiredDirection ?? null,
-    next_hint: input.nextHint ?? null,
-    source: input.source ?? 'coffee_profile',
-  };
-}

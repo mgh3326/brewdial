@@ -50,11 +50,13 @@ export async function findBeans(
 }
 
 // Recently-active beans (for browsing without a query).
+// Note: the backend /beans endpoint ignores `limit` on the no-?q branch,
+// so we don't send it here. Only findBeans (which uses ?q=) sends ?limit=.
 export async function listBeans(
   config: ApiConfig,
-  limit = 20,
+  _limit = 20,
   fetchImpl: typeof fetch = fetch
 ): Promise<BeanInfo[]> {
-  const rows = await getJson<BeanSummaryRow[]>(config, '/api/beans', `limit=${limit}`, fetchImpl);
+  const rows = await getJson<BeanSummaryRow[]>(config, '/api/beans', '', fetchImpl);
   return (Array.isArray(rows) ? rows : []).map(rowToBean);
 }

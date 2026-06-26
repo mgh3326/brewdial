@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   handleArchiveRecipe,
   handleCreateFeedback,
@@ -14,12 +14,23 @@ import {
 } from './tools.js';
 import type { ApiConfig } from './config.js';
 
-// Unreachable host: network calls fail fast (DNS), so handlers exercise their
-// error paths without a live backend.
+// Inject a mock fetchImpl that always rejects, so tests exercise error paths
+// without any real network I/O (no DNS lookups, no flakiness on CI).
 const mockConfig: ApiConfig = {
-  baseUrl: 'https://brewdial-mcp-test.invalid',
+  baseUrl: 'https://brewdial-mcp-test.example',
   agentToken: 'test-agent-token',
 };
+
+// Stub global fetch before each test so repo functions that fall back to the
+// global fetch also get the mock (handlers don't yet thread fetchImpl through,
+// so we mock at the boundary where network I/O would occur).
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network connection refused (mock)')));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('handleCreateRecipe', () => {
   it('returns validation details for invalid recipe input', async () => {
