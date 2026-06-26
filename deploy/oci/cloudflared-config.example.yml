@@ -1,0 +1,9 @@
+# ~/.cloudflared/config.yml on the OCI box (after `cloudflared tunnel create brewdial`)
+# Hides the OCI origin: cloudflared makes OUTBOUND connections to Cloudflare,
+# so NO inbound port (3020) needs opening in firewalld / the OCI security list.
+tunnel: <TUNNEL_ID>
+credentials-file: /home/opc/.cloudflared/<TUNNEL_ID>.json
+ingress:
+  - hostname: api.brewdial.<your-domain>
+    service: http://127.0.0.1:3020
+  - service: http_status:404
