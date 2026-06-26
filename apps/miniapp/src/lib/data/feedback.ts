@@ -2,16 +2,12 @@ import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '../domain';
 import { validateCreateFeedbackInput } from '../domain';
 import { supabase } from '../supabase';
 import { dbError } from '../labels';
+import { apiGet } from '../api';
 import { FEEDBACK_COLUMNS, rowToFeedback, type FeedbackRow } from './mappers';
 
 export async function listFeedbackByRecipe(code: RecipeCode): Promise<FeedbackDoc[]> {
-  const { data, error } = await supabase
-    .from('feedback')
-    .select(FEEDBACK_COLUMNS)
-    .eq('recipe_code', code)
-    .order('created_at', { ascending: false });
-  if (error) throw dbError('listFeedbackByRecipe', error.message);
-  return (data as FeedbackRow[]).map(rowToFeedback);
+  const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`);
+  return rows.map(rowToFeedback);
 }
 
 export async function createFeedback(input: CreateFeedbackInput): Promise<FeedbackDoc> {
