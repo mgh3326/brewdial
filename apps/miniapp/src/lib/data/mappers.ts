@@ -1,4 +1,4 @@
-// Map Supabase rows (snake_case, relational) back to the existing @brewdial/shared
+// Map API rows (snake_case, relational) back to the existing @brewdial/shared
 // document shapes (RecipeDoc / FeedbackDoc) so all shared logic — validation,
 // feedback-rules, context summaries, UI components — reuses unchanged.
 

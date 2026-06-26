@@ -4,7 +4,7 @@
 //   1. Runtime override via setApiBaseUrl() — Task 5 injects the .ait-resolved URL.
 //   2. import.meta.env.VITE_API_BASE_URL  — set at build / dev time.
 //   3. Placeholder ('https://placeholder.brewdial.invalid') — keeps the WebView alive
-//      at module load so we never black-screen on missing env (mirrors supabase.ts).
+//      at module load so we never black-screen on missing env.
 
 import type { Identity } from './identity';
 
