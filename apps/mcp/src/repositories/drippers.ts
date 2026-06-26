@@ -1,5 +1,5 @@
-import type { SupabaseConfig } from '../config.js';
-import { selectRows } from '../supabase.js';
+import type { ApiConfig } from '../config.js';
+import { getJson } from '../api.js';
 
 // Row from the shared dripper registry (ROB-612).
 interface DripperRow {
@@ -25,9 +25,6 @@ export interface DripperEntry {
   notes?: string;
 }
 
-const DRIPPER_COLUMNS =
-  'id,name,class,geometry,continuum_position,filter_type,recommended_dose_range,size_models,notes';
-
 function rowToEntry(r: DripperRow): DripperEntry {
   const d: DripperEntry = { name: r.name, class: r.class };
   if (r.geometry != null) d.geometry = r.geometry;
@@ -43,14 +40,9 @@ function rowToEntry(r: DripperRow): DripperEntry {
 // recommended dose / size models). The agent reads this to use EXACT registry names
 // in dripperPortability.origin and to reason about size/bed for large doses.
 export async function listDrippers(
-  config: SupabaseConfig,
+  config: ApiConfig,
   fetchImpl: typeof fetch = fetch
 ): Promise<DripperEntry[]> {
-  const rows = await selectRows<DripperRow>(
-    config,
-    'drippers',
-    `select=${DRIPPER_COLUMNS}&order=continuum_position`,
-    fetchImpl
-  );
-  return rows.map(rowToEntry);
+  const rows = await getJson<DripperRow[]>(config, '/api/drippers', '', fetchImpl);
+  return (Array.isArray(rows) ? rows : []).map(rowToEntry);
 }

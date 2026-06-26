@@ -315,7 +315,7 @@ const TOOLS: Tool[] = [
 
 async function main(): Promise<void> {
   const config = getMcpConfig();
-  const supabase = config.supabase;
+  const api = config.api;
 
   const server = new Server(
     { name: 'brewdial-mcp', version: '0.1.0' },
@@ -330,17 +330,17 @@ async function main(): Promise<void> {
     let result: ToolResult;
     try {
       switch (name) {
-        case 'brew.create_recipe': result = await handleCreateRecipe(supabase, a); break;
-        case 'brew.update_recipe': result = await handleUpdateRecipe(supabase, a); break;
-        case 'brew.archive_recipe': result = await handleArchiveRecipe(supabase, a); break;
-        case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
-        case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
-        case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
-        case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
-        case 'brew.list_drippers': result = await handleListDrippers(supabase, a); break;
-        case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
-        case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
-        case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;
+        case 'brew.create_recipe': result = await handleCreateRecipe(api, a); break;
+        case 'brew.update_recipe': result = await handleUpdateRecipe(api, a); break;
+        case 'brew.archive_recipe': result = await handleArchiveRecipe(api, a); break;
+        case 'brew.supersede_recipe': result = await handleSupersedeRecipe(api, a); break;
+        case 'brew.find_bean': result = await handleFindBean(api, a); break;
+        case 'brew.list_beans': result = await handleListBeans(api, a); break;
+        case 'brew.list_grinders': result = await handleListGrinders(api, a); break;
+        case 'brew.list_drippers': result = await handleListDrippers(api, a); break;
+        case 'brew.get_recent_context': result = await handleGetRecentContext(api, a); break;
+        case 'brew.get_recipe_context': result = await handleGetRecipeContext(api, a); break;
+        case 'brew.create_feedback': result = await handleCreateFeedback(api, a); break;
         default:
           result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
@@ -355,7 +355,7 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('BrewDial MCP server running on stdio (Supabase)');
+  console.error('BrewDial MCP server running on stdio (agent API)');
 }
 
 main().catch(async (error) => {

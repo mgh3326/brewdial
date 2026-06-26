@@ -8,62 +8,60 @@ import type {
   RecipeStatus,
   RecipeStep,
 } from '@brewdial/shared';
-import type { SupabaseConfig } from '../config.js';
-import { insertRow, selectRows, updateRows } from '../supabase.js';
-import { RECIPE_COLUMNS, recipeToInsertRow, rowToRecipe, type RecipeRow } from '../mappers.js';
+import type { ApiConfig } from '../config.js';
+import { getJson, postJson, patchJson } from '../api.js';
+import { rowToRecipe, type RecipeRow } from '../mappers.js';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-function eqCode(code: string): string {
-  return `code=eq.${encodeURIComponent(code)}`;
-}
-
 export async function createRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   input: CreateRecipeInput,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc> {
-  // code is assigned by the Postgres sequence (recipe_code_seq) on insert.
-  const row = await insertRow<RecipeRow>(
-    config,
-    'recipes',
-    recipeToInsertRow(input),
-    RECIPE_COLUMNS,
-    fetchImpl
-  );
+  // Agent route accepts camelCase CreateRecipeInput directly (validated server-side).
+  const body: Record<string, unknown> = {
+    method: input.method,
+    title: input.title,
+  };
+  if (input.beanId !== undefined) body.beanId = input.beanId;
+  if (input.beanSnapshot !== undefined) body.beanSnapshot = input.beanSnapshot;
+  if (input.params !== undefined) body.params = input.params;
+  if (input.steps !== undefined) body.steps = input.steps;
+  if (input.intent !== undefined) body.intent = input.intent;
+  if (input.notes !== undefined) body.notes = input.notes;
+  if (input.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = input.adjustmentFromPrevious;
+  if (input.dripperPortability !== undefined) body.dripperPortability = input.dripperPortability;
+  const row = await postJson<RecipeRow>(config, '/api/agent/recipes', body, fetchImpl);
   return rowToRecipe(row);
 }
 
 export async function getRecipeByCode(
-  config: SupabaseConfig,
+  config: ApiConfig,
   code: RecipeCode,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc | null> {
-  // MCP is agent-facing: return a recipe of ANY status (so the agent can read,
-  // edit, archive, or supersede it). The mini-app applies its own status filter.
-  const rows = await selectRows<RecipeRow>(
-    config,
-    'recipes',
-    `${eqCode(code)}&select=${RECIPE_COLUMNS}&limit=1`,
-    fetchImpl
-  );
-  return rows[0] ? rowToRecipe(rows[0]) : null;
+  // MCP is agent-facing: GET /api/agent/recipes/:code returns any-status recipe.
+  try {
+    const row = await getJson<RecipeRow>(config, `/api/agent/recipes/${encodeURIComponent(code)}`, '', fetchImpl);
+    return rowToRecipe(row);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function listRecentRecipes(
-  config: SupabaseConfig,
+  config: ApiConfig,
   limit: number = DEFAULT_LIMIT,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc[]> {
   const safe = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit) || DEFAULT_LIMIT));
-  const rows = await selectRows<RecipeRow>(
-    config,
-    'recipes',
-    `status=eq.active&select=${RECIPE_COLUMNS}&order=created_at.desc&limit=${safe}`,
-    fetchImpl
-  );
-  return rows.map(rowToRecipe);
+  const rows = await getJson<RecipeRow[]>(config, '/api/recipes', `limit=${safe}`, fetchImpl);
+  return (Array.isArray(rows) ? rows : []).map(rowToRecipe);
 }
 
 // ── ROB-605: edit ────────────────────────────────────────────────────────────
@@ -79,67 +77,72 @@ export interface RecipeUpdate {
 }
 
 export async function updateRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   code: RecipeCode,
   patch: RecipeUpdate,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc | null> {
-  const current = await getRecipeByCode(config, code, fetchImpl);
-  if (!current) return null;
+  const body: Record<string, unknown> = {};
+  if (patch.title !== undefined) body.title = patch.title;
+  if (patch.params !== undefined) body.params = patch.params;
+  if (patch.steps !== undefined) body.steps = patch.steps;
+  if (patch.notes !== undefined) body.notes = patch.notes;
+  if (patch.intent !== undefined) body.intent = patch.intent;
+  if (patch.beanSnapshot !== undefined) body.beanSnapshot = patch.beanSnapshot;
+  if (patch.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = patch.adjustmentFromPrevious;
+  if (patch.dripperPortability !== undefined) body.dripperPortability = patch.dripperPortability;
 
-  const row: Record<string, unknown> = { version: (current.version ?? 1) + 1 };
-  if (patch.title !== undefined) row.title = patch.title;
-  if (patch.params !== undefined) row.params = patch.params;
-  if (patch.steps !== undefined) row.steps = patch.steps;
-  if (patch.notes !== undefined) row.notes = patch.notes;
-  if (patch.intent !== undefined) row.intent = patch.intent;
-  if (patch.beanSnapshot !== undefined) row.bean_snapshot = patch.beanSnapshot;
-  if (patch.adjustmentFromPrevious !== undefined) {
-    row.adjustment_from_previous = patch.adjustmentFromPrevious;
+  try {
+    const row = await patchJson<RecipeRow>(config, `/api/agent/recipes/${encodeURIComponent(code)}`, body, fetchImpl);
+    return rowToRecipe(row);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+      return null;
+    }
+    throw err;
   }
-  if (patch.dripperPortability !== undefined) row.dripper_portability = patch.dripperPortability;
-
-  const rows = await updateRows<RecipeRow>(config, 'recipes', eqCode(code), row, RECIPE_COLUMNS, fetchImpl);
-  return rows[0] ? rowToRecipe(rows[0]) : null;
 }
 
 // ── ROB-605: soft-delete (archive) ───────────────────────────────────────────
 export async function setRecipeStatus(
-  config: SupabaseConfig,
+  config: ApiConfig,
   code: RecipeCode,
   status: RecipeStatus,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc | null> {
-  const rows = await updateRows<RecipeRow>(config, 'recipes', eqCode(code), { status }, RECIPE_COLUMNS, fetchImpl);
-  return rows[0] ? rowToRecipe(rows[0]) : null;
+  try {
+    const row = await patchJson<RecipeRow>(
+      config,
+      `/api/agent/recipes/${encodeURIComponent(code)}/status`,
+      { status },
+      fetchImpl
+    );
+    return rowToRecipe(row);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 // ── ROB-609: supersede old recipe by a new one (lineage) ─────────────────────
 export async function supersedeRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   oldCode: RecipeCode,
   newCode: RecipeCode,
   fetchImpl: typeof fetch = fetch
 ): Promise<{ old: RecipeDoc | null; replacement: RecipeDoc | null }> {
-  const oldRows = await updateRows<RecipeRow>(
+  // POST /api/agent/recipes/supersede returns { old: RecipeRow, replacement: RecipeRow }
+  const result = await postJson<{ old: RecipeRow | null; replacement: RecipeRow | null }>(
     config,
-    'recipes',
-    eqCode(oldCode),
-    { status: 'superseded', superseded_by: newCode },
-    RECIPE_COLUMNS,
-    fetchImpl
-  );
-  const newRows = await updateRows<RecipeRow>(
-    config,
-    'recipes',
-    eqCode(newCode),
-    { supersedes: oldCode },
-    RECIPE_COLUMNS,
+    '/api/agent/recipes/supersede',
+    { oldCode, newCode },
     fetchImpl
   );
   return {
-    old: oldRows[0] ? rowToRecipe(oldRows[0]) : null,
-    replacement: newRows[0] ? rowToRecipe(newRows[0]) : null,
+    old: result.old ? rowToRecipe(result.old) : null,
+    replacement: result.replacement ? rowToRecipe(result.replacement) : null,
   };
 }
 
@@ -178,7 +181,7 @@ export function isSimilarRecipe(existing: RecipeDoc, input: CreateRecipeInput): 
 }
 
 export async function findSimilarRecipes(
-  config: SupabaseConfig,
+  config: ApiConfig,
   input: CreateRecipeInput,
   fetchImpl: typeof fetch = fetch
 ): Promise<RecipeDoc[]> {

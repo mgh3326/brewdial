@@ -12,13 +12,13 @@ import {
   handleSupersedeRecipe,
   handleUpdateRecipe
 } from './tools.js';
-import type { SupabaseConfig } from './config.js';
+import type { ApiConfig } from './config.js';
 
 // Unreachable host: network calls fail fast (DNS), so handlers exercise their
-// error paths without a live Supabase.
-const mockConfig: SupabaseConfig = {
-  url: 'https://brewdial-mcp-test.invalid',
-  serviceRoleKey: 'test-service-role-key'
+// error paths without a live backend.
+const mockConfig: ApiConfig = {
+  baseUrl: 'https://brewdial-mcp-test.invalid',
+  agentToken: 'test-agent-token',
 };
 
 describe('handleCreateRecipe', () => {
@@ -28,7 +28,7 @@ describe('handleCreateRecipe', () => {
     expect(result.content[0].text).toContain('method must be one of');
   });
 
-  it('errors when Supabase is unreachable but input is valid', async () => {
+  it('errors when API is unreachable but input is valid', async () => {
     const result = await handleCreateRecipe(mockConfig, { method: 'v60', title: 'Unreachable test recipe' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error creating recipe');
@@ -84,7 +84,7 @@ describe('handleFindBean', () => {
     expect(r.content[0].text).toContain('query');
   });
 
-  it('errors when Supabase is unreachable but query is valid', async () => {
+  it('errors when API is unreachable but query is valid', async () => {
     const r = await handleFindBean(mockConfig, { query: '브릴리' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error finding beans');
@@ -92,7 +92,7 @@ describe('handleFindBean', () => {
 });
 
 describe('handleListBeans', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListBeans(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing beans');
@@ -100,7 +100,7 @@ describe('handleListBeans', () => {
 });
 
 describe('handleListGrinders', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListGrinders(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing grinders');
@@ -108,7 +108,7 @@ describe('handleListGrinders', () => {
 });
 
 describe('handleListDrippers', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListDrippers(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing drippers');
@@ -139,7 +139,7 @@ describe('handleCreateFeedback', () => {
     expect(r.content[0].text).toContain('at least one');
   });
 
-  it('errors when Supabase is unreachable but input is valid', async () => {
+  it('errors when API is unreachable but input is valid', async () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '오늘은 산미가 강했음' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error creating feedback');

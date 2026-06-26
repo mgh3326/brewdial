@@ -1,5 +1,5 @@
-import type { SupabaseConfig } from '../config.js';
-import { selectRows } from '../supabase.js';
+import type { ApiConfig } from '../config.js';
+import { getJson } from '../api.js';
 
 // Row from the shared grinder registry (ROB-611).
 interface GrinderRow {
@@ -20,14 +20,11 @@ export interface GrinderEntry {
   notes?: string;
 }
 
-const GRINDER_COLUMNS =
-  'id,name,um_per_click_est,um_per_click_source,stepless,brew_method_ranges,notes';
-
 function rowToEntry(r: GrinderRow): GrinderEntry {
   const g: GrinderEntry = {
     name: r.name,
     stepless: r.stepless ?? false,
-    brewMethodRanges: r.brew_method_ranges ?? {}
+    brewMethodRanges: r.brew_method_ranges ?? {},
   };
   if (r.um_per_click_est != null) g.umPerClickEst = r.um_per_click_est;
   if (r.notes != null) g.notes = r.notes;
@@ -38,14 +35,9 @@ function rowToEntry(r: GrinderRow): GrinderEntry {
 // reads this to (a) use the EXACT registry name in params.grind.perGrinder so the
 // mini-app's read-time conversion matches, and (b) sanity-check click bands.
 export async function listGrinders(
-  config: SupabaseConfig,
+  config: ApiConfig,
   fetchImpl: typeof fetch = fetch
 ): Promise<GrinderEntry[]> {
-  const rows = await selectRows<GrinderRow>(
-    config,
-    'grinders',
-    `select=${GRINDER_COLUMNS}&order=name`,
-    fetchImpl
-  );
-  return rows.map(rowToEntry);
+  const rows = await getJson<GrinderRow[]>(config, '/api/grinders', '', fetchImpl);
+  return (Array.isArray(rows) ? rows : []).map(rowToEntry);
 }
