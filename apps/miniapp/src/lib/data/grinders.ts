@@ -1,8 +1,7 @@
 // ROB-611: read the shared grinder registry (public-read table) into GrinderInfo
 // for the conversion helper (suggestGrinderClicks).
 
-import { supabase } from '../supabase';
-import { dbError } from '../labels';
+import { apiGet } from '../api';
 import type { GrinderInfo } from '../domain';
 
 interface GrinderRow {
@@ -15,9 +14,6 @@ interface GrinderRow {
   brew_method_ranges: Record<string, { from: number; to: number }> | null;
   notes: string | null;
 }
-
-const GRINDER_COLUMNS =
-  'id,name,um_per_click_est,um_per_click_source,zero_ref,stepless,brew_method_ranges,notes';
 
 function rowToGrinder(r: GrinderRow): GrinderInfo {
   const g: GrinderInfo = {
@@ -40,7 +36,6 @@ function rowToGrinder(r: GrinderRow): GrinderInfo {
 }
 
 export async function listGrinders(): Promise<GrinderInfo[]> {
-  const { data, error } = await supabase.from('grinders').select(GRINDER_COLUMNS).order('name');
-  if (error) throw dbError('listGrinders', error.message);
-  return (data as GrinderRow[]).map(rowToGrinder);
+  const rows = await apiGet<GrinderRow[]>('/grinders');
+  return rows.map(rowToGrinder);
 }

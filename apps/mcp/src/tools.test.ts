@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   handleArchiveRecipe,
   handleCreateFeedback,
@@ -12,14 +12,25 @@ import {
   handleSupersedeRecipe,
   handleUpdateRecipe
 } from './tools.js';
-import type { SupabaseConfig } from './config.js';
+import type { ApiConfig } from './config.js';
 
-// Unreachable host: network calls fail fast (DNS), so handlers exercise their
-// error paths without a live Supabase.
-const mockConfig: SupabaseConfig = {
-  url: 'https://brewdial-mcp-test.invalid',
-  serviceRoleKey: 'test-service-role-key'
+// Inject a mock fetchImpl that always rejects, so tests exercise error paths
+// without any real network I/O (no DNS lookups, no flakiness on CI).
+const mockConfig: ApiConfig = {
+  baseUrl: 'https://brewdial-mcp-test.example',
+  agentToken: 'test-agent-token',
 };
+
+// Stub global fetch before each test so repo functions that fall back to the
+// global fetch also get the mock (handlers don't yet thread fetchImpl through,
+// so we mock at the boundary where network I/O would occur).
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network connection refused (mock)')));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('handleCreateRecipe', () => {
   it('returns validation details for invalid recipe input', async () => {
@@ -28,7 +39,7 @@ describe('handleCreateRecipe', () => {
     expect(result.content[0].text).toContain('method must be one of');
   });
 
-  it('errors when Supabase is unreachable but input is valid', async () => {
+  it('errors when API is unreachable but input is valid', async () => {
     const result = await handleCreateRecipe(mockConfig, { method: 'v60', title: 'Unreachable test recipe' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error creating recipe');
@@ -84,7 +95,7 @@ describe('handleFindBean', () => {
     expect(r.content[0].text).toContain('query');
   });
 
-  it('errors when Supabase is unreachable but query is valid', async () => {
+  it('errors when API is unreachable but query is valid', async () => {
     const r = await handleFindBean(mockConfig, { query: '브릴리' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error finding beans');
@@ -92,7 +103,7 @@ describe('handleFindBean', () => {
 });
 
 describe('handleListBeans', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListBeans(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing beans');
@@ -100,7 +111,7 @@ describe('handleListBeans', () => {
 });
 
 describe('handleListGrinders', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListGrinders(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing grinders');
@@ -108,7 +119,7 @@ describe('handleListGrinders', () => {
 });
 
 describe('handleListDrippers', () => {
-  it('errors when Supabase is unreachable', async () => {
+  it('errors when API is unreachable', async () => {
     const r = await handleListDrippers(mockConfig, {});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error listing drippers');
@@ -116,7 +127,7 @@ describe('handleListDrippers', () => {
 });
 
 describe('handleGetRecentContext', () => {
-  it('returns error when Supabase is unreachable', async () => {
+  it('returns error when backend is unreachable', async () => {
     const result = await handleGetRecentContext(mockConfig, {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error');
@@ -139,7 +150,7 @@ describe('handleCreateFeedback', () => {
     expect(r.content[0].text).toContain('at least one');
   });
 
-  it('errors when Supabase is unreachable but input is valid', async () => {
+  it('errors when API is unreachable but input is valid', async () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '오늘은 산미가 강했음' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error creating feedback');

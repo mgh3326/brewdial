@@ -158,7 +158,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial (Supabase). It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid. GRIND (ROB-611): prefer a STRUCTURED params.grind object over free text — { target: { brewMethodPosition e.g. "v60 medium-fine", targetDrawdownSec }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }. target MUST carry brewMethodPosition OR targetDrawdownSec (microns is advisory only). Put the operator’s MEASURED grinder+clicks in perGrinder; first call brew.list_grinders and use the EXACT registry name so the app can convert clicks to other grinders at read time. Keep the original wording in legacyText. A plain string grind is still accepted for legacy/quick entry. DRIPPER (ROB-612): for portability across drippers, set top-level dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } } — the app derives per-dripper size match + grind/pour DIRECTION + the 40g bed-overflow warning at read time. Call brew.list_drippers and use the EXACT registry name in origin.dripper. params.doseG drives the bed check, so set it (especially for 40g+ large doses).',
+      'Persist a newly generated coffee recipe to BrewDial. It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid. GRIND (ROB-611): prefer a STRUCTURED params.grind object over free text — { target: { brewMethodPosition e.g. "v60 medium-fine", targetDrawdownSec }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }. target MUST carry brewMethodPosition OR targetDrawdownSec (microns is advisory only). Put the operator’s MEASURED grinder+clicks in perGrinder; first call brew.list_grinders and use the EXACT registry name so the app can convert clicks to other grinders at read time. Keep the original wording in legacyText. A plain string grind is still accepted for legacy/quick entry. DRIPPER (ROB-612): for portability across drippers, set top-level dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } } — the app derives per-dripper size match + grind/pour DIRECTION + the 40g bed-overflow warning at read time. Call brew.list_drippers and use the EXACT registry name in origin.dripper. params.doseG drives the bed check, so set it (especially for 40g+ large doses).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -315,7 +315,7 @@ const TOOLS: Tool[] = [
 
 async function main(): Promise<void> {
   const config = getMcpConfig();
-  const supabase = config.supabase;
+  const api = config.api;
 
   const server = new Server(
     { name: 'brewdial-mcp', version: '0.1.0' },
@@ -330,17 +330,17 @@ async function main(): Promise<void> {
     let result: ToolResult;
     try {
       switch (name) {
-        case 'brew.create_recipe': result = await handleCreateRecipe(supabase, a); break;
-        case 'brew.update_recipe': result = await handleUpdateRecipe(supabase, a); break;
-        case 'brew.archive_recipe': result = await handleArchiveRecipe(supabase, a); break;
-        case 'brew.supersede_recipe': result = await handleSupersedeRecipe(supabase, a); break;
-        case 'brew.find_bean': result = await handleFindBean(supabase, a); break;
-        case 'brew.list_beans': result = await handleListBeans(supabase, a); break;
-        case 'brew.list_grinders': result = await handleListGrinders(supabase, a); break;
-        case 'brew.list_drippers': result = await handleListDrippers(supabase, a); break;
-        case 'brew.get_recent_context': result = await handleGetRecentContext(supabase, a); break;
-        case 'brew.get_recipe_context': result = await handleGetRecipeContext(supabase, a); break;
-        case 'brew.create_feedback': result = await handleCreateFeedback(supabase, a); break;
+        case 'brew.create_recipe': result = await handleCreateRecipe(api, a); break;
+        case 'brew.update_recipe': result = await handleUpdateRecipe(api, a); break;
+        case 'brew.archive_recipe': result = await handleArchiveRecipe(api, a); break;
+        case 'brew.supersede_recipe': result = await handleSupersedeRecipe(api, a); break;
+        case 'brew.find_bean': result = await handleFindBean(api, a); break;
+        case 'brew.list_beans': result = await handleListBeans(api, a); break;
+        case 'brew.list_grinders': result = await handleListGrinders(api, a); break;
+        case 'brew.list_drippers': result = await handleListDrippers(api, a); break;
+        case 'brew.get_recent_context': result = await handleGetRecentContext(api, a); break;
+        case 'brew.get_recipe_context': result = await handleGetRecipeContext(api, a); break;
+        case 'brew.create_feedback': result = await handleCreateFeedback(api, a); break;
         default:
           result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
@@ -355,7 +355,7 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('BrewDial MCP server running on stdio (Supabase)');
+  console.error('BrewDial MCP server running on stdio (agent API)');
 }
 
 main().catch(async (error) => {

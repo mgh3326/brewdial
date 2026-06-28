@@ -4,16 +4,16 @@ import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
-  // Fail a production build when Supabase env is missing, so we never ship an app
-  // where every data call hits a placeholder host. Accept env from a repo-root
-  // .env file (local) OR process env (web hosts inject build vars there; Vite
-  // inlines VITE_* from process env natively, so only the guard needs the fallback).
+  // Fail a production build when VITE_API_BASE_URL is missing, so we never ship
+  // an app where every data call hits the placeholder host. Accept env from a
+  // repo-root .env file (local) OR process env (CI/CD injects build vars there;
+  // Vite inlines VITE_* from process.env natively, so only the guard needs the
+  // fallback lookup).
   const fileEnv = loadEnv(mode, '../../', 'VITE_');
-  const url = fileEnv.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = fileEnv.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (command === 'build' && (!url || !key)) {
+  const apiBase = fileEnv.VITE_API_BASE_URL || process.env.VITE_API_BASE_URL;
+  if (command === 'build' && !apiBase) {
     throw new Error(
-      '[brewdial] Production build requires VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (repo-root .env locally, or host env vars when deploying to the web).'
+      '[brewdial] Production build requires VITE_API_BASE_URL (repo-root .env locally, or host env vars when deploying).'
     );
   }
 

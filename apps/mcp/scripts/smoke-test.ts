@@ -17,8 +17,8 @@ async function smokeTest(): Promise<void> {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      SUPABASE_URL: 'https://brewdial-smoke.invalid',
-      SUPABASE_SERVICE_ROLE_KEY: 'smoke-test-key'
+      API_BASE_URL: 'https://brewdial-mcp-test.invalid',
+      AGENT_TOKEN: 'smoke-test-token'
     }
   });
 
@@ -46,8 +46,8 @@ async function smokeTest(): Promise<void> {
       args: [serverPath],
       env: {
         ...process.env,
-        SUPABASE_URL: 'https://brewdial-smoke.invalid',
-        SUPABASE_SERVICE_ROLE_KEY: 'smoke-test-key'
+        API_BASE_URL: 'https://brewdial-mcp-test.invalid',
+        AGENT_TOKEN: 'smoke-test-token'
       }
     });
 
@@ -92,7 +92,7 @@ async function smokeTest(): Promise<void> {
       throw new Error('Expected error for invalid create_recipe input');
     }
 
-    console.log('\n3. Testing brew.get_recent_context (expecting Supabase error)...');
+    console.log('\n3. Testing brew.get_recent_context (expecting backend API error)...');
     const recentResult = await client.callTool({
       name: 'brew.get_recent_context',
       arguments: { limit: 3 }
@@ -122,8 +122,8 @@ async function smokeTest(): Promise<void> {
     await client.close();
 
     console.log('\n✅ All smoke tests passed!');
-    console.log('\nNote: Errors related to Supabase connection are expected');
-    console.log('since the smoke test runs without a reachable Supabase instance.');
+    console.log('\nNote: Errors related to backend API connection are expected');
+    console.log('since the smoke test runs without a reachable backend API instance.');
 
   } catch (error) {
     console.error('\n❌ Smoke test failed:', error);

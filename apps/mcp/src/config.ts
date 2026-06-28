@@ -1,14 +1,14 @@
-// BrewDial MCP now writes to the SAME Supabase database the App-in-Toss mini-app
-// reads. It uses the SERVICE ROLE key (server-side only) so it can create
-// agent-attributed recipes and manage status/lineage (RLS is bypassed).
+// BrewDial MCP server configuration.
+// Connects to the OCI backend's agent surface via HTTP Bearer auth.
+// Required env vars: API_BASE_URL, AGENT_TOKEN.
 
-export interface SupabaseConfig {
-  url: string; // e.g. https://xxxx.supabase.co  (no /rest/v1 suffix)
-  serviceRoleKey: string;
+export interface ApiConfig {
+  baseUrl: string; // e.g. https://api.brewdial.robinco.dev
+  agentToken: string;
 }
 
 export interface BrewDialMcpConfig {
-  supabase: SupabaseConfig;
+  api: ApiConfig;
 }
 
 function trimTrailingSlash(value: string): string {
@@ -24,13 +24,13 @@ function nonEmpty(value: string | undefined): string | undefined {
 export function getMcpConfig(
   env: Record<string, string | undefined> = process.env
 ): BrewDialMcpConfig {
-  const url = nonEmpty(env.SUPABASE_URL) ?? nonEmpty(env.VITE_SUPABASE_URL);
-  const serviceRoleKey = nonEmpty(env.SUPABASE_SERVICE_ROLE_KEY);
-  if (!url) {
-    throw new Error('Missing SUPABASE_URL (or VITE_SUPABASE_URL) for the BrewDial MCP server');
+  const baseUrl = nonEmpty(env.API_BASE_URL);
+  const agentToken = nonEmpty(env.AGENT_TOKEN);
+  if (!baseUrl) {
+    throw new Error('Missing API_BASE_URL for the BrewDial MCP server');
   }
-  if (!serviceRoleKey) {
-    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY for the BrewDial MCP server');
+  if (!agentToken) {
+    throw new Error('Missing AGENT_TOKEN for the BrewDial MCP server');
   }
-  return { supabase: { url: trimTrailingSlash(url), serviceRoleKey } };
+  return { api: { baseUrl: trimTrailingSlash(baseUrl), agentToken } };
 }

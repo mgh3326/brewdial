@@ -1,5 +1,4 @@
-import { supabase } from '../supabase';
-import { dbError } from '../labels';
+import { apiGet, apiGetOrNull } from '../api';
 
 // Row from the `bean_summaries` view (bean + active-recipe rollup).
 interface BeanSummaryRow {
@@ -28,9 +27,6 @@ export interface BeanSummary {
   hasAi: boolean;
 }
 
-const BEAN_COLUMNS =
-  'id,name,roaster,origin,process,roast_level,notes,recipe_count,latest_recipe_at,has_ai';
-
 function rowToBean(r: BeanSummaryRow): BeanSummary {
   const b: BeanSummary = {
     id: r.id,
@@ -49,21 +45,11 @@ function rowToBean(r: BeanSummaryRow): BeanSummary {
 
 // Beans that have at least one active recipe, most-recent activity first.
 export async function listBeans(): Promise<BeanSummary[]> {
-  const { data, error } = await supabase
-    .from('bean_summaries')
-    .select(BEAN_COLUMNS)
-    .gt('recipe_count', 0)
-    .order('latest_recipe_at', { ascending: false });
-  if (error) throw dbError('listBeans', error.message);
-  return (data as BeanSummaryRow[]).map(rowToBean);
+  const rows = await apiGet<BeanSummaryRow[]>('/beans');
+  return rows.map(rowToBean);
 }
 
 export async function getBean(id: string): Promise<BeanSummary | null> {
-  const { data, error } = await supabase
-    .from('bean_summaries')
-    .select(BEAN_COLUMNS)
-    .eq('id', id)
-    .maybeSingle();
-  if (error) throw dbError('getBean', error.message);
-  return data ? rowToBean(data as BeanSummaryRow) : null;
+  const row = await apiGetOrNull<BeanSummaryRow>(`/beans/${encodeURIComponent(id)}`);
+  return row ? rowToBean(row) : null;
 }

@@ -5,7 +5,7 @@ import {
   validateCreateRecipeInput,
   validateUpdateRecipeInput
 } from '@brewdial/shared';
-import type { SupabaseConfig } from './config.js';
+import type { ApiConfig } from './config.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
 import { createFeedback } from './repositories/feedback.js';
 import {
@@ -38,7 +38,7 @@ function errorResult(text: string): ToolResult {
 }
 
 export async function handleCreateRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const validation = validateCreateRecipeInput({ ...(args ?? {}), createdBy: 'agent' });
@@ -75,7 +75,7 @@ export async function handleCreateRecipe(
 }
 
 export async function handleUpdateRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const code = args?.code;
@@ -113,7 +113,7 @@ export async function handleUpdateRecipe(
 }
 
 export async function handleArchiveRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const code = args?.code;
@@ -134,7 +134,7 @@ export async function handleArchiveRecipe(
 }
 
 export async function handleSupersedeRecipe(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const oldCode = args?.oldCode;
@@ -160,7 +160,7 @@ export async function handleSupersedeRecipe(
 }
 
 export async function handleFindBean(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const query = typeof args?.query === 'string' ? args.query.trim() : '';
@@ -175,7 +175,7 @@ export async function handleFindBean(
 }
 
 export async function handleListBeans(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const limit = typeof args?.limit === 'number' ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 20;
@@ -188,7 +188,7 @@ export async function handleListBeans(
 }
 
 export async function handleListGrinders(
-  config: SupabaseConfig,
+  config: ApiConfig,
   _args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   try {
@@ -200,7 +200,7 @@ export async function handleListGrinders(
 }
 
 export async function handleListDrippers(
-  config: SupabaseConfig,
+  config: ApiConfig,
   _args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   try {
@@ -212,7 +212,7 @@ export async function handleListDrippers(
 }
 
 export async function handleCreateFeedback(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const validation = validateCreateFeedbackInput(args ?? {});
@@ -243,7 +243,7 @@ export async function handleCreateFeedback(
 }
 
 export async function handleGetRecentContext(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const rawLimit = args?.limit;
@@ -258,7 +258,7 @@ export async function handleGetRecentContext(
 }
 
 export async function handleGetRecipeContext(
-  config: SupabaseConfig,
+  config: ApiConfig,
   args: Record<string, unknown> | undefined
 ): Promise<ToolResult> {
   const code = args?.code;

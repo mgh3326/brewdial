@@ -1,6 +1,7 @@
 import type { PreferenceDoc } from '@brewdial/shared';
-import type { SupabaseConfig } from '../config.js';
-import { selectRows } from '../supabase.js';
+import type { ApiConfig } from '../config.js';
+import { getJson } from '../api.js';
+import { ApiError } from '../api.js';
 
 interface PreferenceRow {
   id: string;
@@ -12,16 +13,17 @@ interface PreferenceRow {
 }
 
 export async function getGlobalPreferences(
-  config: SupabaseConfig,
+  config: ApiConfig,
   fetchImpl: typeof fetch = fetch
 ): Promise<PreferenceDoc | null> {
-  const rows = await selectRows<PreferenceRow>(
-    config,
-    'preferences',
-    'id=eq.global&select=id,likes,dislikes,default_params,created_at,updated_at&limit=1',
-    fetchImpl
-  );
-  const r = rows[0];
+  // GET /api/agent/preferences/global — returns the singleton row or null.
+  let r: PreferenceRow | null;
+  try {
+    r = await getJson<PreferenceRow | null>(config, '/api/agent/preferences/global', '', fetchImpl);
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
   if (!r) return null;
   return {
     _id: 'preference:global',

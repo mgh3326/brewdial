@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { health } from './routes/health.js'
 import { recipes } from './routes/recipes.js'
 import { beans } from './routes/beans.js'
@@ -10,6 +11,18 @@ import { agentAuth } from './middleware/agent-auth.js'
 import { agentRouter } from './routes/agent.js'
 
 export const app = new Hono()
+
+// CORS — must be BEFORE identityMiddleware so OPTIONS preflight is handled without auth.
+// Header-auth only (X-BrewDial-Identity, Authorization: Bearer) — no cookies → '*' is safe.
+app.use(
+  '/api/*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-BrewDial-Identity'],
+    maxAge: 86400,
+  })
+)
 
 // Populate c.get('appUserId') for all /api routes — required before /me routes' requireIdentity guard.
 app.use('/api/*', identityMiddleware)
