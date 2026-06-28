@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { logger } from 'hono/logger'
 import { health } from './routes/health.js'
 import { recipes } from './routes/recipes.js'
 import { beans } from './routes/beans.js'
@@ -12,14 +13,28 @@ import { agentRouter } from './routes/agent.js'
 
 export const app = new Hono()
 
+// Request log (method, path, status, duration) → journald. No headers/body, so no secret leak.
+app.use('*', logger())
+
 // CORS — must be BEFORE identityMiddleware so OPTIONS preflight is handled without auth.
-// Header-auth only (X-BrewDial-Identity, Authorization: Bearer) — no cookies → '*' is safe.
+// The Toss mini-app WebView calls cross-origin with a SPECIFIC Origin and is strict:
+// `*` is rejected (it needs the exact origin echoed). Toss WebView origins are
+// https://<appName>.apps.tossmini.com (live) and https://<appName>.private-apps.tossmini.com
+// (console QR / pre-release test). appName = 'brewdial' (granite.config.ts). Plus the web hosts.
+// Ref: developers-apps-in-toss.toss.im/development/test/toss.html "통신이 되지 않는 경우 → CORS".
+const ALLOWED_ORIGINS = [
+  'https://brewdial.apps.tossmini.com', // Toss live
+  'https://brewdial.private-apps.tossmini.com', // Toss console QR / pre-release test
+  'https://coffee.robinco.dev', // web
+  'https://brewdial.robinco.dev', // web (alt host)
+]
 app.use(
   '/api/*',
   cors({
-    origin: '*',
+    origin: ALLOWED_ORIGINS,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-BrewDial-Identity'],
+    credentials: true,
     maxAge: 86400,
   })
 )
