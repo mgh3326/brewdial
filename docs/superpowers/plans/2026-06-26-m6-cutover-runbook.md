@@ -11,14 +11,14 @@ Supabase → OCI cutover. Backend (M2-M4) live; client/MCP swap built (PR #38, d
 
 ## Cutover sequence (gated — irreversible at decommission)
 
-Traffic is ~nil (personal app), so the gap risk is small; still, freeze to be safe.
+Traffic is ~nil (personal app), so the gap risk is small. Operator confirmed Supabase was not being written during cutover, so the formal write-freeze (step 1) was skipped.
 
-1. **(operator) Write-freeze Supabase** — Supabase SQL editor: `revoke insert, update, delete on all tables in schema public from anon, authenticated, service_role;` (reversible — re-grant to roll back). Stops any in-flight write (incl. old `.ait` clients) so nothing is lost after the final dump. Reads still work.
-2. **(me) Final loader re-run** → OCI now == Supabase's frozen state. Re-verify counts.
-3. **(me/operator) Web flip** — `pnpm web:build` with `VITE_API_BASE_URL=https://api.brewdial.robinco.dev` → `wrangler deploy` (needs CF auth). **Merge PR #38.** coffee.robinco.dev now uses OCI.
-4. **(operator) `.ait` resubmit** — rebuild the `.ait` (with `VITE_API_BASE_URL` / runtime base) + **resubmit through the Toss console** (⚠️ review + propagation lead time — the long pole). Until adopted, old `.ait` hits the frozen Supabase (reads OK, writes fail gracefully).
-5. **(operator) MCP env switch** — operator `.mcp.json`: set `API_BASE_URL=https://api.brewdial.robinco.dev` + `AGENT_TOKEN=<from /etc/brewdial/api.env>`, drop `SUPABASE_*`; rebuild MCP.
-6. **Bake** — keep Supabase read-only for the bake period (until `.ait` adoption + OCI backup confidence). Then **decommission** (irreversible).
+1. ~~Write-freeze Supabase~~ — **SKIPPED** (operator confirmed no active writes 2026-06-29). If needed later: Supabase SQL editor `revoke insert, update, delete on all tables in schema public from anon, authenticated, service_role;` (reversible).
+2. **Final loader re-run** — ✅ **DONE (2026-06-29)** — loader run against OCI; 14/14 tables match (`recipe_code_seq`=61); attribution + jsonb verified.
+3. **Web flip** — ✅ **DONE (2026-06-29)** — CF Workers Builds env set (`VITE_API_BASE_URL=https://api.brewdial.robinco.dev`, build cmd `web:build`); **PR #38 merged** (main `9e5332c`); CF production build succeeded + deployed. coffee.robinco.dev now uses OCI.
+4. **MCP env switch** — ✅ **DONE (2026-06-29)** — `~/work/brewdial` pulled to main `9e5332c`, MCP rebuilt; `~/work/brewdial/.env` given `API_BASE_URL` + `AGENT_TOKEN` (the `.mcp.json` sources that `.env`). Smoke-tested: MCP boots, `brew.get_recent_context` returns OCI data (COF codes). Token verified (agent read 200 w/ token, 401 w/o).
+5. **`.ait` resubmit** — ⬜ **OPERATOR (Toss console).** Built `apps/miniapp/brewdial.ait` (OCI baked), deploymentId `019f106d-6cd2-79ed-acd0-f736e4022e76`. Operator submits/releases via the Toss/apps-in-toss console (⚠️ review lead time — the long pole). Until adopted, old `.ait` hits Supabase (reads OK; writes fail gracefully).
+6. **Bake → decommission** — ⬜ keep Supabase live (read fallback) until `.ait` adoption + OCI backup confidence, then **decommission** (irreversible).
 
 ## Rollback
 - Web: redeploy the previous CF Worker revision (points back at Supabase) + re-grant Supabase writes.
