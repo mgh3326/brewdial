@@ -45,6 +45,18 @@ describe('apiGet', () => {
     expect(result).toEqual(recipes);
   });
 
+  it('normalizes a base URL with trailing whitespace/slash (no %20, no //)', async () => {
+    setApiBaseUrl('https://api.brewdial.robinco.dev/  ');
+    mockFetch(200, []);
+
+    await apiGet('/beans');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.brewdial.robinco.dev/beans',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   it('respects setApiBaseUrl override', async () => {
     const altBase = 'https://alt.brewdial.invalid';
     setApiBaseUrl(altBase);

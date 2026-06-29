@@ -13,16 +13,26 @@ import { localizeMessage } from './labels.js';
 
 let _baseUrl: string | null = null;
 
+/**
+ * Normalize a base URL: strip surrounding whitespace (env vars set in a
+ * dashboard often pick up a trailing space → `https://host /beans` →
+ * `host%20/beans` → "Failed to fetch") and drop any trailing slash so the
+ * `${base}${path}` join stays clean.
+ */
+function normalizeBase(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
 /** Override the base URL at runtime (used by Task 5 for .ait environment). */
 export function setApiBaseUrl(url: string): void {
-  _baseUrl = url;
+  _baseUrl = normalizeBase(url);
 }
 
 /** Returns the current base URL (runtime override → env var → placeholder). */
 export function getApiBaseUrl(): string {
   if (_baseUrl) return _baseUrl;
   const env = import.meta.env.VITE_API_BASE_URL as string | undefined;
-  if (env) return env;
+  if (env && env.trim()) return normalizeBase(env);
   console.warn('[brewdial] VITE_API_BASE_URL is not set; using placeholder base URL');
   return 'https://placeholder.brewdial.invalid';
 }
