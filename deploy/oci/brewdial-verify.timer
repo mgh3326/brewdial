@@ -1,0 +1,12 @@
+# /etc/systemd/system/brewdial-verify.timer
+# Weekly restore-verification, Mondays 04:10 UTC (after the daily backup).
+[Unit]
+Description=Weekly BrewDial restore-verification
+
+[Timer]
+OnCalendar=Mon *-*-* 04:10:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

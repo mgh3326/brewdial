@@ -26,5 +26,10 @@ ssh opc@<host> 'cd /opt/brewdial/packages/db && \
 
 ## Remaining (needs operator action)
 1. **Cloudflare Tunnel** (interactive — your CF account + domain): `cloudflared tunnel login` → `cloudflared tunnel create brewdial` → write `~/.cloudflared/config.yml` (see `cloudflared-config.example.yml`) → `cloudflared tunnel route dns brewdial api.brewdial.<domain>` → `sudo cloudflared service install && sudo systemctl enable --now cloudflared`.
-2. **Backups:** `pg_dump -Fc brewdial` cron → OCI Object Storage (needs OCI creds) + a **verified test restore** (this is the gate before decommissioning Supabase in M6).
+2. **Backups (ROB-630):** implemented as `backup.sh` + `brewdial-backup.{service,timer}`
+   (`pg_dump -Fc` + globals, retention 7 daily / 4 weekly) → box-local `/var/backups/brewdial`,
+   pulled off-box to a Mac (`deploy/mac/`), with a **verified-restore gate** `verify-restore.sh`
+   + `brewdial-verify.timer` (the gate before decommissioning Supabase). Off-box target is the
+   Mac (not OCI Object Storage) to stay within the free tier. Full procedure + DR steps:
+   `docs/superpowers/plans/2026-06-29-rob-630-backup-restore-runbook.md`.
 3. (Optional) Git-based deploy: add a GitHub **deploy key** on the box for `git pull` instead of rsync.
