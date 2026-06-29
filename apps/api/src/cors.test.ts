@@ -69,3 +69,28 @@ describe('CORS — disallowed origin', () => {
     )
   })
 })
+
+describe('routing — served at both /api/* and /* (client base omits /api)', () => {
+  test('GET /api/health → 200 (canonical prefix)', async () => {
+    const res = await app.request('/api/health')
+    expect(res.status).toBe(200)
+  })
+
+  test('GET /health → 200 (client base omits /api)', async () => {
+    const res = await app.request('/health')
+    expect(res.status).toBe(200)
+  })
+
+  test('OPTIONS /me/collections (no /api) from Toss origin → preflight 204, echoes origin', async () => {
+    const res = await app.request('/me/collections', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: TOSS_TEST_ORIGIN,
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'x-brewdial-identity',
+      },
+    })
+    expect([200, 204]).toContain(res.status)
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(TOSS_TEST_ORIGIN)
+  })
+})
