@@ -83,9 +83,33 @@ describe('createRecipe', () => {
     expect(body.title).toBe('New V60');
     // server sets created_by; client must NOT send it
     expect(body.created_by).toBeUndefined();
+    // Regression: absent optionals are OMITTED (backend rejects `null` as a type
+    // error), and no snake_case keys leak (validator reads camelCase).
+    expect(body.intent).toBeUndefined();
+    expect(body.notes).toBeUndefined();
+    expect('bean_id' in body).toBe(false);
+    expect('bean_snapshot' in body).toBe(false);
+    expect('adjustment_from_previous' in body).toBe(false);
     // maps to RecipeDoc
     expect(doc._id).toBe('recipe:COF-100');
     expect(doc.code).toBe('COF-100');
+  });
+
+  it('sends camelCase keys (beanId/intent/notes), never snake_case', async () => {
+    mockFetch(201, minimalRow);
+    const { createRecipe } = await import('./recipes');
+    await createRecipe({
+      method: 'v60',
+      title: 'X',
+      beanId: 'bean-1',
+      intent: ['balanced'],
+      notes: 'hi',
+    });
+    const body = JSON.parse(lastFetchCall().init.body as string);
+    expect(body.beanId).toBe('bean-1');
+    expect(body.intent).toEqual(['balanced']);
+    expect(body.notes).toBe('hi');
+    expect('bean_id' in body).toBe(false);
   });
 
   it('does NOT include X-BrewDial-Identity header (no identity required for POST /recipes)', async () => {

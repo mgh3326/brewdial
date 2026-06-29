@@ -30,17 +30,21 @@ export async function createRecipe(input: CreateRecipeInput): Promise<RecipeDoc>
   if (!result.ok) throw new Error(result.errors.join('; '));
   const r = result.value;
 
-  const body = {
+  // camelCase keys matching validateCreateRecipeInput; optional fields are OMITTED
+  // when absent (the backend validator treats `null` as a type error, only
+  // `undefined`/missing as optional).
+  const body: Record<string, unknown> = {
     method: r.method,
     title: r.title,
     params: r.params ?? {},
     steps: r.steps ?? [],
-    bean_id: r.beanId ?? null,
-    bean_snapshot: r.beanSnapshot ?? null,
-    intent: r.intent ?? null,
-    notes: r.notes ?? null,
-    adjustment_from_previous: r.adjustmentFromPrevious ?? null,
   };
+  if (r.beanId !== undefined) body.beanId = r.beanId;
+  if (r.beanSnapshot !== undefined) body.beanSnapshot = r.beanSnapshot;
+  if (r.intent !== undefined) body.intent = r.intent;
+  if (r.notes !== undefined) body.notes = r.notes;
+  if (r.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = r.adjustmentFromPrevious;
+  if (r.dripperPortability !== undefined) body.dripperPortability = r.dripperPortability;
 
   const row = await apiSend<RecipeRow>('POST', '/recipes', body);
   return rowToRecipe(row);
