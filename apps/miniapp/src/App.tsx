@@ -29,7 +29,14 @@ export default function App() {
   return (
     <div className="screen">
       <h2>없는 페이지</h2>
-      <a className="card" href="#/">
+      <a
+        className="card"
+        href="#/"
+        onClick={(e) => {
+          e.preventDefault();
+          location.replace('#/');
+        }}
+      >
         홈으로
       </a>
     </div>

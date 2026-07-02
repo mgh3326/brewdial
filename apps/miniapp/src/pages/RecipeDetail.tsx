@@ -308,7 +308,14 @@ export default function RecipeDetail({ code }: { code: string }) {
     return (
       <div className="screen">
         <div className="error-panel">{loadError ?? '레시피를 찾을 수 없어요.'}</div>
-        <a className="card" href="#/recipes">
+        <a
+          className="card"
+          href="#/recipes"
+          onClick={(e) => {
+            e.preventDefault();
+            location.replace('#/recipes');
+          }}
+        >
           레시피 목록으로
         </a>
       </div>
