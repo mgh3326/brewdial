@@ -2,6 +2,9 @@ import type { CreateFeedbackInput, CreateRecipeInput } from './api-types.js';
 import { isRecipeCode } from './schemas.js';
 import type {
   ActualBrewParams,
+  BeanAttributes,
+  BeanAttrsSource,
+  BeanFlavorCategory,
   BrewMethod,
   Confidence,
   DripperClass,
@@ -19,7 +22,7 @@ import type {
   RecipeParams,
   RecipeStep
 } from './types.js';
-import { QUICK_FEEDBACK_TAGS } from './types.js';
+import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, QUICK_FEEDBACK_TAGS } from './types.js';
 
 export type ValidationResult<T> =
   | { ok: true; value: T; warnings: string[] }
@@ -780,5 +783,89 @@ export function validateCreateFeedbackInput(
   if (nextHint !== undefined) value.nextHint = nextHint;
   if (source !== undefined) value.source = source;
 
+  return { ok: true, value, warnings: [] };
+}
+
+// ── ROB-654: bean attribute writes (agent PATCH + MCP tool). At least one field
+// required. The DB CHECK constraints are the backstop; this returns clean 400s.
+export function validateUpdateBeanAttributesInput(
+  input: unknown
+): ValidationResult<BeanAttributes> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const value: BeanAttributes = {};
+
+  if (input.roastLevelOrd !== undefined) {
+    if (!isInt(input.roastLevelOrd) || input.roastLevelOrd < 1 || input.roastLevelOrd > 5) {
+      errors.push('roastLevelOrd must be an integer 1-5');
+    } else value.roastLevelOrd = input.roastLevelOrd;
+  }
+  if (input.acidity !== undefined) {
+    if (!isInt(input.acidity) || input.acidity < 1 || input.acidity > 5) {
+      errors.push('acidity must be an integer 1-5');
+    } else value.acidity = input.acidity;
+  }
+  if (input.body !== undefined) {
+    if (!isInt(input.body) || input.body < 1 || input.body > 5) {
+      errors.push('body must be an integer 1-5');
+    } else value.body = input.body;
+  }
+  if (input.agtronMin !== undefined) {
+    if (!isInt(input.agtronMin) || input.agtronMin < 0 || input.agtronMin > 150) {
+      errors.push('agtronMin must be an integer 0-150');
+    } else value.agtronMin = input.agtronMin;
+  }
+  if (input.agtronMax !== undefined) {
+    if (!isInt(input.agtronMax) || input.agtronMax < 0 || input.agtronMax > 150) {
+      errors.push('agtronMax must be an integer 0-150');
+    } else value.agtronMax = input.agtronMax;
+  }
+  if (
+    value.agtronMin !== undefined &&
+    value.agtronMax !== undefined &&
+    value.agtronMax < value.agtronMin
+  ) {
+    errors.push('agtronMax must be >= agtronMin');
+  }
+  if (input.decaf !== undefined) {
+    if (typeof input.decaf !== 'boolean') errors.push('decaf must be a boolean');
+    else value.decaf = input.decaf;
+  }
+  if (input.flavorCategories !== undefined) {
+    if (!isStringArray(input.flavorCategories)) {
+      errors.push('flavorCategories must be a string array');
+    } else {
+      const allowed = new Set<string>(BEAN_FLAVOR_CATEGORIES);
+      const invalid = input.flavorCategories.filter((t) => !allowed.has(t));
+      if (invalid.length > 0) {
+        errors.push(
+          `flavorCategories contains unknown values: ${invalid.join(', ')} (allowed: ${BEAN_FLAVOR_CATEGORIES.join(', ')})`
+        );
+      } else {
+        value.flavorCategories = input.flavorCategories as BeanFlavorCategory[];
+      }
+    }
+  }
+  if (input.attrsSource !== undefined) {
+    if (
+      typeof input.attrsSource !== 'string' ||
+      !BEAN_ATTRS_SOURCES.includes(input.attrsSource as BeanAttrsSource)
+    ) {
+      errors.push(`attrsSource must be one of ${BEAN_ATTRS_SOURCES.join(', ')}`);
+    } else {
+      value.attrsSource = input.attrsSource as BeanAttrsSource;
+    }
+  }
+  const sourceUrl = pickString(input, 'sourceUrl', errors, 'input');
+  if (sourceUrl !== undefined && sourceUrl.length > 0) value.sourceUrl = sourceUrl;
+  const attrsNotes = pickString(input, 'attrsNotes', errors, 'input');
+  if (attrsNotes !== undefined && attrsNotes.length > 0) value.attrsNotes = attrsNotes;
+
+  if (errors.length === 0 && Object.keys(value).length === 0) {
+    errors.push('at least one bean attribute is required');
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value, warnings: [] };
 }

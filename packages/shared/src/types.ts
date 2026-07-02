@@ -20,6 +20,39 @@ export interface BeanSnapshot {
   notes?: string;
 }
 
+// ── ROB-654: structured bean attributes (agent-written; DB stores inputs only,
+// the taste profile / ranking / match reasons are computed at read time).
+// flavorCategories = SCA flavor wheel inner ring (9). LLM single-rubric scoring is
+// canonical for the 1..5 axes; roaster's own numbers live in attrsNotes as evidence.
+export const BEAN_FLAVOR_CATEGORIES = [
+  'fruity',
+  'floral',
+  'sweet',
+  'nutty_cocoa',
+  'spices',
+  'roasted',
+  'cereal',
+  'sour_fermented',
+  'green'
+] as const;
+export type BeanFlavorCategory = (typeof BEAN_FLAVOR_CATEGORIES)[number];
+
+export const BEAN_ATTRS_SOURCES = ['roaster_page', 'ai_extracted', 'manual'] as const;
+export type BeanAttrsSource = (typeof BEAN_ATTRS_SOURCES)[number];
+
+export interface BeanAttributes {
+  roastLevelOrd?: number; // 1 (light) .. 5 (dark)
+  agtronMin?: number;
+  agtronMax?: number;
+  acidity?: number; // 1 (low) .. 5 (high)
+  body?: number; // 1 (light) .. 5 (heavy)
+  decaf?: boolean;
+  flavorCategories?: BeanFlavorCategory[];
+  attrsSource?: BeanAttrsSource;
+  sourceUrl?: string;
+  attrsNotes?: string; // original roaster notation, verbatim (drift detection)
+}
+
 // ── ROB-611: grinder-portable grind. params.grind is string (legacy free text)
 // | GrindSpec (structured). Absolute clicks/microns are unreliable across grinders;
 // the robust anchors are brew-method position + target drawdown time.

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference } from '@brewdial/db'
-import { validateCreateRecipeInput } from '@brewdial/shared'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, updateBeanAttributes } from '@brewdial/db'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -76,6 +76,31 @@ agentRouter.patch('/recipes/:code/status', async (c) => {
   } catch (err: unknown) {
     if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
     if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'INVALID_STATUS') return c.json({ error: 'invalid status' }, 400)
+    throw err
+  }
+})
+
+// PATCH /agent/beans/:id — update a bean's structured attribute columns (ROB-654).
+// Only normalized attribute columns are writable here; name/roaster/origin/process/
+// roast_level/notes stay owned by recipe snapshots (find_or_create_bean). Inherits
+// agentAuth via the /api/agent/* mount.
+agentRouter.patch('/beans/:id', async (c) => {
+  const db = getDb()
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => null)
+  const result = validateUpdateBeanAttributesInput(body)
+  if (!result.ok) {
+    return c.json({ error: 'validation failed', details: result.errors }, 400)
+  }
+
+  try {
+    const row = await updateBeanAttributes(db, id, result.value)
+    return c.json(row)
+  } catch (err: unknown) {
+    const code = err instanceof Error ? (err as NodeJS.ErrnoException & { code?: string }).code : undefined
+    if (code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
+    // Merged-row range conflict (e.g. partial agtron patch) — clean 400, never a raw CHECK 500.
+    if (code === 'INVALID_RANGE') return c.json({ error: 'validation failed', details: [err instanceof Error ? err.message : 'invalid range'] }, 400)
     throw err
   }
 })

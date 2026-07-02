@@ -58,9 +58,12 @@ feedback.post('/:code/feedback', async (c) => {
     return c.json({ error: 'validation failed', details: result.errors }, 400)
   }
   const input = result.value
+  // ROB-654: stamp owner_id when the caller carries a resolved identity
+  // (X-BrewDial-Identity via identityMiddleware). Anonymous feedback stays owner-less.
   const row = await insertFeedback(db, {
     recipeCode: code,
     beanId: undefined,
+    ownerId: appUserId,
     ratings: input.ratings,
     actual: input.actual,
     comment: input.comment,

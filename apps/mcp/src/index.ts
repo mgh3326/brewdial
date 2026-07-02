@@ -20,9 +20,11 @@ import {
   handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
+  handleUpdateBeanAttributes,
   handleUpdateRecipe,
   type ToolResult
 } from './tools.js';
+import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES } from '@brewdial/shared';
 
 const BEAN_SNAPSHOT_SCHEMA = {
   type: 'object',
@@ -244,6 +246,32 @@ const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'brew.update_bean_attributes',
+    description:
+      'Set structured tasting attributes on an EXISTING bean (ROB-654) so future "what should I buy next?" recommendations can score it by axis. Get beanId from brew.find_bean / brew.list_beans FIRST. Only normalized attribute columns are written here — name/roaster/origin are owned by recipes. The 1..5 scales (roastLevelOrd, acidity, body) are YOUR single-rubric judgment (roaster self-reported numbers use inconsistent scales); preserve the roaster’s original wording/numbers verbatim in attrsNotes as evidence, and anchor roastLevelOrd to Agtron when known. Provide at least one attribute.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        beanId: { type: 'string', description: 'Bean id from find_bean/list_beans' },
+        roastLevelOrd: { type: 'integer', minimum: 1, maximum: 5, description: '1 light .. 5 dark' },
+        agtronMin: { type: 'integer', minimum: 0, maximum: 150, description: 'Agtron range low (e.g. 57)' },
+        agtronMax: { type: 'integer', minimum: 0, maximum: 150, description: 'Agtron range high (e.g. 59); must be >= agtronMin' },
+        acidity: { type: 'integer', minimum: 1, maximum: 5, description: '1 low .. 5 high' },
+        body: { type: 'integer', minimum: 1, maximum: 5, description: '1 light .. 5 heavy' },
+        decaf: { type: 'boolean', description: 'true if decaffeinated' },
+        flavorCategories: {
+          type: 'array',
+          items: { type: 'string', enum: [...BEAN_FLAVOR_CATEGORIES] },
+          description: 'SCA flavor wheel inner ring (subset of the 9)'
+        },
+        attrsSource: { type: 'string', enum: [...BEAN_ATTRS_SOURCES], description: 'Where the attributes came from' },
+        sourceUrl: { type: 'string', description: 'Roaster/product page URL the attrs came from' },
+        attrsNotes: { type: 'string', description: "Roaster's original notation/numbers, verbatim (drift evidence)" }
+      },
+      required: ['beanId']
+    }
+  },
+  {
     name: 'brew.list_grinders',
     description:
       'List the grinder registry (ROB-611): canonical name, per-method click band (brewMethodRanges, e.g. v60: {from,to}), advisory um/click, and stepless flag. Call this BEFORE create_recipe so params.grind.perGrinder uses the EXACT registry name (e.g. "KINGrinder K6", "Comandante C40") — the mini-app only converts clicks to other grinders at read time when names match the registry.',
@@ -336,6 +364,7 @@ async function main(): Promise<void> {
         case 'brew.supersede_recipe': result = await handleSupersedeRecipe(api, a); break;
         case 'brew.find_bean': result = await handleFindBean(api, a); break;
         case 'brew.list_beans': result = await handleListBeans(api, a); break;
+        case 'brew.update_bean_attributes': result = await handleUpdateBeanAttributes(api, a); break;
         case 'brew.list_grinders': result = await handleListGrinders(api, a); break;
         case 'brew.list_drippers': result = await handleListDrippers(api, a); break;
         case 'brew.get_recent_context': result = await handleGetRecentContext(api, a); break;

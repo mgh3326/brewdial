@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
+  validateUpdateBeanAttributesInput,
   validateUpdateRecipeInput
 } from './validation.js';
 
@@ -638,5 +639,60 @@ describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
   it('rejects a non-object input', () => {
     const r = validateUpdateRecipeInput('nope');
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('validateUpdateBeanAttributesInput', () => {
+  it('accepts a full valid attribute set', () => {
+    const r = validateUpdateBeanAttributesInput({
+      roastLevelOrd: 4,
+      agtronMin: 57,
+      agtronMax: 59,
+      acidity: 1,
+      body: 5,
+      decaf: false,
+      flavorCategories: ['nutty_cocoa', 'sweet'],
+      attrsSource: 'roaster_page',
+      sourceUrl: 'https://example.com/x',
+      attrsNotes: '산미1/무게감4.5',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.acidity).toBe(1);
+      expect(r.value.flavorCategories).toEqual(['nutty_cocoa', 'sweet']);
+      expect(r.value.attrsSource).toBe('roaster_page');
+    }
+  });
+
+  it('rejects out-of-range 1..5 axes', () => {
+    for (const bad of [{ acidity: 0 }, { acidity: 6 }, { body: 9 }, { roastLevelOrd: 0 }]) {
+      expect(validateUpdateBeanAttributesInput(bad).ok).toBe(false);
+    }
+  });
+
+  it('rejects agtronMax < agtronMin', () => {
+    const r = validateUpdateBeanAttributesInput({ agtronMin: 90, agtronMax: 50 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/agtronMax must be >= agtronMin/);
+  });
+
+  it('rejects an unknown flavor category', () => {
+    const r = validateUpdateBeanAttributesInput({ flavorCategories: ['chocolate'] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/flavorCategories contains unknown/);
+  });
+
+  it('rejects an unknown attrsSource', () => {
+    expect(validateUpdateBeanAttributesInput({ attrsSource: 'blog' }).ok).toBe(false);
+  });
+
+  it('requires at least one attribute (empty object)', () => {
+    const r = validateUpdateBeanAttributesInput({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at least one bean attribute/);
+  });
+
+  it('rejects a non-object input', () => {
+    expect(validateUpdateBeanAttributesInput('nope').ok).toBe(false);
   });
 });

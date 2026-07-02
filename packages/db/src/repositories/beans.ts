@@ -15,6 +15,17 @@ export interface BeanRow {
   recipe_count: string | null  // Int8 comes back as string from pg
   latest_recipe_at: Date | null
   has_ai: boolean | null
+  // ROB-654 structured attributes (nullable; agent-written)
+  roast_level_ord: number | null
+  agtron_min: number | null
+  agtron_max: number | null
+  acidity: number | null
+  body: number | null
+  decaf: boolean | null
+  flavor_categories: string[] | null
+  attrs_source: string | null
+  source_url: string | null
+  attrs_notes: string | null
 }
 
 // Exact columns the client mapper (BEAN_COLUMNS in apps/miniapp/src/lib/data/beans.ts) expects.
@@ -30,6 +41,16 @@ const BEAN_COLS: ReadonlyArray<keyof DB['bean_summaries']> = [
   'recipe_count',
   'latest_recipe_at',
   'has_ai',
+  'roast_level_ord',
+  'agtron_min',
+  'agtron_max',
+  'acidity',
+  'body',
+  'decaf',
+  'flavor_categories',
+  'attrs_source',
+  'source_url',
+  'attrs_notes',
 ]
 
 export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
@@ -67,4 +88,76 @@ export function getBean(db: Kysely<DB>, id: string): Promise<BeanRow | undefined
     .select(BEAN_COLS)
     .where('id', '=', id)
     .executeTakeFirst() as unknown as Promise<BeanRow | undefined>
+}
+
+// ROB-654: agent-writable structured attributes on the shared `beans` registry.
+// Only these normalized columns are writable here — name/roaster/origin/process/
+// roast_level/notes stay owned by recipe snapshots via find_or_create_bean.
+export interface UpdateBeanAttributesPatch {
+  roastLevelOrd?: number | null
+  agtronMin?: number | null
+  agtronMax?: number | null
+  acidity?: number | null
+  body?: number | null
+  decaf?: boolean | null
+  flavorCategories?: string[] | null
+  attrsSource?: string | null
+  sourceUrl?: string | null
+  attrsNotes?: string | null
+}
+
+/**
+ * Update a bean's structured attribute columns (ROB-654). Writes the base `beans`
+ * table (not the bean_summaries view). Returns the enriched BeanRow read back from
+ * bean_summaries. Throws { code: 'NOT_FOUND' } if the id does not exist.
+ */
+export async function updateBeanAttributes(
+  db: Kysely<DB>,
+  id: string,
+  patch: UpdateBeanAttributesPatch
+): Promise<BeanRow> {
+  const existing = await db
+    .selectFrom('beans')
+    .select(['id', 'agtron_min', 'agtron_max'])
+    .where('id', '=', id)
+    .executeTakeFirst()
+  if (!existing) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
+
+  // Stateful cross-column guard: beans_agtron_chk (agtron_max >= agtron_min) is
+  // evaluated by the DB against the MERGED row, but the stateless validator only
+  // cross-checks when BOTH bounds arrive in the same request. A partial patch of
+  // one bound that inverts the stored counterpart would otherwise leak the raw
+  // CHECK violation (SQLSTATE 23514) as a 500 — reject it as a typed 400 instead.
+  const effAgtronMin = patch.agtronMin !== undefined ? patch.agtronMin : existing.agtron_min
+  const effAgtronMax = patch.agtronMax !== undefined ? patch.agtronMax : existing.agtron_max
+  if (effAgtronMin != null && effAgtronMax != null && effAgtronMax < effAgtronMin) {
+    throw Object.assign(
+      new Error(`agtronMax (${effAgtronMax}) must be >= agtronMin (${effAgtronMin})`),
+      { code: 'INVALID_RANGE' }
+    )
+  }
+
+  const set: Record<string, unknown> = {}
+  if (patch.roastLevelOrd !== undefined) set.roast_level_ord = patch.roastLevelOrd
+  if (patch.agtronMin !== undefined) set.agtron_min = patch.agtronMin
+  if (patch.agtronMax !== undefined) set.agtron_max = patch.agtronMax
+  if (patch.acidity !== undefined) set.acidity = patch.acidity
+  if (patch.body !== undefined) set.body = patch.body
+  if (patch.decaf !== undefined) set.decaf = patch.decaf
+  if (patch.flavorCategories !== undefined) set.flavor_categories = patch.flavorCategories
+  if (patch.attrsSource !== undefined) set.attrs_source = patch.attrsSource
+  if (patch.sourceUrl !== undefined) set.source_url = patch.sourceUrl
+  if (patch.attrsNotes !== undefined) set.attrs_notes = patch.attrsNotes
+
+  if (Object.keys(set).length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (db.updateTable('beans') as any)
+      .set(set)
+      .where('id', '=', id)
+      .execute()
+  }
+
+  const row = await getBean(db, id)
+  if (!row) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
+  return row
 }
