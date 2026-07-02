@@ -79,7 +79,14 @@ export default function BeanDetail({ id }: { id: string }) {
     return (
       <div className="screen">
         <div className="error-panel">{error ?? '원두를 찾을 수 없어요.'}</div>
-        <a className="card" href="#/">
+        <a
+          className="card"
+          href="#/"
+          onClick={(e) => {
+            e.preventDefault();
+            location.replace('#/');
+          }}
+        >
           원두 목록으로
         </a>
       </div>
