@@ -18,7 +18,6 @@ import { getRecipeByCode } from '../lib/data/recipes';
 import { getMyCollections, saveRecipe, upsertCalibration } from '../lib/data/user-content';
 import { listFeedbackByRecipe } from '../lib/data/feedback';
 import FeedbackForm from '../components/FeedbackForm';
-import ScaleModal from '../components/ScaleModal';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
 import { grindDisplay, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
@@ -75,7 +74,6 @@ export default function RecipeDetail({ code }: { code: string }) {
   const [savingCal, setSavingCal] = useState(false);
   const [drippers, setDrippers] = useState<DripperInfo[]>([]);
   const [selDripper, setSelDripper] = useState<string>('');
-  const [scaleOpen, setScaleOpen] = useState(false);
 
   // Reflect already-saved state on load (best-effort; web_local/toss_anon identity).
   useEffect(() => {
@@ -389,19 +387,6 @@ export default function RecipeDetail({ code }: { code: string }) {
             }}
           >
             {saved ? '저장됨 ✓' : savingSave ? '저장 중…' : '레시피 저장'}
-          </button>
-          <button
-            type="button"
-            className="btn-save"
-            disabled={recipe.params.doseG === undefined || recipe.params.doseG <= 0}
-            title={
-              recipe.params.doseG === undefined || recipe.params.doseG <= 0
-                ? '기준 도즈가 없어요'
-                : undefined
-            }
-            onClick={() => setScaleOpen(true)}
-          >
-            다른 용량으로 만들기
           </button>
         </div>
 
@@ -786,17 +771,6 @@ export default function RecipeDetail({ code }: { code: string }) {
           </section>
         )}
       </div>
-      {scaleOpen && recipe && (
-        <ScaleModal
-          recipe={recipe}
-          onClose={() => setScaleOpen(false)}
-          onSaved={(code) => {
-            setScaleOpen(false);
-            // ROB-635: replace → back doesn't re-enter the modal.
-            location.replace(`#/recipes/${code}`);
-          }}
-        />
-      )}
     </>
   );
 }
