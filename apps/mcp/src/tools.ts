@@ -3,6 +3,7 @@ import {
   isRecipeCode,
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
+  validateUpdateBeanAttributesInput,
   validateUpdateRecipeInput
 } from '@brewdial/shared';
 import type { ApiConfig } from './config.js';
@@ -16,7 +17,7 @@ import {
   updateRecipe,
   type RecipeUpdate,
 } from './repositories/recipes.js';
-import { findBeans, listBeans } from './repositories/beans.js';
+import { findBeans, listBeans, updateBeanAttributes } from './repositories/beans.js';
 import { listGrinders } from './repositories/grinders.js';
 import { listDrippers } from './repositories/drippers.js';
 
@@ -184,6 +185,32 @@ export async function handleListBeans(
     return jsonResult({ ok: true, count: beans.length, beans });
   } catch (error) {
     return errorResult(`Error listing beans: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleUpdateBeanAttributes(
+  config: ApiConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const id = typeof args?.beanId === 'string' ? args.beanId.trim() : '';
+  if (!id) {
+    return errorResult('update_bean_attributes: a non-empty "beanId" is required (from find_bean/list_beans).');
+  }
+  // beanId identifies the row; everything else is the attribute patch.
+  const attrs: Record<string, unknown> = { ...(args ?? {}) };
+  delete attrs.beanId;
+
+  const validation = validateUpdateBeanAttributesInput(attrs);
+  if (!validation.ok) {
+    return jsonError({ ok: false, error: 'Invalid bean attributes', details: validation.errors });
+  }
+
+  try {
+    const bean = await updateBeanAttributes(config, id, validation.value);
+    if (!bean) return jsonResult({ ok: false, error: `Bean ${id} not found` });
+    return jsonResult({ ok: true, bean });
+  } catch (error) {
+    return errorResult(`Error updating bean attributes: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
