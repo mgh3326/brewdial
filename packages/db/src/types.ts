@@ -68,18 +68,36 @@ export interface BeanPurchaseLinks {
 }
 
 export interface Beans {
+  acidity: number | null;
+  agtron_max: number | null;
+  agtron_min: number | null;
+  attrs_notes: string | null;
+  attrs_source: string | null;
+  body: number | null;
   created_at: Generated<Timestamp>;
+  decaf: boolean | null;
+  flavor_categories: string[] | null;
   id: Generated<string>;
   name: string;
   notes: string | null;
   origin: string | null;
   process: string | null;
   roast_level: string | null;
+  roast_level_ord: number | null;
   roaster: string | null;
+  source_url: string | null;
   updated_at: Generated<Timestamp>;
 }
 
 export interface BeanSummaries {
+  acidity: number | null;
+  agtron_max: number | null;
+  agtron_min: number | null;
+  attrs_notes: string | null;
+  attrs_source: string | null;
+  body: number | null;
+  decaf: boolean | null;
+  flavor_categories: string[] | null;
   has_ai: boolean | null;
   id: string | null;
   latest_recipe_at: Timestamp | null;
@@ -89,7 +107,9 @@ export interface BeanSummaries {
   process: string | null;
   recipe_count: Int8 | null;
   roast_level: string | null;
+  roast_level_ord: number | null;
   roaster: string | null;
+  source_url: string | null;
 }
 
 export interface Drippers {
