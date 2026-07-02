@@ -2,12 +2,14 @@ import { Hono } from 'hono'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
+import { identityMiddleware } from '../middleware/identity.js'
 import { recipes } from './recipes.js'
 import { feedback } from './feedback.js'
 
 // Build a self-contained Hono app for write tests.
 function makeApp() {
   const app = new Hono()
+  app.use('*', identityMiddleware)
   app.route('/api/recipes', recipes)
   app.route('/api/recipes', feedback)
   return app
@@ -18,6 +20,15 @@ const app = makeApp()
 // Track rows created by tests so we can clean up afterward (re-run safe).
 const createdCodes: string[] = []
 const createdFeedbackIds: string[] = []
+const createdBeanIds: string[] = []
+
+// External key must be >=16 chars; identityMiddleware rejects shorter keys.
+const SEED = randomUUID().replace(/-/g, '').slice(0, 8)
+const IDENTITY_A = `toss_anon:wtestA_${SEED}_${'0'.repeat(20)}`
+const IDENTITY_B = `toss_anon:wtestB_${SEED}_${'0'.repeat(20)}`
+
+let privateRecipeCode = ''
+let privateBeanId = ''
 
 afterAll(async () => {
   const db = getDb()
@@ -26,6 +37,9 @@ afterAll(async () => {
   }
   if (createdCodes.length > 0) {
     await db.deleteFrom('recipes').where('code', 'in', createdCodes).execute()
+  }
+  if (createdBeanIds.length > 0) {
+    await db.deleteFrom('beans').where('id', 'in', createdBeanIds).execute()
   }
   await closeDb()
 })
@@ -191,4 +205,117 @@ test('POST feedback to a nonexistent recipe code → 404', async () => {
   expect(res.status).toBe(404)
   const body: Record<string, unknown> = await res.json()
   expect(body['error']).toBe('recipe not found')
+})
+
+// ─── ROB-634: owner_id write path + private listing policy ───────────────────
+
+test('POST /api/recipes with X-BrewDial-Identity → 201, owner_id = caller appUserId (private)', async () => {
+  const res = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_A,
+    },
+    body: JSON.stringify({ method: 'v60', title: 'Private Owned Recipe' }),
+  })
+  expect(res.status).toBe(201)
+  const row: Record<string, unknown> = await res.json()
+  expect(row['owner_id']).not.toBeNull()
+  expect(typeof row['owner_id']).toBe('string')
+  expect(row['created_by']).toBe('manual')
+  privateRecipeCode = row['code'] as string
+  createdCodes.push(privateRecipeCode)
+})
+
+test('POST /api/recipes WITHOUT identity → 201, owner_id null (public)', async () => {
+  const res = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'v60', title: 'Public No Identity' }),
+  })
+  expect(res.status).toBe(201)
+  const row: Record<string, unknown> = await res.json()
+  expect(row['owner_id']).toBeNull()
+  createdCodes.push(row['code'] as string)
+})
+
+test('GET /api/recipes (global feed) excludes private recipes', async () => {
+  // Ensure Test 1 created its private recipe first.
+  expect(privateRecipeCode).toBeTruthy()
+  const res = await app.request('/api/recipes?limit=100', {
+    headers: { 'X-BrewDial-Identity': IDENTITY_A },
+  })
+  expect(res.status).toBe(200)
+  const rows = (await res.json()) as Array<Record<string, unknown>>
+  const codes = rows.map((r) => r['code'])
+  expect(codes).not.toContain(privateRecipeCode)
+  // Every row in the global feed must be public (owner_id null).
+  for (const r of rows) expect(r['owner_id']).toBeNull()
+})
+
+test('GET /api/recipes?beanId= returns own private + public; others see public only', async () => {
+  // Seed a bean and create a private recipe tied to it under IDENTITY_A.
+  const db = getDb()
+  privateBeanId = randomUUID()
+  await db.insertInto('beans').values({ id: privateBeanId, name: `Privacy Bean ${SEED}` }).execute()
+  createdBeanIds.push(privateBeanId)
+
+  const createRes = await app.request('/api/recipes', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_A,
+    },
+    body: JSON.stringify({
+      method: 'v60',
+      title: 'Private Recipe For Bean',
+      beanId: privateBeanId,
+    }),
+  })
+  expect(createRes.status).toBe(201)
+  const created: Record<string, unknown> = await createRes.json()
+  expect(created['owner_id']).not.toBeNull()
+  const privateCode = created['code'] as string
+  createdCodes.push(privateCode)
+
+  // Owner sees their private recipe for this bean.
+  const ownerRes = await app.request(`/api/recipes?beanId=${privateBeanId}`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_A },
+  })
+  const ownerRows = (await ownerRes.json()) as Array<Record<string, unknown>>
+  const ownerCodes = ownerRows.map((r) => r['code'])
+  expect(ownerCodes).toContain(privateCode)
+
+  // A different identity does NOT see the private recipe.
+  const otherRes = await app.request(`/api/recipes?beanId=${privateBeanId}`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_B },
+  })
+  const otherRows = (await otherRes.json()) as Array<Record<string, unknown>>
+  const otherCodes = otherRows.map((r) => r['code'])
+  expect(otherCodes).not.toContain(privateCode)
+
+  // No identity also does NOT see the private recipe.
+  const anonRes = await app.request(`/api/recipes?beanId=${privateBeanId}`)
+  const anonRows = (await anonRes.json()) as Array<Record<string, unknown>>
+  const anonCodes = anonRows.map((r) => r['code'])
+  expect(anonCodes).not.toContain(privateCode)
+})
+
+test('GET /api/recipes/:code deep-link privacy — owner 200, others 404', async () => {
+  expect(privateRecipeCode).toBeTruthy()
+  // Owner reads own private recipe.
+  const ownerRes = await app.request(`/api/recipes/${privateRecipeCode}`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_A },
+  })
+  expect(ownerRes.status).toBe(200)
+
+  // Different identity → 404.
+  const otherRes = await app.request(`/api/recipes/${privateRecipeCode}`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_B },
+  })
+  expect(otherRes.status).toBe(404)
+
+  // No identity → 404.
+  const anonRes = await app.request(`/api/recipes/${privateRecipeCode}`)
+  expect(anonRes.status).toBe(404)
 })
