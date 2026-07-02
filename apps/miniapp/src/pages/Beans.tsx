@@ -45,7 +45,7 @@ export default function Beans() {
           <Top.SubtitleParagraph size={15}>원두를 고르면 그 원두의 레시피가 나와요.</Top.SubtitleParagraph>
         }
       />
-      <div className="screen">
+      <div className="screen screen-tabpage">
         <div className="row">
           <Button as="a" variant="weak" href="#/recipes/new">
             새 레시피 만들기
