@@ -186,7 +186,8 @@ export default function NewRecipe() {
         grinder: effectiveGrinder || undefined,
         grind: grind.trim() || undefined,
       });
-      location.hash = `#/recipes/${created.code}`;
+      // ROB-635: replace → back terminates the mini-app (no empty form re-entry).
+      location.replace(`#/recipes/${created.code}`);
     } catch (e) {
       setErrors([(e as Error).message]);
       setBusy(false);
@@ -424,7 +425,15 @@ export default function NewRecipe() {
         )}
 
         <div className="timer-controls">
-          <button className="t-btn secondary" type="button" onClick={() => (location.hash = '#/')}>
+          <button
+            className="t-btn secondary"
+            type="button"
+            // ROB-635: pop the form entry → back terminates, not re-enters the form.
+            onClick={() => {
+              if (history.length > 1) history.back();
+              else location.replace('#/');
+            }}
+          >
             취소
           </button>
           <button className="t-btn" type="button" onClick={onSubmit} disabled={busy}>

@@ -567,3 +567,50 @@ a.card:active {
 .web-btn:active {
   background: var(--line-strong);
 }
+
+/* ROB-633 — Toss-style floating bottom tab bar (home + saved only). */
+.screen-tabpage {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+.bottom-nav {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  max-width: 92vw;
+}
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 84px;
+  min-height: 52px;
+  padding: 6px 18px;
+  border-radius: 20px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.bottom-nav-item:active {
+  background: var(--surface-muted);
+}
+.bottom-nav-item.active {
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+.bottom-nav-label {
+  font-size: 12px;
+}
+

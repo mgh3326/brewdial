@@ -1,6 +1,7 @@
 import type { CreateRecipeInput, RecipeCode, RecipeDoc } from '../domain';
 import { validateCreateRecipeInput } from '../domain';
 import { apiGet, apiGetOrNull, apiSend } from '../api';
+import { resolveIdentity } from '../identity';
 import { rowToRecipe, type RecipeRow } from './mappers';
 
 const DEFAULT_LIMIT = 20;
@@ -13,13 +14,15 @@ export async function listRecentRecipes(limit = DEFAULT_LIMIT): Promise<RecipeDo
 }
 
 export async function getRecipeByCode(code: RecipeCode): Promise<RecipeDoc | null> {
-  const row = await apiGetOrNull<RecipeRow>(`/recipes/${encodeURIComponent(code)}`);
+  const identity = await resolveIdentity();
+  const row = await apiGetOrNull<RecipeRow>(`/recipes/${encodeURIComponent(code)}`, { identity });
   return row ? rowToRecipe(row) : null;
 }
 
 // Active recipes for one bean (ROB-610 bean-centric view), newest first.
 export async function listRecipesByBean(beanId: string): Promise<RecipeDoc[]> {
-  const rows = await apiGet<RecipeRow[]>(`/recipes?beanId=${encodeURIComponent(beanId)}`);
+  const identity = await resolveIdentity();
+  const rows = await apiGet<RecipeRow[]>(`/recipes?beanId=${encodeURIComponent(beanId)}`, { identity });
   return rows.map(rowToRecipe);
 }
 
@@ -29,19 +32,24 @@ export async function createRecipe(input: CreateRecipeInput): Promise<RecipeDoc>
   const result = validateCreateRecipeInput(input);
   if (!result.ok) throw new Error(result.errors.join('; '));
   const r = result.value;
+  const identity = await resolveIdentity();
 
-  const body = {
+  // camelCase keys matching validateCreateRecipeInput; optional fields are OMITTED
+  // when absent (the backend validator treats `null` as a type error, only
+  // `undefined`/missing as optional).
+  const body: Record<string, unknown> = {
     method: r.method,
     title: r.title,
     params: r.params ?? {},
     steps: r.steps ?? [],
-    bean_id: r.beanId ?? null,
-    bean_snapshot: r.beanSnapshot ?? null,
-    intent: r.intent ?? null,
-    notes: r.notes ?? null,
-    adjustment_from_previous: r.adjustmentFromPrevious ?? null,
   };
+  if (r.beanId !== undefined) body.beanId = r.beanId;
+  if (r.beanSnapshot !== undefined) body.beanSnapshot = r.beanSnapshot;
+  if (r.intent !== undefined) body.intent = r.intent;
+  if (r.notes !== undefined) body.notes = r.notes;
+  if (r.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = r.adjustmentFromPrevious;
+  if (r.dripperPortability !== undefined) body.dripperPortability = r.dripperPortability;
 
-  const row = await apiSend<RecipeRow>('POST', '/recipes', body);
+  const row = await apiSend<RecipeRow>('POST', '/recipes', body, { identity });
   return rowToRecipe(row);
 }

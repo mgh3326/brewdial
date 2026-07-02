@@ -6,7 +6,7 @@ export default defineConfig({
   brand: {
     displayName: 'BrewDial',
     primaryColor: '#6F4E37', // coffee brown
-    icon: '', // 콘솔에서 업로드한 로고 URL
+    icon: 'https://static.toss.im/appsintoss/53429/538b5f0c-1788-4d6f-8c47-e664d8d6d8bd.png', // 콘솔 앱 로고
   },
   web: {
     host: 'localhost',

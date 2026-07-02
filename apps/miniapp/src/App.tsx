@@ -5,6 +5,8 @@ import Beans from './pages/Beans';
 import BeanDetail from './pages/BeanDetail';
 import NewRecipe from './pages/NewRecipe';
 import RecipeDetail from './pages/RecipeDetail';
+import Saved from './pages/Saved';
+import BottomNav from './components/BottomNav';
 
 export default function App() {
   const path = useHashPath();
@@ -24,12 +26,33 @@ export default function App() {
   if (beanMatch) return <BeanDetail key={beanMatch[1]} id={decodeURIComponent(beanMatch[1])} />;
 
   // Home = bean-centric list (ROB-610). '/recipes' kept as an alias.
-  if (path === '/' || path === '/recipes' || path === '/recipes/') return <Beans />;
+  if (path === '/' || path === '/recipes' || path === '/recipes/')
+    return (
+      <>
+        <Beans />
+        <BottomNav />
+      </>
+    );
+
+  if (path === '/saved')
+    return (
+      <>
+        <Saved />
+        <BottomNav />
+      </>
+    );
 
   return (
     <div className="screen">
       <h2>없는 페이지</h2>
-      <a className="card" href="#/">
+      <a
+        className="card"
+        href="#/"
+        onClick={(e) => {
+          e.preventDefault();
+          location.replace('#/');
+        }}
+      >
         홈으로
       </a>
     </div>

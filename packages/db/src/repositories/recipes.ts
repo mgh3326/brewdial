@@ -1,6 +1,15 @@
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 
+// pg serializes a top-level JS array as a Postgres array literal (e.g. `steps` -> `{...}`),
+// which a jsonb column rejects (22P02 "invalid input syntax for type json"). JSON-serialize
+// jsonb values so they reach the column as parseable JSON text. null/undefined pass through
+// (SQL NULL / omitted). Only for jsonb columns — text[] columns like `intent` keep their JS
+// array (pg's array literal is correct there).
+function asJsonb(v: unknown): unknown {
+  return v === null || v === undefined ? v : JSON.stringify(v)
+}
+
 // Row shape matching the client mapper's RecipeRow
 // (apps/miniapp/src/lib/data/mappers.ts — RecipeRow interface).
 // Explicit type bounds Kysely inference and prevents TS2589.
@@ -62,28 +71,46 @@ export function listRecentRecipes(db: Kysely<DB>, limit = 20): Promise<RecipeRow
     .selectFrom('recipes')
     .select(RECIPE_COLS)
     .where('status', '=', 'active')
+    .where('owner_id', 'is', null)
     .orderBy('created_at', 'desc')
     .limit(n)
     .execute() as unknown as Promise<RecipeRow[]>
 }
 
-export function getRecipeByCode(db: Kysely<DB>, code: string): Promise<RecipeRow | undefined> {
-  return db
+export function getRecipeByCode(
+  db: Kysely<DB>,
+  code: string,
+  callerAppUserId?: string
+): Promise<RecipeRow | undefined> {
+  let q = db
     .selectFrom('recipes')
     .select(RECIPE_COLS)
     .where('code', '=', code)
     .where('status', '<>', 'test')
-    .executeTakeFirst() as unknown as Promise<RecipeRow | undefined>
+  if (callerAppUserId) {
+    q = q.where((eb) => eb.or([eb('owner_id', 'is', null), eb('owner_id', '=', callerAppUserId)]))
+  } else {
+    q = q.where('owner_id', 'is', null)
+  }
+  return q.executeTakeFirst() as unknown as Promise<RecipeRow | undefined>
 }
 
-export function listRecipesByBean(db: Kysely<DB>, beanId: string): Promise<RecipeRow[]> {
-  return db
+export function listRecipesByBean(
+  db: Kysely<DB>,
+  beanId: string,
+  callerAppUserId?: string
+): Promise<RecipeRow[]> {
+  let q = db
     .selectFrom('recipes')
     .select(RECIPE_COLS)
     .where('bean_id', '=', beanId)
     .where('status', '=', 'active')
-    .orderBy('created_at', 'desc')
-    .execute() as unknown as Promise<RecipeRow[]>
+  if (callerAppUserId) {
+    q = q.where((eb) => eb.or([eb('owner_id', 'is', null), eb('owner_id', '=', callerAppUserId)]))
+  } else {
+    q = q.where('owner_id', 'is', null)
+  }
+  return q.orderBy('created_at', 'desc').execute() as unknown as Promise<RecipeRow[]>
 }
 
 // ── Agent recipe functions ────────────────────────────────────────────────────
@@ -124,15 +151,15 @@ export async function insertAgentRecipe(
     // Leave bean_id null when caller didn't supply one so the
     // recipes_link_bean BEFORE-INSERT trigger can link/dedup by bean_snapshot.
     if (payload.beanId != null) values.bean_id = payload.beanId
-    if (payload.beanSnapshot !== undefined) values.bean_snapshot = payload.beanSnapshot as unknown
-    if (payload.params !== undefined) values.params = payload.params as unknown
-    if (payload.steps !== undefined) values.steps = payload.steps as unknown
+    if (payload.beanSnapshot !== undefined) values.bean_snapshot = asJsonb(payload.beanSnapshot)
+    if (payload.params !== undefined) values.params = asJsonb(payload.params)
+    if (payload.steps !== undefined) values.steps = asJsonb(payload.steps)
     if (payload.intent !== undefined) values.intent = payload.intent
     if (payload.notes !== undefined) values.notes = payload.notes
     if (payload.adjustmentFromPrevious !== undefined)
       values.adjustment_from_previous = payload.adjustmentFromPrevious
     if (payload.dripperPortability !== undefined)
-      values.dripper_portability = payload.dripperPortability as unknown
+      values.dripper_portability = asJsonb(payload.dripperPortability)
 
     return trx
       .insertInto('recipes')
@@ -171,6 +198,7 @@ export function listRecentRecipesAnyStatus(db: Kysely<DB>, limit = 20): Promise<
 export interface InsertManualRecipePayload {
   method: string
   title: string
+  ownerId?: string | null
   beanId?: string | null
   beanSnapshot?: unknown
   params?: unknown
@@ -211,13 +239,13 @@ export async function updateRecipe(
     version: (current.version ?? 1) + 1,
   }
   if (patch.title !== undefined) set.title = patch.title
-  if (patch.params !== undefined) set.params = patch.params
-  if (patch.steps !== undefined) set.steps = patch.steps
+  if (patch.params !== undefined) set.params = asJsonb(patch.params)
+  if (patch.steps !== undefined) set.steps = asJsonb(patch.steps)
   if (patch.notes !== undefined) set.notes = patch.notes
   if (patch.intent !== undefined) set.intent = patch.intent
-  if (patch.beanSnapshot !== undefined) set.bean_snapshot = patch.beanSnapshot
+  if (patch.beanSnapshot !== undefined) set.bean_snapshot = asJsonb(patch.beanSnapshot)
   if (patch.adjustmentFromPrevious !== undefined) set.adjustment_from_previous = patch.adjustmentFromPrevious
-  if (patch.dripperPortability !== undefined) set.dripper_portability = patch.dripperPortability
+  if (patch.dripperPortability !== undefined) set.dripper_portability = asJsonb(patch.dripperPortability)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const row = await (db.updateTable('recipes') as any)
@@ -286,7 +314,7 @@ export async function supersedeRecipe(
   })
 }
 
-export function insertManualRecipe(
+export async function insertManualRecipe(
   db: Kysely<DB>,
   payload: InsertManualRecipePayload
 ): Promise<RecipeRow> {
@@ -300,19 +328,35 @@ export function insertManualRecipe(
   // Leave bean_id null when client didn't supply one so the
   // recipes_link_bean BEFORE-INSERT trigger can link/dedup by bean_snapshot.
   if (payload.beanId != null) values.bean_id = payload.beanId
-  if (payload.beanSnapshot !== undefined) values.bean_snapshot = payload.beanSnapshot as unknown
-  if (payload.params !== undefined) values.params = payload.params as unknown
-  if (payload.steps !== undefined) values.steps = payload.steps as unknown
+  if (payload.beanSnapshot !== undefined) values.bean_snapshot = asJsonb(payload.beanSnapshot)
+  if (payload.params !== undefined) values.params = asJsonb(payload.params)
+  if (payload.steps !== undefined) values.steps = asJsonb(payload.steps)
   if (payload.intent !== undefined) values.intent = payload.intent
   if (payload.notes !== undefined) values.notes = payload.notes
   if (payload.adjustmentFromPrevious !== undefined)
     values.adjustment_from_previous = payload.adjustmentFromPrevious
   if (payload.dripperPortability !== undefined)
-    values.dripper_portability = payload.dripperPortability as unknown
+    values.dripper_portability = asJsonb(payload.dripperPortability)
+
+  // ROB-634: personal recipes are private to their anonymous owner.
+  if (payload.ownerId) {
+    return db.transaction().execute(async (trx) => {
+      await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+      return trx
+        .insertInto('recipes')
+        .values(
+          { ...values, owner_id: payload.ownerId } as Parameters<
+            ReturnType<typeof trx.insertInto<'recipes'>>['values']
+          >[0]
+        )
+        .returning(RECIPE_COLS)
+        .executeTakeFirstOrThrow() as unknown as RecipeRow
+    })
+  }
 
   return db
     .insertInto('recipes')
     .values(values as Parameters<ReturnType<typeof db.insertInto<'recipes'>>['values']>[0])
     .returning(RECIPE_COLS)
-    .executeTakeFirstOrThrow() as unknown as Promise<RecipeRow>
+    .executeTakeFirstOrThrow() as unknown as RecipeRow
 }
