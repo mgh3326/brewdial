@@ -1,10 +1,12 @@
 import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '../domain';
 import { validateCreateFeedbackInput } from '../domain';
 import { apiGet, apiSend } from '../api';
+import { resolveIdentity } from '../identity';
 import { rowToFeedback, type FeedbackRow } from './mappers';
 
 export async function listFeedbackByRecipe(code: RecipeCode): Promise<FeedbackDoc[]> {
-  const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`);
+  const identity = await resolveIdentity();
+  const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`, { identity });
   return rows.map(rowToFeedback);
 }
 
@@ -12,6 +14,7 @@ export async function createFeedback(input: CreateFeedbackInput): Promise<Feedba
   const result = validateCreateFeedbackInput(input);
   if (!result.ok) throw new Error(result.errors.join('; '));
   const f = result.value;
+  const identity = await resolveIdentity();
 
   // Optional fields OMITTED when absent — the backend validator treats `null`
   // as a type error (e.g. "quickTags must be a string array"), only undefined/missing as optional.
@@ -24,6 +27,6 @@ export async function createFeedback(input: CreateFeedbackInput): Promise<Feedba
   if (f.desiredDirection !== undefined) body.desiredDirection = f.desiredDirection;
   if (f.nextHint !== undefined) body.nextHint = f.nextHint;
 
-  const row = await apiSend<FeedbackRow>('POST', `/recipes/${encodeURIComponent(f.recipeCode)}/feedback`, body);
+  const row = await apiSend<FeedbackRow>('POST', `/recipes/${encodeURIComponent(f.recipeCode)}/feedback`, body, { identity });
   return rowToFeedback(row);
 }

@@ -319,3 +319,61 @@ test('GET /api/recipes/:code deep-link privacy — owner 200, others 404', async
   const anonRes = await app.request(`/api/recipes/${privateRecipeCode}`)
   expect(anonRes.status).toBe(404)
 })
+
+// ─── ROB-642 C2: feedback subresource owner privacy ────────────────────────────
+
+test('GET /api/recipes/:code/feedback: owner sees own private, others/anon → 404', async () => {
+  expect(privateRecipeCode).toBeTruthy()
+
+  // Owner (IDENTITY_A) → 200 (may be empty array).
+  const ownerRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_A },
+  })
+  expect(ownerRes.status).toBe(200)
+
+  // Different identity → 404 (visibility gate).
+  const otherRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`, {
+    headers: { 'X-BrewDial-Identity': IDENTITY_B },
+  })
+  expect(otherRes.status).toBe(404)
+
+  // No identity → 404.
+  const anonRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`)
+  expect(anonRes.status).toBe(404)
+})
+
+test('POST /api/recipes/:code/feedback: owner can post on own private, others/anon → 404', async () => {
+  expect(privateRecipeCode).toBeTruthy()
+
+  // Owner → 201.
+  const ownerRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_A,
+    },
+    body: JSON.stringify({ rawComment: 'owner feedback on private' }),
+  })
+  expect(ownerRes.status).toBe(201)
+  const fb: Record<string, unknown> = await ownerRes.json()
+  if (typeof fb['id'] === 'string') createdFeedbackIds.push(fb['id'])
+
+  // Different identity → 404.
+  const otherRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_B,
+    },
+    body: JSON.stringify({ rawComment: 'intruder' }),
+  })
+  expect(otherRes.status).toBe(404)
+
+  // No identity → 404.
+  const anonRes = await app.request(`/api/recipes/${privateRecipeCode}/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rawComment: 'anon' }),
+  })
+  expect(anonRes.status).toBe(404)
+})

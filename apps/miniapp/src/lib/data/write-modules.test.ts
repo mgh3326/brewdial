@@ -112,14 +112,16 @@ describe('createRecipe', () => {
     expect('bean_id' in body).toBe(false);
   });
 
-  it('does NOT include X-BrewDial-Identity header (no identity required for POST /recipes)', async () => {
+  it('includes X-BrewDial-Identity header (owner_id stamped server-side)', async () => {
     mockFetch(201, minimalRow);
     const { createRecipe } = await import('./recipes');
     await createRecipe({ method: 'v60', title: 'New V60' });
 
     const { init } = lastFetchCall();
     const headers = headersOf(init);
-    expect(headers['X-BrewDial-Identity']).toBeUndefined();
+    expect(headers['X-BrewDial-Identity']).toBe(
+      `${TEST_IDENTITY.provider}:${TEST_IDENTITY.externalKey}`,
+    );
   });
 
   it('throws when input validation fails', async () => {
@@ -185,14 +187,16 @@ describe('createFeedback', () => {
     expect(url).toContain('/recipes/COF-0001/feedback');
   });
 
-  it('does NOT include X-BrewDial-Identity header', async () => {
+  it('includes X-BrewDial-Identity header (private-recipe visibility)', async () => {
     mockFetch(201, minimalFbRow);
     const { createFeedback } = await import('./feedback');
     await createFeedback({ recipeCode: 'COF-0001', rawComment: 'ok' });
 
     const { init } = lastFetchCall();
     const headers = headersOf(init);
-    expect(headers['X-BrewDial-Identity']).toBeUndefined();
+    expect(headers['X-BrewDial-Identity']).toBe(
+      `${TEST_IDENTITY.provider}:${TEST_IDENTITY.externalKey}`,
+    );
   });
 });
 
