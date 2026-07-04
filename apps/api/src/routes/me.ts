@@ -54,7 +54,7 @@ me.get('/recommendations', async (c) => {
     likes: prefs?.likes ?? [],
     dislikes: prefs?.dislikes ?? [],
   })
-  const bands: Record<string, ReturnType<typeof scoreBean>> = {}
+  const scores: Record<string, ReturnType<typeof scoreBean>> = {}
   for (const b of beans) {
     if (!b.id) continue
     const attrs: BeanAttributes = {
@@ -67,12 +67,16 @@ me.get('/recommendations', async (c) => {
       flavorCategories: (b.flavor_categories ?? undefined) as BeanAttributes['flavorCategories'],
       attrsSource: (b.attrs_source ?? undefined) as BeanAttributes['attrsSource'],
     }
-    bands[b.id] = scoreBean(attrs, target)
+    scores[b.id] = scoreBean(attrs, target)
   }
   const rankScore = { great: 3, ok: 2, adventure: 1, unknown: 0 } as const
-  const ranked = Object.entries(bands)
+  const ranked = Object.entries(scores)
     .sort((a, b) => (rankScore[b[1].band] - rankScore[a[1].band]) || (b[1].score - a[1].score))
     .map(([id]) => id)
+  // Strip the internal `score` float from the response — scoreBean documents it as
+  // "0..1 internal, NOT rendered"; leaking it would put a decimal in the JSON (no-decimals rule).
+  const bands: Record<string, { band: (typeof scores)[string]['band']; axes: (typeof scores)[string]['axes']; why: string }> = {}
+  for (const [id, s] of Object.entries(scores)) bands[id] = { band: s.band, axes: s.axes, why: s.why }
   return c.json({
     tasteProfile: {
       targets: { acidity: target.acidity, body: target.body, roast: target.roast },

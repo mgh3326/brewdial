@@ -11,7 +11,6 @@ export interface AxisComparison {
 }
 export interface BeanScore {
   band: MatchBand;
-  score: number;
   axes: AxisComparison[];
   why: string;
 }

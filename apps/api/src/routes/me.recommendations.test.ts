@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { getDb, closeDb } from '@brewdial/db';
+import { getDb, closeDb, getGlobalPreference, setGlobalPreference } from '@brewdial/db';
 import { me } from './me.js';
 import { identityMiddleware } from '../middleware/identity.js';
 
@@ -34,4 +34,28 @@ test('GET /api/me/recommendations without identity → 200 with tasteProfile + b
   expect(['great', 'ok', 'adventure', 'unknown']).toContain(body.bands[beanId].band);
   expect(Array.isArray(body.ranked)).toBe(true);
   expect(JSON.stringify(body)).not.toMatch(/%/);
+});
+
+test('GET /api/me/recommendations with a non-empty taste target → no decimals leak into the response', async () => {
+  // Non-empty global tags → confidence != 'none' → scoreBean produces fractional
+  // internal scores. The internal `score` float must NOT reach the client.
+  const prev = await getGlobalPreference(getDb());
+  await setGlobalPreference(getDb(), {
+    likes: ['저산미', '다크 로스팅', '고소함', '초콜릿/단맛'],
+    dislikes: ['고산미'],
+  });
+  try {
+    const res = await app.request('http://localhost/api/me/recommendations');
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.tasteProfile.confidence).not.toBe('none');
+    expect(['great', 'ok', 'adventure', 'unknown']).toContain(body.bands[beanId].band);
+    // No decimal number anywhere in the payload (catches the internal score float leak).
+    expect(JSON.stringify(body)).not.toMatch(/\d\.\d/);
+    expect(JSON.stringify(body)).not.toMatch(/%/);
+    // The band object must not expose the internal `score` field.
+    expect(body.bands[beanId].score).toBeUndefined();
+  } finally {
+    await setGlobalPreference(getDb(), { likes: prev?.likes ?? [], dislikes: prev?.dislikes ?? [] });
+  }
 });
