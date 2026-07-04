@@ -48,11 +48,11 @@ export async function getTasteSignals(
     .selectFrom('feedback')
     .innerJoin('beans', 'beans.id', 'feedback.bean_id')
     .select(ATTR_COLS.map((c) => `beans.${c}` as `beans.${typeof c}`))
-    // House visibility pattern (mirrors recipes.ts getRecipeByCode/listRecipesByBean):
-    // public feedback (owner_id null, e.g. agent/anon-submitted) + the caller's own
-    // feedback both count as taste signal. A strict owner_id=appUserId equality would
-    // silently exclude all public feedback from the signal set.
-    .where((eb) => eb.or([eb('feedback.owner_id', 'is', null), eb('feedback.owner_id', '=', appUserId)]))
+    // Per-user personalization signal: only feedback the caller themselves gave
+    // (owner_id stamped by apps/api/src/routes/feedback.ts, ROB-654). Do NOT widen
+    // this to include owner_id IS NULL — that would leak anonymous/public feedback
+    // into every user's taste signal and break multi-user personalization.
+    .where('feedback.owner_id', '=', appUserId)
     .where(sql<number>`coalesce((feedback.ratings->>'overall')::int, 0)`, '>=', 4)
     .execute() as unknown as AttrRow[]
 

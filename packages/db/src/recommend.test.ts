@@ -18,7 +18,7 @@ beforeAll(async () => {
   await db.insertInto('saved_beans').values({ app_user_id: appUserId, bean_id: beanId }).execute();
   const r = await db.insertInto('recipes').values({ method: 'v60', title: `SigRec ${SEED}`, bean_id: beanId, owner_id: null }).returning('code').executeTakeFirstOrThrow();
   recipeCode = r.code;
-  await db.insertInto('feedback').values({ recipe_code: recipeCode, bean_id: beanId, ratings: { overall: 5 } }).execute();
+  await db.insertInto('feedback').values({ recipe_code: recipeCode, bean_id: beanId, owner_id: appUserId, ratings: { overall: 5 } }).execute();
 });
 
 afterAll(async () => {
