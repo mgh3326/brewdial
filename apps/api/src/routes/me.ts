@@ -88,6 +88,14 @@ me.get('/recommendations', async (c) => {
 })
 
 // PUT /me/gear — upsert a piece of gear (grinder or dripper)
+// PUT /me/preferences — edit the global taste tags (S1 global singleton).
+me.put('/preferences', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const result = validateUpdatePreferencesInput(body)
+  if (!result.ok) return c.json({ error: 'validation failed', details: result.errors }, 400)
+  const row = await setGlobalPreference(getDb(), result.value)
+  return c.json({ likes: row.likes, dislikes: row.dislikes })
+})
 me.put('/gear', requireIdentity, async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !body.kind || !body.label) {
