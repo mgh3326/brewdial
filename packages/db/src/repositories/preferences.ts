@@ -31,3 +31,20 @@ export function getGlobalPreference(db: Kysely<DB>): Promise<PreferenceRow | und
     .where('id', '=', 'global')
     .executeTakeFirst() as unknown as Promise<PreferenceRow | undefined>
 }
+
+/**
+ * setGlobalPreference — upsert likes/dislikes on the singleton 'global' row.
+ * S1: global write (per-user is S4).
+ */
+export async function setGlobalPreference(
+  db: Kysely<DB>,
+  input: { likes: string[]; dislikes: string[] }
+): Promise<PreferenceRow> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = await (db.insertInto('preferences') as any)
+    .values({ id: 'global', likes: input.likes, dislikes: input.dislikes })
+    .onConflict((oc: any) => oc.column('id').doUpdateSet({ likes: input.likes, dislikes: input.dislikes, updated_at: new Date() }))
+    .returning(PREFERENCE_COLS)
+    .executeTakeFirstOrThrow()
+  return row as PreferenceRow
+}
