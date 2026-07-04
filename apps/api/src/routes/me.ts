@@ -85,6 +85,8 @@ me.get('/recommendations', async (c) => {
       confidence: target.confidence,
       summary: target.summary,
       evidence: target.evidence,
+      likes: prefs?.likes ?? [],
+      dislikes: prefs?.dislikes ?? [],
     },
     bands,
     ranked,

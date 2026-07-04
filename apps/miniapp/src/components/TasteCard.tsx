@@ -5,8 +5,8 @@ import { updatePreferences } from '../lib/data/recommend';
 
 export default function TasteCard({ profile, onChanged }: { profile: TasteProfile; onChanged: () => void }) {
   const [editing, setEditing] = useState(false);
-  const [likes, setLikes] = useState<string[]>([]);
-  const [dislikes, setDislikes] = useState<string[]>([]);
+  const [likes, setLikes] = useState<string[]>(() => profile.likes ?? []);
+  const [dislikes, setDislikes] = useState<string[]>(() => profile.dislikes ?? []);
   const [saving, setSaving] = useState(false);
 
   async function save() {

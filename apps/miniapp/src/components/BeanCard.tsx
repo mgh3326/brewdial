@@ -15,7 +15,7 @@ export default function BeanCard({ bean, band }: { bean: BeanSummary; band?: Mat
       <p className="card-title">
         {bean.name}
         {bean.hasAi && <span className="badge-ai" style={{ marginLeft: 6 }}>✨ AI</span>}
-        {band && <span className={`band band-${band}`} style={{ marginLeft: 6 }}>{BAND_LABEL[band]}</span>}
+        {band && band !== 'unknown' && <span className={`band band-${band}`} style={{ marginLeft: 6 }}>{BAND_LABEL[band]}</span>}
       </p>
       {meta && <p className="card-meta muted">{meta}</p>}
       <p className="card-meta muted">레시피 {bean.recipeCount}개</p>

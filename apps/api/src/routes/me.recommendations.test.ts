@@ -49,6 +49,7 @@ test('GET /api/me/recommendations with a non-empty taste target → no decimals 
     expect(res.status).toBe(200);
     const body: any = await res.json();
     expect(body.tasteProfile.confidence).not.toBe('none');
+    expect(body.tasteProfile.likes).toEqual(expect.arrayContaining(['저산미', '다크 로스팅']));
     expect(['great', 'ok', 'adventure', 'unknown']).toContain(body.bands[beanId].band);
     // No decimal number anywhere in the payload (catches the internal score float leak).
     expect(JSON.stringify(body)).not.toMatch(/\d\.\d/);

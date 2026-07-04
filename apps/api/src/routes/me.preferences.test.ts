@@ -15,11 +15,14 @@ test('PUT /api/me/preferences with whitelisted tags → 200, persisted', async (
     method: 'PUT', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ likes: ['저산미', '다크 로스팅'], dislikes: ['고산미'] }),
   });
-  expect(res.status).toBe(200);
-  const row = await getGlobalPreference(getDb());
-  expect(row?.likes).toEqual(['저산미', '다크 로스팅']);
-  expect(row?.dislikes).toEqual(['고산미']);
-  await setGlobalPreference(getDb(), { likes: prev?.likes ?? [], dislikes: prev?.dislikes ?? [] });
+  try {
+    expect(res.status).toBe(200);
+    const row = await getGlobalPreference(getDb());
+    expect(row?.likes).toEqual(['저산미', '다크 로스팅']);
+    expect(row?.dislikes).toEqual(['고산미']);
+  } finally {
+    await setGlobalPreference(getDb(), { likes: prev?.likes ?? [], dislikes: prev?.dislikes ?? [] });
+  }
 });
 
 test('PUT /api/me/preferences with unknown tag → 400', async () => {

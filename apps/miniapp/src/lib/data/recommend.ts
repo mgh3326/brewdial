@@ -21,6 +21,8 @@ export interface TasteProfile {
   confidence: 'none' | 'low' | 'medium' | 'high';
   summary: string;
   evidence: string[];
+  likes: string[];
+  dislikes: string[];
 }
 export interface RecommendationsResponse {
   tasteProfile: TasteProfile;
