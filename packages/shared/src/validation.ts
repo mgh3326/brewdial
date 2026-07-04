@@ -22,7 +22,7 @@ import type {
   RecipeParams,
   RecipeStep
 } from './types.js';
-import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, QUICK_FEEDBACK_TAGS } from './types.js';
+import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, QUICK_FEEDBACK_TAGS, TASTE_TAGS } from './types.js';
 
 export type ValidationResult<T> =
   | { ok: true; value: T; warnings: string[] }
@@ -868,4 +868,31 @@ export function validateUpdateBeanAttributesInput(
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value, warnings: [] };
+}
+
+export interface UpdatePreferencesInput {
+  likes: string[];
+  dislikes: string[];
+}
+
+// ROB-654 v2 S1: validate taste preference edits (global singleton write).
+export function validateUpdatePreferencesInput(
+  input: unknown
+): ValidationResult<UpdatePreferencesInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const allowed = new Set<string>(TASTE_TAGS);
+  const clean = (raw: unknown, field: string): string[] => {
+    if (raw === undefined) return [];
+    if (!isStringArray(raw)) { errors.push(`${field} must be a string array`); return []; }
+    const bad = raw.filter((t) => !allowed.has(t));
+    if (bad.length > 0) errors.push(`${field} contains unknown taste tag(s): ${bad.join(', ')}`);
+    return [...new Set(raw.filter((t) => allowed.has(t)))];
+  };
+  const likes = clean(input.likes, 'likes');
+  const dislikes = clean(input.dislikes, 'dislikes');
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: { likes, dislikes }, warnings: [] };
 }
