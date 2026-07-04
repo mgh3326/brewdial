@@ -32,6 +32,14 @@ describe('deriveTasteTarget', () => {
     expect(t.confidence).toBe('none');
     expect(t.flavorAffinity).toEqual([]);
   });
+  it('derived target numeric fields have no decimals (rendered output constraint)', () => {
+    const t = deriveTasteTarget(signals);
+    // roast's weighted mean is a repeating decimal (~4.6667) before rounding — this
+    // asserts the output-facing field is rounded to an integer on the 1..5 scale.
+    if (t.acidity != null) expect(Number.isInteger(t.acidity)).toBe(true);
+    if (t.body != null) expect(Number.isInteger(t.body)).toBe(true);
+    if (t.roast != null) expect(Number.isInteger(t.roast)).toBe(true);
+  });
 });
 
 describe('scoreBean — §4 acceptance anchors', () => {
@@ -47,5 +55,32 @@ describe('scoreBean — §4 acceptance anchors', () => {
     const s = scoreBean(brily, t);
     expect(s.axes.find((a) => a.key === 'acidity')?.match).toBe('hit');
     expect(JSON.stringify(s)).not.toMatch(/%/);
+  });
+  it('AxisComparison.target has no decimals', () => {
+    const s = scoreBean(jaldoe, t);
+    const roastAxis = s.axes.find((a) => a.key === 'roast');
+    expect(typeof roastAxis?.target).toBe('number');
+    expect(Number.isInteger(roastAxis?.target)).toBe(true);
+  });
+});
+
+describe('scoreBean — renormalizes over available axes (partial attrs)', () => {
+  const t = deriveTasteTarget(signals);
+  it('bean with only acidity + flavor set scores over available axes instead of unknown', () => {
+    // roast/body are null on this bean — every fixture bean elsewhere has all 4 axes set,
+    // so this is the only test exercising the wsum renormalization path in scoreBean.
+    const partial: BeanAttributes = { acidity: 1, flavorCategories: ['nutty_cocoa', 'sweet'] };
+    const s = scoreBean(partial, t);
+    expect(s.band).not.toBe('unknown');
+
+    const acidityAxis = s.axes.find((a) => a.key === 'acidity');
+    const flavorAxis = s.axes.find((a) => a.key === 'flavor');
+    const roastAxis = s.axes.find((a) => a.key === 'roast');
+    const bodyAxis = s.axes.find((a) => a.key === 'body');
+
+    expect(acidityAxis?.match).not.toBe('na');
+    expect(flavorAxis?.match).not.toBe('na');
+    expect(roastAxis?.match).toBe('na');
+    expect(bodyAxis?.match).toBe('na');
   });
 });

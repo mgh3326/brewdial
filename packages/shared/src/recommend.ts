@@ -7,7 +7,7 @@ export interface TasteSignals {
   dislikes: string[];
 }
 
-export type TastePenalty = 'highAcidity' | 'lightRoast' | 'lowBody';
+export type TastePenalty = 'highAcidity' | 'lightRoast';
 
 export interface TasteTarget {
   acidity?: number;
@@ -77,6 +77,11 @@ export function deriveTasteTarget(signals: TasteSignals): TasteTarget {
   if (dislikes.has('라이트 로스팅')) penalize.push('lightRoast');
   // '저녁은 디카페인' → S1 밴드에 미반영(디카 슬롯은 S3).
 
+  // No decimals in any rendered output: axes are on a 1..5 scale, round to nearest integer.
+  if (acidity != null) acidity = Math.round(acidity);
+  if (body != null) body = Math.round(body);
+  if (roast != null) roast = Math.round(roast);
+
   const signalCount = signals.savedBeanAttrs.length + signals.ratedBeanAttrs.length;
   const hasTags = likes.size + dislikes.size > 0;
   let confidence: TasteTarget['confidence'] = 'none';
@@ -120,29 +125,36 @@ export function scoreBean(attrs: BeanAttributes, target: TasteTarget): BeanScore
   const hasData = attrs.acidity != null || attrs.body != null || attrs.roastLevelOrd != null || (attrs.flavorCategories?.length ?? 0) > 0;
   if (!hasData) return { band: 'unknown', score: 0, axes: [], why: '속성 정보가 없어요' };
 
+  // No decimals in rendered output: round targets to the nearest integer (1..5 scale).
+  // Scoring uses the same rounded value it displays, so match direction stays consistent
+  // with what's shown; deriveTasteTarget already rounds, this also guards manually-built targets.
+  const targetAcidity = target.acidity != null ? Math.round(target.acidity) : undefined;
+  const targetRoast = target.roast != null ? Math.round(target.roast) : undefined;
+  const targetBody = target.body != null ? Math.round(target.body) : undefined;
+
   const axes: AxisComparison[] = [];
   const fits: { key: keyof typeof AXIS_WEIGHT; fit: number }[] = [];
 
   // acidity
-  if (attrs.acidity != null && target.acidity != null) {
-    let fit = closeness(attrs.acidity, target.acidity);
+  if (attrs.acidity != null && targetAcidity != null) {
+    let fit = closeness(attrs.acidity, targetAcidity);
     if (target.penalize.includes('highAcidity') && attrs.acidity >= 4) fit *= 0.3;
     fits.push({ key: 'acidity', fit });
-    axes.push({ key: 'acidity', label: '산미', value: attrs.acidity, target: target.acidity, match: dir(attrs.acidity, target.acidity) });
+    axes.push({ key: 'acidity', label: '산미', value: attrs.acidity, target: targetAcidity, match: dir(attrs.acidity, targetAcidity) });
   } else axes.push({ key: 'acidity', label: '산미', value: attrs.acidity ?? '—', match: 'na' });
 
   // roast
-  if (attrs.roastLevelOrd != null && target.roast != null) {
-    let fit = closeness(attrs.roastLevelOrd, target.roast);
+  if (attrs.roastLevelOrd != null && targetRoast != null) {
+    let fit = closeness(attrs.roastLevelOrd, targetRoast);
     if (target.penalize.includes('lightRoast') && attrs.roastLevelOrd <= 2) fit *= 0.4;
     fits.push({ key: 'roast', fit });
-    axes.push({ key: 'roast', label: '로스팅', value: attrs.roastLevelOrd, target: target.roast, match: dir(attrs.roastLevelOrd, target.roast) });
+    axes.push({ key: 'roast', label: '로스팅', value: attrs.roastLevelOrd, target: targetRoast, match: dir(attrs.roastLevelOrd, targetRoast) });
   } else axes.push({ key: 'roast', label: '로스팅', value: attrs.roastLevelOrd ?? '—', match: 'na' });
 
   // body
-  if (attrs.body != null && target.body != null) {
-    fits.push({ key: 'body', fit: closeness(attrs.body, target.body) });
-    axes.push({ key: 'body', label: '무게감', value: attrs.body, target: target.body, match: dir(attrs.body, target.body) });
+  if (attrs.body != null && targetBody != null) {
+    fits.push({ key: 'body', fit: closeness(attrs.body, targetBody) });
+    axes.push({ key: 'body', label: '무게감', value: attrs.body, target: targetBody, match: dir(attrs.body, targetBody) });
   } else axes.push({ key: 'body', label: '무게감', value: attrs.body ?? '—', match: 'na' });
 
   // flavor
