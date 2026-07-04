@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, saveRecipe, saveBean, upsertGear, upsertCalibration } from '@brewdial/db'
+import { getDb, saveRecipe, saveBean, upsertGear, upsertCalibration, listBeans, getTasteSignals, getGlobalPreference, setGlobalPreference } from '@brewdial/db'
+import { deriveTasteTarget, scoreBean, validateUpdatePreferencesInput, type BeanAttributes } from '@brewdial/shared'
 import { requireIdentity } from '../middleware/identity.js'
 import { getMyCollections } from '../services/collections.js'
 import type { GearInput, CalibrationInput } from '@brewdial/db'
@@ -35,6 +36,55 @@ me.get('/collections', requireIdentity, async (c) => {
   const appUserId = c.get('appUserId') as string
   const collections = await getMyCollections(getDb(), appUserId)
   return c.json(collections)
+})
+
+// GET /me/recommendations — read-time taste target + per-bean match bands.
+// Identity OPTIONAL: uses the caller's saved/rated beans when present, else global only.
+me.get('/recommendations', async (c) => {
+  const db = getDb()
+  const appUserId = c.get('appUserId') as string | undefined
+  const [signals, prefs, beans] = await Promise.all([
+    getTasteSignals(db, appUserId),
+    getGlobalPreference(db),
+    listBeans(db),
+  ])
+  const target = deriveTasteTarget({
+    savedBeanAttrs: signals.savedBeanAttrs,
+    ratedBeanAttrs: signals.ratedBeanAttrs,
+    likes: prefs?.likes ?? [],
+    dislikes: prefs?.dislikes ?? [],
+  })
+  const bands: Record<string, ReturnType<typeof scoreBean>> = {}
+  for (const b of beans) {
+    if (!b.id) continue
+    const attrs: BeanAttributes = {
+      roastLevelOrd: b.roast_level_ord ?? undefined,
+      agtronMin: b.agtron_min ?? undefined,
+      agtronMax: b.agtron_max ?? undefined,
+      acidity: b.acidity ?? undefined,
+      body: b.body ?? undefined,
+      decaf: b.decaf ?? undefined,
+      flavorCategories: (b.flavor_categories ?? undefined) as BeanAttributes['flavorCategories'],
+      attrsSource: (b.attrs_source ?? undefined) as BeanAttributes['attrsSource'],
+    }
+    bands[b.id] = scoreBean(attrs, target)
+  }
+  const rankScore = { great: 3, ok: 2, adventure: 1, unknown: 0 } as const
+  const ranked = Object.entries(bands)
+    .sort((a, b) => (rankScore[b[1].band] - rankScore[a[1].band]) || (b[1].score - a[1].score))
+    .map(([id]) => id)
+  return c.json({
+    tasteProfile: {
+      targets: { acidity: target.acidity, body: target.body, roast: target.roast },
+      flavorAffinity: target.flavorAffinity,
+      penalize: target.penalize,
+      confidence: target.confidence,
+      summary: target.summary,
+      evidence: target.evidence,
+    },
+    bands,
+    ranked,
+  })
 })
 
 // PUT /me/gear — upsert a piece of gear (grinder or dripper)
