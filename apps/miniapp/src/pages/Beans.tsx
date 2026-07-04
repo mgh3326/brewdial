@@ -4,6 +4,7 @@ import { listBeans, type BeanSummary } from '../lib/data/beans';
 import { getMyCollections } from '../lib/data/user-content';
 import { fetchRecommendations, type RecommendationsResponse } from '../lib/data/recommend';
 import BeanCard from '../components/BeanCard';
+import TasteCard from '../components/TasteCard';
 
 export default function Beans() {
   const [beans, setBeans] = useState<BeanSummary[]>([]);
@@ -60,6 +61,13 @@ export default function Beans() {
         </div>
 
         {error && <div className="error-panel">불러오기 실패: {error}</div>}
+
+        {recs && (
+          <TasteCard
+            profile={recs.tasteProfile}
+            onChanged={() => fetchRecommendations().then(setRecs).catch(() => {})}
+          />
+        )}
 
         {savedBeans.length > 0 && (
           <section className="stack-tight">

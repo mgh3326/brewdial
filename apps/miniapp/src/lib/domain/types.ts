@@ -212,3 +212,16 @@ export interface CounterDoc {
 }
 
 export type BrewDialDoc = RecipeDoc | FeedbackDoc | PreferenceDoc | CounterDoc;
+
+// ── ROB-654 v2 S1: 정규 취향 태그(교정 UI 화이트리스트). Vendored from
+// packages/shared/src/types.ts (source of truth). Re-sync if shared changes.
+export const TASTE_TAGS = [
+  '저산미',
+  '고산미',
+  '다크 로스팅',
+  '라이트 로스팅',
+  '고소함',
+  '초콜릿/단맛',
+  '저녁은 디카페인',
+] as const;
+export type TasteTag = (typeof TASTE_TAGS)[number];
