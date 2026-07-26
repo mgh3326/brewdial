@@ -870,6 +870,92 @@ export function validateUpdateBeanAttributesInput(
   return { ok: true, value, warnings: [] };
 }
 
+// ── bean purchase links (agent write) ────────────────────────────────────────
+// Mirrors the bean_purchase_links CHECK constraints (001_core_schema) so callers
+// get a clean 400 instead of a raw 23514.
+
+export const BEAN_LINK_CATEGORIES = [
+  'product',
+  'lowest_price',
+  'coupon',
+  'generic'
+] as const;
+export type BeanLinkCategory = (typeof BEAN_LINK_CATEGORIES)[number];
+
+export interface CreateBeanPurchaseLinkInput {
+  vendor: string;
+  url: string;
+  linkCategory?: BeanLinkCategory;
+  priceKrw?: number;
+  isAffiliate?: boolean;
+  sortOrder?: number;
+}
+
+export function validateCreateBeanPurchaseLinkInput(
+  input: unknown
+): ValidationResult<CreateBeanPurchaseLinkInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const vendor = pickString(input, 'vendor', errors, 'input');
+  if (vendor === undefined || vendor.length === 0) {
+    errors.push('vendor is required');
+  } else if (vendor.length > 60) {
+    errors.push('vendor must be 60 characters or fewer');
+  }
+
+  const url = pickString(input, 'url', errors, 'input');
+  if (url === undefined || url.length === 0) {
+    errors.push('url is required');
+  } else if (!url.startsWith('https://')) {
+    // bean_purchase_links_url_https — https only, no http/protocol-relative.
+    errors.push('url must start with https://');
+  } else if (url.length > 2048) {
+    errors.push('url must be 2048 characters or fewer');
+  }
+
+  let linkCategory: BeanLinkCategory | undefined;
+  if (input.linkCategory !== undefined) {
+    if (
+      typeof input.linkCategory !== 'string' ||
+      !BEAN_LINK_CATEGORIES.includes(input.linkCategory as BeanLinkCategory)
+    ) {
+      errors.push(`linkCategory must be one of ${BEAN_LINK_CATEGORIES.join(', ')}`);
+    } else {
+      linkCategory = input.linkCategory as BeanLinkCategory;
+    }
+  }
+
+  let priceKrw: number | undefined;
+  if (input.priceKrw !== undefined) {
+    if (!isInt(input.priceKrw) || input.priceKrw < 0) {
+      errors.push('priceKrw must be a non-negative integer');
+    } else priceKrw = input.priceKrw;
+  }
+
+  let isAffiliate: boolean | undefined;
+  if (input.isAffiliate !== undefined) {
+    if (typeof input.isAffiliate !== 'boolean') errors.push('isAffiliate must be a boolean');
+    else isAffiliate = input.isAffiliate;
+  }
+
+  let sortOrder: number | undefined;
+  if (input.sortOrder !== undefined) {
+    if (!isInt(input.sortOrder)) errors.push('sortOrder must be an integer');
+    else sortOrder = input.sortOrder;
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  const value: CreateBeanPurchaseLinkInput = { vendor: vendor as string, url: url as string };
+  if (linkCategory !== undefined) value.linkCategory = linkCategory;
+  if (priceKrw !== undefined) value.priceKrw = priceKrw;
+  if (isAffiliate !== undefined) value.isAffiliate = isAffiliate;
+  if (sortOrder !== undefined) value.sortOrder = sortOrder;
+
+  return { ok: true, value, warnings: [] };
+}
+
 export interface UpdatePreferencesInput {
   likes: string[];
   dislikes: string[];
