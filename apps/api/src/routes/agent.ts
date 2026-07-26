@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, updateBeanAttributes } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput } from '@brewdial/shared'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -101,6 +101,44 @@ agentRouter.patch('/beans/:id', async (c) => {
     if (code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
     // Merged-row range conflict (e.g. partial agtron patch) — clean 400, never a raw CHECK 500.
     if (code === 'INVALID_RANGE') return c.json({ error: 'validation failed', details: [err instanceof Error ? err.message : 'invalid range'] }, 400)
+    throw err
+  }
+})
+
+// POST /agent/beans/:id/resync — re-derive the bean's non-key identity fields
+// (origin / process / roast_level / notes) from its newest PUBLIC recipe snapshot.
+// find_or_create_bean only fires on recipe INSERT, so correcting an existing
+// recipe's bean_snapshot otherwise leaves the shared bean row stale — and
+// BeanCard/BeanDetail read beans.origin, not the snapshot. name/roaster are not
+// resynced (they are the unique key; a rename is a merge, not a resync).
+agentRouter.post('/beans/:id/resync', async (c) => {
+  const db = getDb()
+  const id = c.req.param('id')
+  try {
+    const result = await resyncBeanIdentity(db, id)
+    return c.json(result)
+  } catch (err: unknown) {
+    const code = err instanceof Error ? (err as NodeJS.ErrnoException & { code?: string }).code : undefined
+    if (code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
+    throw err
+  }
+})
+
+// POST /agent/beans/:id/purchase-links — register a vendor/product link for a bean.
+agentRouter.post('/beans/:id/purchase-links', async (c) => {
+  const db = getDb()
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => null)
+  const result = validateCreateBeanPurchaseLinkInput(body)
+  if (!result.ok) {
+    return c.json({ error: 'validation failed', details: result.errors }, 400)
+  }
+  try {
+    const row = await insertBeanPurchaseLink(db, { beanId: id, ...result.value })
+    return c.json(row, 201)
+  } catch (err: unknown) {
+    const code = err instanceof Error ? (err as NodeJS.ErrnoException & { code?: string }).code : undefined
+    if (code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
     throw err
   }
 })

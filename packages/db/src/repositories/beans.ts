@@ -161,3 +161,175 @@ export async function updateBeanAttributes(
   if (!row) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
   return row
 }
+
+// ── identity resync ──────────────────────────────────────────────────────────
+// find_or_create_bean() only runs on the recipes BEFORE INSERT trigger, so
+// correcting an existing recipe's bean_snapshot leaves the shared beans row
+// stale — and BeanCard/BeanDetail render beans.origin, not the snapshot. This
+// re-derives the non-key identity fields from the newest snapshot.
+//
+// name/roaster are deliberately NOT resynced: they form the
+// beans_name_roaster_key unique index, so rewriting them could collide with
+// another bean. A rename is a merge, not a resync.
+//
+// Source snapshot is restricted to PUBLIC recipes (owner_id is null) so a
+// private recipe's snapshot text can never leak onto the shared bean card —
+// same filter bean_summaries uses for its aggregates (004_owner_privacy).
+
+export interface ResyncBeanIdentityResult {
+  bean: BeanRow
+  sourceRecipeCode: string | null
+  changed: string[]
+}
+
+const RESYNC_FIELDS = [
+  { col: 'origin', snapKey: 'origin' },
+  { col: 'process', snapKey: 'process' },
+  { col: 'roast_level', snapKey: 'roastLevel' },
+  { col: 'notes', snapKey: 'notes' },
+] as const
+
+export async function resyncBeanIdentity(
+  db: Kysely<DB>,
+  id: string
+): Promise<ResyncBeanIdentityResult> {
+  const existing = await db
+    .selectFrom('beans')
+    .select(['id', 'origin', 'process', 'roast_level', 'notes'])
+    .where('id', '=', id)
+    .executeTakeFirst()
+  if (!existing) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
+
+  const source = await db
+    .selectFrom('recipes')
+    .select(['code', 'bean_snapshot'])
+    .where('bean_id', '=', id)
+    .where('bean_snapshot', 'is not', null)
+    .where('owner_id', 'is', null)
+    .orderBy('updated_at', 'desc')
+    .executeTakeFirst()
+
+  if (!source) {
+    const bean = await getBean(db, id)
+    if (!bean) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
+    return { bean, sourceRecipeCode: null, changed: [] }
+  }
+
+  // jsonb comes back parsed from pg, but tolerate a string in case a driver
+  // or a hand-written row stored it as text.
+  const raw = source.bean_snapshot as unknown
+  let snap: Record<string, unknown>
+  try {
+    snap = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Record<string, unknown>
+  } catch {
+    snap = {}
+  }
+  if (snap === null || typeof snap !== 'object') snap = {}
+
+  // coalesce semantics, matching find_or_create_bean: a snapshot field that is
+  // absent/null/blank never blanks out a value already on the bean.
+  const set: Record<string, unknown> = {}
+  const changed: string[] = []
+  for (const { col, snapKey } of RESYNC_FIELDS) {
+    const next = snap[snapKey]
+    if (typeof next !== 'string') continue
+    const trimmed = next.trim()
+    if (trimmed === '') continue
+    if (trimmed === (existing as Record<string, unknown>)[col]) continue
+    set[col] = trimmed
+    changed.push(col)
+  }
+
+  if (changed.length > 0) {
+    set.updated_at = new Date()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (db.updateTable('beans') as any).set(set).where('id', '=', id).execute()
+  }
+
+  const bean = await getBean(db, id)
+  if (!bean) throw Object.assign(new Error(`bean not found: ${id}`), { code: 'NOT_FOUND' })
+  return { bean, sourceRecipeCode: source.code, changed }
+}
+
+// ── purchase links ───────────────────────────────────────────────────────────
+// The table shipped in 001 as forward-compat with no read/write path; these are
+// its first callers. Writes are agent-only (mounted under /agent), reads public.
+
+export interface BeanPurchaseLinkRow {
+  id: string
+  bean_id: string
+  vendor: string
+  url: string
+  link_category: string
+  price_krw: number | null
+  is_affiliate: boolean
+  active: boolean
+  sort_order: number
+}
+
+const PURCHASE_LINK_COLS: ReadonlyArray<keyof DB['bean_purchase_links']> = [
+  'id',
+  'bean_id',
+  'vendor',
+  'url',
+  'link_category',
+  'price_krw',
+  'is_affiliate',
+  'active',
+  'sort_order',
+]
+
+export function listBeanPurchaseLinks(
+  db: Kysely<DB>,
+  beanId: string
+): Promise<BeanPurchaseLinkRow[]> {
+  return db
+    .selectFrom('bean_purchase_links')
+    .select(PURCHASE_LINK_COLS)
+    .where('bean_id', '=', beanId)
+    .where('active', '=', true)
+    .orderBy('sort_order', 'asc')
+    .execute() as unknown as Promise<BeanPurchaseLinkRow[]>
+}
+
+export interface InsertBeanPurchaseLinkInput {
+  beanId: string
+  vendor: string
+  url: string
+  linkCategory?: string
+  priceKrw?: number | null
+  isAffiliate?: boolean
+  sortOrder?: number
+}
+
+export async function insertBeanPurchaseLink(
+  db: Kysely<DB>,
+  input: InsertBeanPurchaseLinkInput
+): Promise<BeanPurchaseLinkRow> {
+  const bean = await db
+    .selectFrom('beans')
+    .select('id')
+    .where('id', '=', input.beanId)
+    .executeTakeFirst()
+  if (!bean) {
+    throw Object.assign(new Error(`bean not found: ${input.beanId}`), { code: 'NOT_FOUND' })
+  }
+
+  const values: Record<string, unknown> = {
+    bean_id: input.beanId,
+    vendor: input.vendor,
+    url: input.url,
+  }
+  if (input.linkCategory !== undefined) values.link_category = input.linkCategory
+  if (input.priceKrw !== undefined) values.price_krw = input.priceKrw
+  if (input.isAffiliate !== undefined) values.is_affiliate = input.isAffiliate
+  if (input.sortOrder !== undefined) values.sort_order = input.sortOrder
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = await (db.insertInto('bean_purchase_links') as any)
+    .values(values)
+    .returning(PURCHASE_LINK_COLS)
+    .executeTakeFirst() as BeanPurchaseLinkRow | undefined
+  if (!row) throw new Error('failed to insert bean purchase link')
+  return row
+}
