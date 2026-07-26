@@ -4,6 +4,7 @@ import {
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
   validateUpdateBeanAttributesInput,
+  validateUpdatePreferencesInput,
   validateUpdateRecipeInput
 } from './validation.js';
 
@@ -761,4 +762,23 @@ describe('validateCreateBeanPurchaseLinkInput', () => {
   it('rejects a non-object input', () => {
     expect(validateCreateBeanPurchaseLinkInput('nope').ok).toBe(false);
   });
+});
+
+describe('validateUpdatePreferencesInput', () => {
+  it('accepts whitelisted like/dislike tags', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['저산미', '다크 로스팅'], dislikes: ['고산미'] });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.value.likes).toEqual(['저산미', '다크 로스팅']); expect(r.value.dislikes).toEqual(['고산미']); }
+  });
+  it('rejects an unknown tag', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['초코비'] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/unknown taste tag/);
+  });
+  it('defaults missing arrays to empty and dedupes', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['저산미', '저산미'] });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.value.likes).toEqual(['저산미']); expect(r.value.dislikes).toEqual([]); }
+  });
+  it('rejects a non-object', () => { expect(validateUpdatePreferencesInput('x').ok).toBe(false); });
 });

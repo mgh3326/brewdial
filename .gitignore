@@ -22,3 +22,6 @@ coverage
 # Other package managers (project uses pnpm)
 package-lock.json
 yarn.lock
+
+# brainstorming / visual-companion artifacts
+.superpowers/
