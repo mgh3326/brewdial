@@ -20,11 +20,12 @@ import {
   handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
+  handleUpdatePreferences,
   handleUpdateBeanAttributes,
   handleUpdateRecipe,
   type ToolResult
 } from './tools.js';
-import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES } from '@brewdial/shared';
+import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, TASTE_TAGS } from '@brewdial/shared';
 
 const BEAN_SNAPSHOT_SCHEMA = {
   type: 'object',
@@ -338,6 +339,18 @@ const TOOLS: Tool[] = [
       },
       required: ['recipeCode']
     }
+  },
+  {
+    name: 'brew.update_preferences',
+    description:
+      'Replace BrewDial global taste preferences through the agent-only API. Likes and dislikes must use the canonical taste-tag vocabulary; omitted arrays default to empty.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        likes: { type: 'array', items: { type: 'string', enum: [...TASTE_TAGS] } },
+        dislikes: { type: 'array', items: { type: 'string', enum: [...TASTE_TAGS] } }
+      }
+    }
   }
 ];
 
@@ -370,6 +383,7 @@ async function main(): Promise<void> {
         case 'brew.get_recent_context': result = await handleGetRecentContext(api, a); break;
         case 'brew.get_recipe_context': result = await handleGetRecipeContext(api, a); break;
         case 'brew.create_feedback': result = await handleCreateFeedback(api, a); break;
+        case 'brew.update_preferences': result = await handleUpdatePreferences(api, a); break;
         default:
           result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }

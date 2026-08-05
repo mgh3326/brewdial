@@ -1,4 +1,4 @@
-import { Button, Top } from '@toss/tds-mobile';
+import { Top } from '@toss/tds-mobile';
 import { useEffect, useState } from 'react';
 import { listBeans, type BeanSummary } from '../lib/data/beans';
 import { getMyCollections } from '../lib/data/user-content';
@@ -54,20 +54,9 @@ export default function Beans() {
         }
       />
       <div className="screen screen-tabpage">
-        <div className="row">
-          <Button as="a" variant="weak" href="#/recipes/new">
-            새 레시피 만들기
-          </Button>
-        </div>
-
         {error && <div className="error-panel">불러오기 실패: {error}</div>}
 
-        {recs && (
-          <TasteCard
-            profile={recs.tasteProfile}
-            onChanged={() => fetchRecommendations().then(setRecs).catch(() => {})}
-          />
-        )}
+        {recs && <TasteCard profile={recs.tasteProfile} />}
 
         {savedBeans.length > 0 && (
           <section className="stack-tight">
@@ -85,7 +74,7 @@ export default function Beans() {
           {loading ? (
             <p className="muted">불러오는 중…</p>
           ) : beans.length === 0 && !error ? (
-            <p className="empty">아직 원두가 없어요. 새 레시피를 만들면 원두가 자동으로 묶여요.</p>
+            <p className="empty">아직 원두가 없어요.</p>
           ) : (
             <div className="stack">
               {beans.map((b) => (

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, saveRecipe, saveBean, upsertGear, upsertCalibration, listBeans, getTasteSignals, getGlobalPreference, setGlobalPreference } from '@brewdial/db'
-import { deriveTasteTarget, scoreBean, validateUpdatePreferencesInput, type BeanAttributes } from '@brewdial/shared'
+import { getDb, saveRecipe, saveBean, upsertGear, upsertCalibration, listBeans, getTasteSignals, getGlobalPreference } from '@brewdial/db'
+import { deriveTasteTarget, scoreBean, type BeanAttributes } from '@brewdial/shared'
 import { requireIdentity } from '../middleware/identity.js'
 import { getMyCollections } from '../services/collections.js'
 import type { GearInput, CalibrationInput } from '@brewdial/db'
@@ -94,14 +94,6 @@ me.get('/recommendations', async (c) => {
 })
 
 // PUT /me/gear — upsert a piece of gear (grinder or dripper)
-// PUT /me/preferences — edit the global taste tags (S1 global singleton).
-me.put('/preferences', async (c) => {
-  const body = await c.req.json().catch(() => null)
-  const result = validateUpdatePreferencesInput(body)
-  if (!result.ok) return c.json({ error: 'validation failed', details: result.errors }, 400)
-  const row = await setGlobalPreference(getDb(), result.value)
-  return c.json({ likes: row.likes, dislikes: row.dislikes })
-})
 me.put('/gear', requireIdentity, async (c) => {
   const body = await c.req.json().catch(() => null)
   if (!body || !body.kind || !body.label) {

@@ -3,7 +3,6 @@ import { useHashPath } from './lib/useRoute';
 import { migrateLocalGearOnce } from './lib/data/gear';
 import Beans from './pages/Beans';
 import BeanDetail from './pages/BeanDetail';
-import NewRecipe from './pages/NewRecipe';
 import RecipeDetail from './pages/RecipeDetail';
 import Saved from './pages/Saved';
 import BottomNav from './components/BottomNav';
@@ -19,8 +18,6 @@ export default function App() {
 
   const recipeMatch = /^\/recipes\/(COF-[A-Za-z0-9-]+)$/.exec(path);
   if (recipeMatch) return <RecipeDetail key={recipeMatch[1]} code={recipeMatch[1]} />;
-
-  if (path === '/recipes/new') return <NewRecipe />;
 
   const beanMatch = /^\/beans\/(.+)$/.exec(path);
   if (beanMatch) return <BeanDetail key={beanMatch[1]} id={decodeURIComponent(beanMatch[1])} />;

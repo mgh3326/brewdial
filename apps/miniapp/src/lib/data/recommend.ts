@@ -1,4 +1,4 @@
-import { apiGet, apiSend } from '../api';
+import { apiGet } from '../api';
 import { resolveIdentity } from '../identity';
 
 export type MatchBand = 'great' | 'ok' | 'adventure' | 'unknown';
@@ -33,17 +33,4 @@ export interface RecommendationsResponse {
 export async function fetchRecommendations(): Promise<RecommendationsResponse> {
   const identity = await resolveIdentity();
   return apiGet<RecommendationsResponse>('/me/recommendations', { identity });
-}
-
-export async function updatePreferences(
-  likes: string[],
-  dislikes: string[],
-): Promise<{ likes: string[]; dislikes: string[] }> {
-  const identity = await resolveIdentity();
-  return apiSend<{ likes: string[]; dislikes: string[] }>(
-    'PUT',
-    '/me/preferences',
-    { likes, dislikes },
-    { identity },
-  );
 }

@@ -14,7 +14,7 @@ describe('whichTab', () => {
 
   it('hides the tab bar on detail/form/404 routes', () => {
     expect(whichTab('/recipes/COF-1')).toBeNull();
-    expect(whichTab('/recipes/new')).toBeNull();
+    expect(whichTab('/recipes/removed')).toBeNull();
     expect(whichTab('/beans/some-bean')).toBeNull();
     expect(whichTab('/totally/unknown')).toBeNull();
   });

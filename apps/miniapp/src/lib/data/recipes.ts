@@ -1,6 +1,5 @@
-import type { CreateRecipeInput, RecipeCode, RecipeDoc } from '../domain';
-import { validateCreateRecipeInput } from '../domain';
-import { apiGet, apiGetOrNull, apiSend } from '../api';
+import type { RecipeCode, RecipeDoc } from '../domain';
+import { apiGet, apiGetOrNull } from '../api';
 import { resolveIdentity } from '../identity';
 import { rowToRecipe, type RecipeRow } from './mappers';
 
@@ -24,32 +23,4 @@ export async function listRecipesByBean(beanId: string): Promise<RecipeDoc[]> {
   const identity = await resolveIdentity();
   const rows = await apiGet<RecipeRow[]>(`/recipes?beanId=${encodeURIComponent(beanId)}`, { identity });
   return rows.map(rowToRecipe);
-}
-
-// Anonymous clients can only create human ('manual') recipes — server enforces it.
-// AI/agent recipes are created by the MCP server via the service role key.
-export async function createRecipe(input: CreateRecipeInput): Promise<RecipeDoc> {
-  const result = validateCreateRecipeInput(input);
-  if (!result.ok) throw new Error(result.errors.join('; '));
-  const r = result.value;
-  const identity = await resolveIdentity();
-
-  // camelCase keys matching validateCreateRecipeInput; optional fields are OMITTED
-  // when absent (the backend validator treats `null` as a type error, only
-  // `undefined`/missing as optional).
-  const body: Record<string, unknown> = {
-    method: r.method,
-    title: r.title,
-    params: r.params ?? {},
-    steps: r.steps ?? [],
-  };
-  if (r.beanId !== undefined) body.beanId = r.beanId;
-  if (r.beanSnapshot !== undefined) body.beanSnapshot = r.beanSnapshot;
-  if (r.intent !== undefined) body.intent = r.intent;
-  if (r.notes !== undefined) body.notes = r.notes;
-  if (r.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = r.adjustmentFromPrevious;
-  if (r.dripperPortability !== undefined) body.dripperPortability = r.dripperPortability;
-
-  const row = await apiSend<RecipeRow>('POST', '/recipes', body, { identity });
-  return rowToRecipe(row);
 }

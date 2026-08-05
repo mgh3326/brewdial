@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput } from '@brewdial/shared'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -193,6 +193,17 @@ agentRouter.get('/preferences/global', async (c) => {
   const db = getDb()
   const row = await getGlobalPreference(db)
   return c.json(row ?? null)
+})
+
+// POST /agent/preferences/global — replace the singleton taste tags.
+// agentAuth is applied by the /agent/* mount in app.ts, so this is the only
+// supported write path for global preferences.
+agentRouter.post('/preferences/global', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const result = validateUpdatePreferencesInput(body)
+  if (!result.ok) return c.json({ error: 'validation failed', details: result.errors }, 400)
+  const row = await setGlobalPreference(getDb(), result.value)
+  return c.json(row)
 })
 
 // POST /agent/recipes/supersede — link old → new in a supersede relationship

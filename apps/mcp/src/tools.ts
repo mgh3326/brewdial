@@ -4,6 +4,7 @@ import {
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
   validateUpdateBeanAttributesInput,
+  validateUpdatePreferencesInput,
   validateUpdateRecipeInput
 } from '@brewdial/shared';
 import type { ApiConfig } from './config.js';
@@ -20,6 +21,7 @@ import {
 import { findBeans, listBeans, updateBeanAttributes } from './repositories/beans.js';
 import { listGrinders } from './repositories/grinders.js';
 import { listDrippers } from './repositories/drippers.js';
+import { updateGlobalPreferences } from './repositories/preferences.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -266,6 +268,23 @@ export async function handleCreateFeedback(
     });
   } catch (error) {
     return errorResult(`Error creating feedback: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleUpdatePreferences(
+  config: ApiConfig,
+  args: Record<string, unknown> | undefined
+): Promise<ToolResult> {
+  const validation = validateUpdatePreferencesInput(args ?? {});
+  if (!validation.ok) {
+    return jsonError({ ok: false, error: 'Invalid preferences input', details: validation.errors });
+  }
+
+  try {
+    const preferences = await updateGlobalPreferences(config, validation.value);
+    return jsonResult({ ok: true, preferences });
+  } catch (error) {
+    return errorResult(`Error updating preferences: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
