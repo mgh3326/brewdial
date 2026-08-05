@@ -1,12 +1,32 @@
-import { expect, test } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import { afterAll, beforeAll, expect, test } from 'vitest'
+import { closeDb, getDb } from '@brewdial/db'
 import { app } from '../app.js'
+
+const seed = randomUUID().replace(/-/g, '').slice(0, 8)
+const feedbackRecipeCode = `T-WRITELOCK-${seed}`
+
+beforeAll(async () => {
+  await getDb().insertInto('recipes').values({
+    code: feedbackRecipeCode,
+    method: 'v60',
+    title: 'Write Lock Feedback Recipe',
+    status: 'active',
+    owner_id: null,
+  }).execute()
+})
+
+afterAll(async () => {
+  await getDb().deleteFrom('recipes').where('code', '=', feedbackRecipeCode).execute()
+  await closeDb()
+})
 
 const LOCKED_WRITES = [
   { method: 'PUT', path: '/me/preferences', body: { likes: ['저산미'] } },
   { method: 'POST', path: '/recipes', body: { method: 'v60', title: 'anonymous probe' } },
   {
     method: 'POST',
-    path: '/recipes/COF-LOCKED/feedback',
+    path: `/recipes/${feedbackRecipeCode}/feedback`,
     body: { rawComment: 'anonymous probe' },
   },
 ] as const
