@@ -1,16 +1,15 @@
-export interface CouchConfig {
-  url: string;
-  database: string;
-  username?: string;
-  password?: string;
+// BrewDial MCP server configuration.
+// Connects to the OCI backend's agent surface via HTTP Bearer auth.
+// Required env vars: API_BASE_URL, AGENT_TOKEN.
+
+export interface ApiConfig {
+  baseUrl: string; // e.g. https://api.brewdial.robinco.dev
+  agentToken: string;
 }
 
 export interface BrewDialMcpConfig {
-  couch: CouchConfig;
+  api: ApiConfig;
 }
-
-const DEFAULT_COUCHDB_URL = 'http://127.0.0.1:5984';
-const DEFAULT_COUCHDB_DATABASE = 'coffee';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -22,12 +21,16 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
-export function getMcpConfig(env: Record<string, string | undefined> = process.env): BrewDialMcpConfig {
-  const url = trimTrailingSlash(nonEmpty(env.COUCHDB_URL) ?? DEFAULT_COUCHDB_URL);
-  const database = nonEmpty(env.COUCHDB_DATABASE) ?? DEFAULT_COUCHDB_DATABASE;
-  const username = nonEmpty(env.COUCHDB_USERNAME);
-  const password = nonEmpty(env.COUCHDB_PASSWORD);
-  return {
-    couch: { url, database, username, password }
-  };
+export function getMcpConfig(
+  env: Record<string, string | undefined> = process.env
+): BrewDialMcpConfig {
+  const baseUrl = nonEmpty(env.API_BASE_URL);
+  const agentToken = nonEmpty(env.AGENT_TOKEN);
+  if (!baseUrl) {
+    throw new Error('Missing API_BASE_URL for the BrewDial MCP server');
+  }
+  if (!agentToken) {
+    throw new Error('Missing AGENT_TOKEN for the BrewDial MCP server');
+  }
+  return { api: { baseUrl: trimTrailingSlash(baseUrl), agentToken } };
 }

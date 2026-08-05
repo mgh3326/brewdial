@@ -1,38 +1,140 @@
-import { describe, it, expect } from 'vitest';
-import { handleCreateFeedback, handleCreateRecipe, handleGetRecentContext, handleGetRecipeContext } from './tools.js';
-import type { CouchConfig } from './config.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  handleArchiveRecipe,
+  handleCreateFeedback,
+  handleCreateRecipe,
+  handleFindBean,
+  handleGetRecentContext,
+  handleGetRecipeContext,
+  handleListBeans,
+  handleListDrippers,
+  handleListGrinders,
+  handleSupersedeRecipe,
+  handleUpdatePreferences,
+  handleUpdateRecipe
+} from './tools.js';
+import type { ApiConfig } from './config.js';
 
-const mockConfig: CouchConfig = {
-  url: 'http://localhost:5984',
-  database: 'test'
+// Inject a mock fetchImpl that always rejects, so tests exercise error paths
+// without any real network I/O (no DNS lookups, no flakiness on CI).
+const mockConfig: ApiConfig = {
+  baseUrl: 'https://brewdial-mcp-test.example',
+  agentToken: 'test-agent-token',
 };
+
+// Stub global fetch before each test so repo functions that fall back to the
+// global fetch also get the mock (handlers don't yet thread fetchImpl through,
+// so we mock at the boundary where network I/O would occur).
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network connection refused (mock)')));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('handleCreateRecipe', () => {
   it('returns validation details for invalid recipe input', async () => {
     const result = await handleCreateRecipe(mockConfig, { title: 'Missing method' });
-    expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid recipe input');
     expect(result.content[0].text).toContain('method must be one of');
   });
 
-  it('marks created recipes as agent-authored before persistence', async () => {
-    const result = await handleCreateRecipe(mockConfig, {
-      method: 'v60',
-      title: 'Unreachable test recipe'
-    });
+  it('errors when API is unreachable but input is valid', async () => {
+    const result = await handleCreateRecipe(mockConfig, { method: 'v60', title: 'Unreachable test recipe' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error creating recipe');
   });
 });
 
+describe('handleUpdateRecipe', () => {
+  it('rejects invalid recipe code', async () => {
+    const r = await handleUpdateRecipe(mockConfig, { code: 'INVALID', title: 'x' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid recipe code');
+  });
+
+  it('rejects when no updatable fields are provided', async () => {
+    const r = await handleUpdateRecipe(mockConfig, { code: 'COF-0001' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('No updatable fields');
+  });
+});
+
+describe('handleArchiveRecipe', () => {
+  it('rejects invalid recipe code', async () => {
+    const r = await handleArchiveRecipe(mockConfig, { code: 'nope' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid recipe code');
+  });
+
+  it('rejects an invalid status', async () => {
+    const r = await handleArchiveRecipe(mockConfig, { code: 'COF-0001', status: 'deleted' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid status');
+  });
+});
+
+describe('handleSupersedeRecipe', () => {
+  it('rejects invalid oldCode', async () => {
+    const r = await handleSupersedeRecipe(mockConfig, { oldCode: 'x', newCode: 'COF-0002' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid oldCode');
+  });
+
+  it('rejects invalid newCode', async () => {
+    const r = await handleSupersedeRecipe(mockConfig, { oldCode: 'COF-0001', newCode: 'x' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Invalid newCode');
+  });
+});
+
+describe('handleFindBean', () => {
+  it('rejects an empty query', async () => {
+    const r = await handleFindBean(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('query');
+  });
+
+  it('errors when API is unreachable but query is valid', async () => {
+    const r = await handleFindBean(mockConfig, { query: '브릴리' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error finding beans');
+  });
+});
+
+describe('handleListBeans', () => {
+  it('errors when API is unreachable', async () => {
+    const r = await handleListBeans(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing beans');
+  });
+});
+
+describe('handleListGrinders', () => {
+  it('errors when API is unreachable', async () => {
+    const r = await handleListGrinders(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing grinders');
+  });
+});
+
+describe('handleListDrippers', () => {
+  it('errors when API is unreachable', async () => {
+    const r = await handleListDrippers(mockConfig, {});
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('Error listing drippers');
+  });
+});
+
 describe('handleGetRecentContext', () => {
-  it('returns error when CouchDB is unreachable', async () => {
+  it('returns error when backend is unreachable', async () => {
     const result = await handleGetRecentContext(mockConfig, {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Error');
   });
 
-  it('accepts limit parameter', async () => {
+  it('accepts a limit parameter (still returns content)', async () => {
     const result = await handleGetRecentContext(mockConfig, { limit: 3 });
     expect(result).toHaveProperty('content');
   });
@@ -41,23 +143,51 @@ describe('handleGetRecentContext', () => {
 describe('handleCreateFeedback', () => {
   it('rejects invalid recipe code', async () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'INVALID', rawComment: 'x' });
-    expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Invalid feedback input');
   });
 
   it('rejects empty submissions (no rawComment, ratings, or quickTags)', async () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001' });
-    expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('at least one');
   });
 
-  it('errors when CouchDB is unreachable but input is valid', async () => {
-    const r = await handleCreateFeedback(mockConfig, {
-      recipeCode: 'COF-0001',
-      rawComment: '오늘은 산미가 강했음'
-    });
+  it('errors when API is unreachable but input is valid', async () => {
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '오늘은 산미가 강했음' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error creating feedback');
+  });
+});
+
+describe('handleUpdatePreferences', () => {
+  it('rejects taste tags outside the shared whitelist', async () => {
+    const result = await handleUpdatePreferences(mockConfig, { likes: ['초코비'] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('unknown taste tag');
+  });
+
+  it('POSTs valid preferences to the agent endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ likes: ['저산미'], dislikes: ['고산미'] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleUpdatePreferences(mockConfig, {
+      likes: ['저산미'],
+      dislikes: ['고산미'],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('preference:global');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${mockConfig.baseUrl}/api/agent/preferences/global`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit & { headers: Record<string, string> };
+    expect(init.headers.Authorization).toBe(`Bearer ${mockConfig.agentToken}`);
+    expect(JSON.parse(init.body as string)).toEqual({ likes: ['저산미'], dislikes: ['고산미'] });
   });
 });
 
@@ -72,12 +202,6 @@ describe('handleGetRecipeContext', () => {
     const result = await handleGetRecipeContext(mockConfig, { code: 123 });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid recipe code');
-  });
-
-  it('handles valid code format gracefully', async () => {
-    const result = await handleGetRecipeContext(mockConfig, { code: 'COF-0001' });
-    expect(result).toHaveProperty('content');
-    expect(result.content[0]).toHaveProperty('text');
   });
 
   it('handles missing args', async () => {

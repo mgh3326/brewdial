@@ -10,7 +10,7 @@ import type {
   RecipeCode,
   RecipeDoc
 } from '@brewdial/shared';
-import type { CouchConfig } from './config.js';
+import type { ApiConfig } from './config.js';
 import { getRecipeByCode, listRecentRecipes } from './repositories/recipes.js';
 import { listFeedbackForRecipe } from './repositories/feedback.js';
 import { getGlobalPreferences } from './repositories/preferences.js';
@@ -178,7 +178,7 @@ export function parseContextLimit(raw: number | undefined): number {
 }
 
 export async function buildRecentContext(
-  config: CouchConfig,
+  config: ApiConfig,
   limit?: number,
   fetchImpl?: typeof fetch
 ): Promise<ContextSummary> {
@@ -212,7 +212,7 @@ export async function buildRecentContext(
 }
 
 export async function buildRecipeContext(
-  config: CouchConfig,
+  config: ApiConfig,
   code: RecipeCode,
   fetchImpl?: typeof fetch
 ): Promise<RecipeContext | null> {

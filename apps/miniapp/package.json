@@ -1,0 +1,35 @@
+{
+  "name": "@brewdial/miniapp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "BrewDial Apps-in-Toss WebView mini-app (React + TDS)",
+  "scripts": {
+    "dev": "granite dev",
+    "build": "ait build",
+    "vite:dev": "vite",
+    "vite:build": "vite build",
+    "web:build": "VITE_TARGET=web vite build",
+    "web:dev": "VITE_TARGET=web vite",
+    "check": "tsc -p tsconfig.app.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apps-in-toss/web-framework": "^2.9.2",
+    "@emotion/react": "^11.14.0",
+    "@sentry/react": "^10.59.0",
+    "@toss/tds-colors": "^0.1.0",
+    "@toss/tds-mobile": "^2.5.0",
+    "@toss/tds-mobile-ait": "^2.5.0",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0",
+    "vitest": "^2.1.9"
+  }
+}

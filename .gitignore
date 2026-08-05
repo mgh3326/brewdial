@@ -7,6 +7,7 @@ node_modules
 build
 dist
 coverage
+*.ait
 
 # Environment
 .env
@@ -21,4 +22,6 @@ coverage
 # Other package managers (project uses pnpm)
 package-lock.json
 yarn.lock
-.gstack/
+
+# brainstorming / visual-companion artifacts
+.superpowers/

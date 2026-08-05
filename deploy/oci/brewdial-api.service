@@ -1,0 +1,16 @@
+[Unit]
+Description=BrewDial API
+After=network.target postgresql-17.service
+Wants=postgresql-17.service
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/opt/brewdial/apps/api
+EnvironmentFile=/etc/brewdial/api.env
+ExecStart=/usr/bin/node /opt/brewdial/apps/api/dist/server.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

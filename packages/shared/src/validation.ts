@@ -2,18 +2,33 @@ import type { CreateFeedbackInput, CreateRecipeInput } from './api-types.js';
 import { isRecipeCode } from './schemas.js';
 import type {
   ActualBrewParams,
+  BeanAttributes,
+  BeanAttrsSource,
+  BeanFlavorCategory,
   BrewMethod,
+  Confidence,
+  DripperClass,
+  DripperPortability,
+  DripperTarget,
   FeedbackRatings,
   FeedbackSource,
+  GrindShift,
+  GrindSource,
+  GrindSpec,
+  GrindTarget,
+  PerGrinderGrind,
+  PourShift,
   QuickFeedbackTag,
   RecipeParams,
   RecipeStep
 } from './types.js';
-import { QUICK_FEEDBACK_TAGS } from './types.js';
+import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, QUICK_FEEDBACK_TAGS, TASTE_TAGS } from './types.js';
 
 export type ValidationResult<T> =
-  | { ok: true; value: T }
+  | { ok: true; value: T; warnings: string[] }
   | { ok: false; errors: string[] };
+
+const POUR_OVER_METHODS: ReadonlySet<BrewMethod> = new Set(['v60', 'kalita', 'aeropress']);
 
 const BREW_METHODS: readonly BrewMethod[] = [
   'v60',
@@ -27,7 +42,7 @@ const FEEDBACK_SOURCES = ['web', 'coffee_profile', 'api', 'agent', 'mcp'] as con
 const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
-const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grind', 'grinder', 'brewer'] as const;
+const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grinder', 'brewer'] as const;
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -125,6 +140,216 @@ function validateRecipeParams(
     }
     out[key] = v;
   }
+  // ROB-611: grind is string (legacy free text) | GrindSpec (structured).
+  const g = raw.grind;
+  if (g !== undefined) {
+    if (typeof g === 'string') {
+      out.grind = g; // legacy, preserved verbatim
+    } else if (isPlainObject(g)) {
+      const spec = validateGrindSpec(g, errors);
+      if (spec) {
+        out.grind = spec;
+        // Mirror the cross-grinder invariant into the canonical drawdown field so
+        // dedup (ROB-610) stays field-correct with no future params rewrite.
+        if (spec.target.targetDrawdownSec !== undefined && out.targetTimeSec === undefined) {
+          out.targetTimeSec = spec.target.targetDrawdownSec;
+        }
+      }
+    } else {
+      errors.push('params.grind must be a string or a GrindSpec object');
+    }
+  }
+  return out;
+}
+
+function validateGrindSpec(
+  raw: Record<string, unknown>,
+  errors: string[]
+): GrindSpec | undefined {
+  const target = raw.target;
+  if (!isPlainObject(target)) {
+    errors.push('params.grind.target must be an object');
+    return undefined;
+  }
+  const t: GrindTarget = {};
+  if (target.microns !== undefined) {
+    if (typeof target.microns !== 'number' || Number.isNaN(target.microns)) {
+      errors.push('params.grind.target.microns must be a number');
+    } else {
+      t.microns = target.microns;
+    }
+  }
+  if (target.brewMethodPosition !== undefined) {
+    if (typeof target.brewMethodPosition !== 'string') {
+      errors.push('params.grind.target.brewMethodPosition must be a string');
+    } else {
+      t.brewMethodPosition = target.brewMethodPosition;
+    }
+  }
+  if (target.targetDrawdownSec !== undefined) {
+    if (typeof target.targetDrawdownSec !== 'number' || !Number.isFinite(target.targetDrawdownSec)) {
+      errors.push('params.grind.target.targetDrawdownSec must be a finite number');
+    } else {
+      t.targetDrawdownSec = target.targetDrawdownSec;
+    }
+  }
+  // 611 trust order: absolute microns are unreliable; require a robust anchor.
+  if (t.brewMethodPosition === undefined && t.targetDrawdownSec === undefined) {
+    errors.push('params.grind.target must include brewMethodPosition or targetDrawdownSec');
+    return undefined;
+  }
+  const spec: GrindSpec = { target: t };
+  if (raw.perGrinder !== undefined) {
+    if (!Array.isArray(raw.perGrinder)) {
+      errors.push('params.grind.perGrinder must be an array');
+    } else if (raw.perGrinder.length > 10) {
+      errors.push('params.grind.perGrinder must have at most 10 entries');
+    } else {
+      const pg: PerGrinderGrind[] = [];
+      raw.perGrinder.forEach((item, i) => {
+        if (!isPlainObject(item)) {
+          errors.push(`params.grind.perGrinder[${i}] must be an object`);
+          return;
+        }
+        if (typeof item.grinder !== 'string' || item.grinder.trim().length === 0) {
+          errors.push(`params.grind.perGrinder[${i}].grinder must be a non-empty string`);
+          return;
+        }
+        if (typeof item.clicks !== 'number' && typeof item.clicks !== 'string') {
+          errors.push(`params.grind.perGrinder[${i}].clicks must be a number or string`);
+          return;
+        }
+        if (item.source !== 'measured' && item.source !== 'dial-in-start') {
+          errors.push(`params.grind.perGrinder[${i}].source must be 'measured' or 'dial-in-start'`);
+          return;
+        }
+        const entry: PerGrinderGrind = {
+          grinder: item.grinder,
+          clicks: item.clicks,
+          source: item.source as GrindSource
+        };
+        if (typeof item.grinderId === 'string') entry.grinderId = item.grinderId;
+        if (typeof item.stepless === 'boolean') entry.stepless = item.stepless;
+        if (entry.stepless && typeof item.clicks !== 'string') {
+          errors.push(`params.grind.perGrinder[${i}].clicks must be a string for a stepless grinder`);
+        }
+        pg.push(entry);
+      });
+      if (pg.length > 0) spec.perGrinder = pg;
+    }
+  }
+  if (raw.legacyText !== undefined) {
+    if (typeof raw.legacyText !== 'string') {
+      errors.push('params.grind.legacyText must be a string');
+    } else {
+      spec.legacyText = raw.legacyText;
+    }
+  }
+  return spec;
+}
+
+const DRIPPER_CLASSES = ['bed_restricted', 'dripper_restricted', 'hybrid', 'immersion'] as const;
+const SIZE_MATCHES = ['ok', 'undersized', 'oversized'] as const;
+const BED_DEPTH_SHIFTS = ['shallower', 'deeper', 'similar'] as const;
+const GRIND_SHIFTS = ['coarser', 'finer', 'none'] as const;
+const POUR_SHIFTS = ['gentler', 'more_agitation', 'fewer_pours', 'more_pours', 'none'] as const;
+const CONFIDENCES = ['high', 'medium', 'low'] as const;
+
+// ROB-612: validate the dripper-portability layer (anchors + class + size match +
+// adjustment directions). Whitelist-copy; lives outside params.
+function validateDripperPortability(
+  raw: Record<string, unknown>,
+  errors: string[]
+): DripperPortability | undefined {
+  const origin = raw.origin;
+  if (!isPlainObject(origin) || typeof origin.dripper !== 'string' || origin.dripper.trim() === '') {
+    errors.push('dripperPortability.origin.dripper is required');
+    return undefined;
+  }
+  const out: DripperPortability = { origin: { dripper: origin.dripper }, anchors: {} };
+  if (typeof origin.dripperId === 'string') out.origin.dripperId = origin.dripperId;
+  if (typeof origin.sizeModel === 'string') out.origin.sizeModel = origin.sizeModel;
+
+  const anchors = raw.anchors;
+  if (anchors !== undefined) {
+    if (!isPlainObject(anchors)) {
+      errors.push('dripperPortability.anchors must be an object');
+    } else {
+      if (typeof anchors.ratio === 'string') out.anchors.ratio = anchors.ratio;
+      if (typeof anchors.tempC === 'number') out.anchors.tempC = anchors.tempC;
+      if (typeof anchors.targetDrawdownSec === 'number') {
+        out.anchors.targetDrawdownSec = anchors.targetDrawdownSec;
+      }
+    }
+  }
+
+  if (raw.classNote !== undefined) {
+    if (typeof raw.classNote !== 'string') errors.push('dripperPortability.classNote must be a string');
+    else out.classNote = raw.classNote;
+  }
+
+  if (raw.targets !== undefined) {
+    if (!Array.isArray(raw.targets)) {
+      errors.push('dripperPortability.targets must be an array');
+    } else if (raw.targets.length > 30) {
+      errors.push('dripperPortability.targets must have at most 30 entries');
+    } else {
+      const targets: DripperTarget[] = [];
+      raw.targets.forEach((t, i) => {
+        const p = `dripperPortability.targets[${i}]`;
+        if (!isPlainObject(t)) {
+          errors.push(`${p} must be an object`);
+          return;
+        }
+        if (typeof t.dripper !== 'string' || t.dripper.trim() === '') {
+          errors.push(`${p}.dripper must be a non-empty string`);
+          return;
+        }
+        if (!(DRIPPER_CLASSES as readonly string[]).includes(t.class as string)) {
+          errors.push(`${p}.class must be one of ${DRIPPER_CLASSES.join(', ')}`);
+          return;
+        }
+        if (!(SIZE_MATCHES as readonly string[]).includes(t.sizeMatch as string)) {
+          errors.push(`${p}.sizeMatch must be one of ${SIZE_MATCHES.join(', ')}`);
+          return;
+        }
+        if (!(GRIND_SHIFTS as readonly string[]).includes(t.grindShift as string)) {
+          errors.push(`${p}.grindShift must be one of ${GRIND_SHIFTS.join(', ')}`);
+          return;
+        }
+        if (!(POUR_SHIFTS as readonly string[]).includes(t.pourShift as string)) {
+          errors.push(`${p}.pourShift must be one of ${POUR_SHIFTS.join(', ')}`);
+          return;
+        }
+        if (!(CONFIDENCES as readonly string[]).includes(t.confidence as string)) {
+          errors.push(`${p}.confidence must be one of ${CONFIDENCES.join(', ')}`);
+          return;
+        }
+        const entry: DripperTarget = {
+          dripper: t.dripper,
+          class: t.class as DripperClass,
+          sizeMatch: t.sizeMatch as DripperTarget['sizeMatch'],
+          grindShift: t.grindShift as GrindShift,
+          pourShift: t.pourShift as PourShift,
+          confidence: t.confidence as Confidence
+        };
+        if (typeof t.dripperId === 'string') entry.dripperId = t.dripperId;
+        if ((BED_DEPTH_SHIFTS as readonly string[]).includes(t.bedDepthShift as string)) {
+          entry.bedDepthShift = t.bedDepthShift as DripperTarget['bedDepthShift'];
+        }
+        if (typeof t.bedOverflow === 'boolean') entry.bedOverflow = t.bedOverflow;
+        if (t.warn !== undefined) {
+          if (typeof t.warn !== 'string') errors.push(`${p}.warn must be a string`);
+          else if (t.warn.length > 280) errors.push(`${p}.warn must be at most 280 characters`);
+          else entry.warn = t.warn;
+        }
+        if (typeof t.note === 'string') entry.note = t.note;
+        targets.push(entry);
+      });
+      if (targets.length > 0) out.targets = targets;
+    }
+  }
+
   return out;
 }
 
@@ -150,15 +375,15 @@ function validateRecipeSteps(
     }
     const built: RecipeStep = { note };
     if (step.atSec !== undefined) {
-      if (typeof step.atSec !== 'number') {
-        errors.push(`steps[${i}].atSec must be a number`);
+      if (typeof step.atSec !== 'number' || !Number.isFinite(step.atSec)) {
+        errors.push(`steps[${i}].atSec must be a finite number`);
       } else {
         built.atSec = step.atSec;
       }
     }
     if (step.waterG !== undefined) {
-      if (typeof step.waterG !== 'number') {
-        errors.push(`steps[${i}].waterG must be a number`);
+      if (typeof step.waterG !== 'number' || !Number.isFinite(step.waterG)) {
+        errors.push(`steps[${i}].waterG must be a finite number`);
       } else {
         built.waterG = step.waterG;
       }
@@ -192,6 +417,104 @@ function validateRecipeSteps(
   return out;
 }
 
+// ROB-608: cross-field arithmetic + range checks. Clear contradictions go to
+// `errors` (reject); convention deviations to `warnings` (soft). `method:'other'`
+// (instant sticks etc.) is exempt; espresso skips the pour-over water schedule.
+function validateRecipeCrossFields(
+  value: CreateRecipeInput,
+  errors: string[],
+  warnings: string[]
+): void {
+  const { method } = value;
+  if (method === 'other') return;
+
+  const params = value.params ?? {};
+  const steps = value.steps ?? [];
+  const { doseG, waterG, tempC, ratio, targetTimeSec } = params;
+  const isPourOver = POUR_OVER_METHODS.has(method);
+
+  if (doseG !== undefined && doseG <= 0) errors.push('params.doseG must be greater than 0');
+  if (waterG !== undefined && waterG <= 0) errors.push('params.waterG must be greater than 0');
+  if (tempC !== undefined) {
+    if (tempC <= 0 || tempC > 100) errors.push('params.tempC must be between 0 and 100');
+    else if (tempC < 80) warnings.push(`params.tempC ${tempC}°C is unusually low for hot brewing`);
+  }
+  if (targetTimeSec !== undefined && targetTimeSec <= 0) {
+    errors.push('params.targetTimeSec must be greater than 0');
+  }
+
+  if (ratio !== undefined && doseG && waterG) {
+    const m = /^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$/.exec(ratio);
+    if (m) {
+      const declared = Number(m[1]);
+      const actual = waterG / doseG;
+      if (Number.isFinite(declared) && Math.abs(declared - actual) > 0.3) {
+        warnings.push(`ratio ${ratio} disagrees with waterG/doseG (≈1:${actual.toFixed(1)})`);
+      }
+    }
+  }
+
+  const timed = steps
+    .filter((s): s is RecipeStep & { atSec: number } => typeof s.atSec === 'number')
+    .slice()
+    .sort((a, b) => a.atSec - b.atSec);
+
+  for (let i = 1; i < timed.length; i += 1) {
+    const prev = timed[i - 1];
+    const cur = timed[i];
+    if (typeof prev.endSec === 'number' && cur.atSec < prev.endSec) {
+      errors.push(
+        `steps overlap: a step starts at ${cur.atSec}s before the previous step ends (${prev.endSec}s)`
+      );
+    }
+  }
+  if (timed.some((s) => s.endSec === undefined)) {
+    warnings.push('a timed step has no endSec; pour timing cannot be fully verified');
+  }
+
+  if (isPourOver) {
+    const weighted = timed.filter(
+      (s): s is RecipeStep & { atSec: number; waterG: number } => typeof s.waterG === 'number'
+    );
+    for (let i = 1; i < weighted.length; i += 1) {
+      if (weighted[i].waterG < weighted[i - 1].waterG) {
+        errors.push(
+          `cumulative step waterG decreases (${weighted[i - 1].waterG}g → ${weighted[i].waterG}g)`
+        );
+      }
+    }
+    if (waterG !== undefined) {
+      for (const s of weighted) {
+        if (s.waterG > waterG) {
+          errors.push(`a step waterG (${s.waterG}g) exceeds total params.waterG (${waterG}g)`);
+        }
+      }
+      const finalG = weighted.at(-1)?.waterG;
+      if (finalG !== undefined && Math.abs(finalG - waterG) > 1) {
+        warnings.push(`final step waterG (${finalG}g) does not reach params.waterG (${waterG}g)`);
+      }
+    }
+  }
+
+  if (targetTimeSec !== undefined && timed.length > 0) {
+    const lastEnd = Math.max(
+      ...timed.map((s) => (typeof s.endSec === 'number' ? s.endSec : s.atSec))
+    );
+    if (targetTimeSec < lastEnd) {
+      errors.push(
+        `params.targetTimeSec (${targetTimeSec}s) is before the last pour ends (${lastEnd}s)`
+      );
+    } else if (targetTimeSec - lastEnd > 75) {
+      warnings.push(
+        `unrealistic drawdown: targetTimeSec (${targetTimeSec}s) is ${targetTimeSec - lastEnd}s after the last pour ends`
+      );
+    }
+    if (isPourOver && (targetTimeSec < 60 || targetTimeSec > 600)) {
+      warnings.push(`params.targetTimeSec (${targetTimeSec}s) is outside the typical 60–600s range`);
+    }
+  }
+}
+
 export function validateCreateRecipeInput(
   input: unknown
 ): ValidationResult<CreateRecipeInput> {
@@ -213,6 +536,15 @@ export function validateCreateRecipeInput(
   const beanSnapshot = validateBeanSnapshot(input.beanSnapshot, errors);
   const params = validateRecipeParams(input.params, errors);
   const steps = validateRecipeSteps(input.steps, errors);
+
+  let dripperPortability: DripperPortability | undefined;
+  if (input.dripperPortability !== undefined) {
+    if (!isPlainObject(input.dripperPortability)) {
+      errors.push('dripperPortability must be an object');
+    } else {
+      dripperPortability = validateDripperPortability(input.dripperPortability, errors);
+    }
+  }
 
   let intent: string[] | undefined;
   if (input.intent !== undefined) {
@@ -255,8 +587,65 @@ export function validateCreateRecipeInput(
   if (notes !== undefined) value.notes = notes;
   if (adjustmentFromPrevious !== undefined) value.adjustmentFromPrevious = adjustmentFromPrevious;
   if (createdBy !== undefined) value.createdBy = createdBy;
+  if (dripperPortability !== undefined) value.dripperPortability = dripperPortability;
 
-  return { ok: true, value };
+  const warnings: string[] = [];
+  validateRecipeCrossFields(value, errors, warnings);
+  if (errors.length > 0) return { ok: false, errors };
+
+  return { ok: true, value, warnings };
+}
+
+// ROB-605/611/612: validate a partial recipe UPDATE. Only present fields are
+// validated (no required method/title), through the SAME validators as create so
+// agent-supplied params/grind/steps/beanSnapshot/dripperPortability cannot reach
+// the DB unchecked on the update path.
+export function validateUpdateRecipeInput(
+  input: unknown
+): ValidationResult<Partial<CreateRecipeInput>> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const value: Partial<CreateRecipeInput> = {};
+  if (input.title !== undefined) {
+    if (!isNonEmptyString(input.title)) errors.push('title must be a non-empty string');
+    else value.title = (input.title as string).trim();
+  }
+  if (input.params !== undefined) {
+    const p = validateRecipeParams(input.params, errors);
+    if (p !== undefined) value.params = p;
+  }
+  if (input.steps !== undefined) {
+    const s = validateRecipeSteps(input.steps, errors);
+    if (s !== undefined) value.steps = s;
+  }
+  if (input.notes !== undefined) {
+    const n = pickString(input, 'notes', errors, 'input');
+    if (n !== undefined) value.notes = n;
+  }
+  if (input.intent !== undefined) {
+    if (!isStringArray(input.intent)) errors.push('intent must be a string array');
+    else value.intent = input.intent;
+  }
+  if (input.beanSnapshot !== undefined) {
+    const b = validateBeanSnapshot(input.beanSnapshot, errors);
+    if (b !== undefined) value.beanSnapshot = b;
+  }
+  if (input.adjustmentFromPrevious !== undefined) {
+    const a = pickString(input, 'adjustmentFromPrevious', errors, 'input');
+    if (a !== undefined) value.adjustmentFromPrevious = a;
+  }
+  if (input.dripperPortability !== undefined) {
+    if (!isPlainObject(input.dripperPortability)) {
+      errors.push('dripperPortability must be an object');
+    } else {
+      const d = validateDripperPortability(input.dripperPortability, errors);
+      if (d !== undefined) value.dripperPortability = d;
+    }
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
 }
 
 function validateRatings(
@@ -394,5 +783,202 @@ export function validateCreateFeedbackInput(
   if (nextHint !== undefined) value.nextHint = nextHint;
   if (source !== undefined) value.source = source;
 
-  return { ok: true, value };
+  return { ok: true, value, warnings: [] };
+}
+
+// ── ROB-654: bean attribute writes (agent PATCH + MCP tool). At least one field
+// required. The DB CHECK constraints are the backstop; this returns clean 400s.
+export function validateUpdateBeanAttributesInput(
+  input: unknown
+): ValidationResult<BeanAttributes> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const value: BeanAttributes = {};
+
+  if (input.roastLevelOrd !== undefined) {
+    if (!isInt(input.roastLevelOrd) || input.roastLevelOrd < 1 || input.roastLevelOrd > 5) {
+      errors.push('roastLevelOrd must be an integer 1-5');
+    } else value.roastLevelOrd = input.roastLevelOrd;
+  }
+  if (input.acidity !== undefined) {
+    if (!isInt(input.acidity) || input.acidity < 1 || input.acidity > 5) {
+      errors.push('acidity must be an integer 1-5');
+    } else value.acidity = input.acidity;
+  }
+  if (input.body !== undefined) {
+    if (!isInt(input.body) || input.body < 1 || input.body > 5) {
+      errors.push('body must be an integer 1-5');
+    } else value.body = input.body;
+  }
+  if (input.agtronMin !== undefined) {
+    if (!isInt(input.agtronMin) || input.agtronMin < 0 || input.agtronMin > 150) {
+      errors.push('agtronMin must be an integer 0-150');
+    } else value.agtronMin = input.agtronMin;
+  }
+  if (input.agtronMax !== undefined) {
+    if (!isInt(input.agtronMax) || input.agtronMax < 0 || input.agtronMax > 150) {
+      errors.push('agtronMax must be an integer 0-150');
+    } else value.agtronMax = input.agtronMax;
+  }
+  if (
+    value.agtronMin !== undefined &&
+    value.agtronMax !== undefined &&
+    value.agtronMax < value.agtronMin
+  ) {
+    errors.push('agtronMax must be >= agtronMin');
+  }
+  if (input.decaf !== undefined) {
+    if (typeof input.decaf !== 'boolean') errors.push('decaf must be a boolean');
+    else value.decaf = input.decaf;
+  }
+  if (input.flavorCategories !== undefined) {
+    if (!isStringArray(input.flavorCategories)) {
+      errors.push('flavorCategories must be a string array');
+    } else {
+      const allowed = new Set<string>(BEAN_FLAVOR_CATEGORIES);
+      const invalid = input.flavorCategories.filter((t) => !allowed.has(t));
+      if (invalid.length > 0) {
+        errors.push(
+          `flavorCategories contains unknown values: ${invalid.join(', ')} (allowed: ${BEAN_FLAVOR_CATEGORIES.join(', ')})`
+        );
+      } else {
+        value.flavorCategories = input.flavorCategories as BeanFlavorCategory[];
+      }
+    }
+  }
+  if (input.attrsSource !== undefined) {
+    if (
+      typeof input.attrsSource !== 'string' ||
+      !BEAN_ATTRS_SOURCES.includes(input.attrsSource as BeanAttrsSource)
+    ) {
+      errors.push(`attrsSource must be one of ${BEAN_ATTRS_SOURCES.join(', ')}`);
+    } else {
+      value.attrsSource = input.attrsSource as BeanAttrsSource;
+    }
+  }
+  const sourceUrl = pickString(input, 'sourceUrl', errors, 'input');
+  if (sourceUrl !== undefined && sourceUrl.length > 0) value.sourceUrl = sourceUrl;
+  const attrsNotes = pickString(input, 'attrsNotes', errors, 'input');
+  if (attrsNotes !== undefined && attrsNotes.length > 0) value.attrsNotes = attrsNotes;
+
+  if (errors.length === 0 && Object.keys(value).length === 0) {
+    errors.push('at least one bean attribute is required');
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
+}
+
+// ── bean purchase links (agent write) ────────────────────────────────────────
+// Mirrors the bean_purchase_links CHECK constraints (001_core_schema) so callers
+// get a clean 400 instead of a raw 23514.
+
+export const BEAN_LINK_CATEGORIES = [
+  'product',
+  'lowest_price',
+  'coupon',
+  'generic'
+] as const;
+export type BeanLinkCategory = (typeof BEAN_LINK_CATEGORIES)[number];
+
+export interface CreateBeanPurchaseLinkInput {
+  vendor: string;
+  url: string;
+  linkCategory?: BeanLinkCategory;
+  priceKrw?: number;
+  isAffiliate?: boolean;
+  sortOrder?: number;
+}
+
+export function validateCreateBeanPurchaseLinkInput(
+  input: unknown
+): ValidationResult<CreateBeanPurchaseLinkInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const vendor = pickString(input, 'vendor', errors, 'input');
+  if (vendor === undefined || vendor.length === 0) {
+    errors.push('vendor is required');
+  } else if (vendor.length > 60) {
+    errors.push('vendor must be 60 characters or fewer');
+  }
+
+  const url = pickString(input, 'url', errors, 'input');
+  if (url === undefined || url.length === 0) {
+    errors.push('url is required');
+  } else if (!url.startsWith('https://')) {
+    // bean_purchase_links_url_https — https only, no http/protocol-relative.
+    errors.push('url must start with https://');
+  } else if (url.length > 2048) {
+    errors.push('url must be 2048 characters or fewer');
+  }
+
+  let linkCategory: BeanLinkCategory | undefined;
+  if (input.linkCategory !== undefined) {
+    if (
+      typeof input.linkCategory !== 'string' ||
+      !BEAN_LINK_CATEGORIES.includes(input.linkCategory as BeanLinkCategory)
+    ) {
+      errors.push(`linkCategory must be one of ${BEAN_LINK_CATEGORIES.join(', ')}`);
+    } else {
+      linkCategory = input.linkCategory as BeanLinkCategory;
+    }
+  }
+
+  let priceKrw: number | undefined;
+  if (input.priceKrw !== undefined) {
+    if (!isInt(input.priceKrw) || input.priceKrw < 0) {
+      errors.push('priceKrw must be a non-negative integer');
+    } else priceKrw = input.priceKrw;
+  }
+
+  let isAffiliate: boolean | undefined;
+  if (input.isAffiliate !== undefined) {
+    if (typeof input.isAffiliate !== 'boolean') errors.push('isAffiliate must be a boolean');
+    else isAffiliate = input.isAffiliate;
+  }
+
+  let sortOrder: number | undefined;
+  if (input.sortOrder !== undefined) {
+    if (!isInt(input.sortOrder)) errors.push('sortOrder must be an integer');
+    else sortOrder = input.sortOrder;
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  const value: CreateBeanPurchaseLinkInput = { vendor: vendor as string, url: url as string };
+  if (linkCategory !== undefined) value.linkCategory = linkCategory;
+  if (priceKrw !== undefined) value.priceKrw = priceKrw;
+  if (isAffiliate !== undefined) value.isAffiliate = isAffiliate;
+  if (sortOrder !== undefined) value.sortOrder = sortOrder;
+
+  return { ok: true, value, warnings: [] };
+}
+
+export interface UpdatePreferencesInput {
+  likes: string[];
+  dislikes: string[];
+}
+
+// ROB-654 v2 S1: validate taste preference edits (global singleton write).
+export function validateUpdatePreferencesInput(
+  input: unknown
+): ValidationResult<UpdatePreferencesInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const allowed = new Set<string>(TASTE_TAGS);
+  const clean = (raw: unknown, field: string): string[] => {
+    if (raw === undefined) return [];
+    if (!isStringArray(raw)) { errors.push(`${field} must be a string array`); return []; }
+    const bad = raw.filter((t) => !allowed.has(t));
+    if (bad.length > 0) errors.push(`${field} contains unknown taste tag(s): ${bad.join(', ')}`);
+    return [...new Set(raw.filter((t) => allowed.has(t)))];
+  };
+  const likes = clean(input.likes, 'likes');
+  const dislikes = clean(input.dislikes, 'dislikes');
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: { likes, dislikes }, warnings: [] };
 }
