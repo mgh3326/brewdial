@@ -17,7 +17,6 @@ import { haptic, setKeepAwake } from '../lib/toss';
 import { getRecipeByCode } from '../lib/data/recipes';
 import { getMyCollections, saveRecipe, upsertCalibration } from '../lib/data/user-content';
 import { listFeedbackByRecipe } from '../lib/data/feedback';
-import FeedbackForm from '../components/FeedbackForm';
 import { METHOD_LABELS } from '../lib/recipe-presets';
 import { paramLabel, ratingLabel } from '../lib/labels';
 import { grindDisplay, suggestDripperAdaptation, suggestGrinderClicks } from '../lib/domain';
@@ -734,12 +733,8 @@ export default function RecipeDetail({ code }: { code: string }) {
 
         {tab === 'feedback' && (
           <section className="stack" role="tabpanel" id="panel-feedback" aria-labelledby="tab-feedback">
-            <FeedbackForm
-              recipeCode={recipe.code}
-              onCreated={(fb) => setFeedback((f) => [fb, ...f])}
-            />
             {feedback.length === 0 ? (
-              <p className="empty">아직 피드백이 없어요. 첫 피드백을 남겨보세요.</p>
+              <p className="empty">아직 피드백이 없어요.</p>
             ) : (
               feedback.map((fb) => (
                 <article key={fb._id} className="card">

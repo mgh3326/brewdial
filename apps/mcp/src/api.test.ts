@@ -61,6 +61,20 @@ describe('postJson', () => {
     expect(JSON.parse(calls[0].init.body as string)).toMatchObject({ method: 'v60', title: 'Test Recipe' });
     expect((calls[0].init.headers as Record<string, string>)?.Authorization).toBe('Bearer test-agent-token');
   });
+
+  it('POSTs global preferences to the agent preferences endpoint', async () => {
+    const calls: Call[] = [];
+    await postJson(
+      config,
+      '/api/agent/preferences/global',
+      { likes: ['저산미'], dislikes: ['고산미'] },
+      fetchReturning(200, { likes: ['저산미'], dislikes: ['고산미'] }, calls)
+    );
+    expect(calls[0].url).toBe('https://api.brewdial.example.com/api/agent/preferences/global');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ likes: ['저산미'], dislikes: ['고산미'] });
+    expect((calls[0].init.headers as Record<string, string>)?.Authorization).toBe('Bearer test-agent-token');
+  });
 });
 
 describe('patchJson', () => {
