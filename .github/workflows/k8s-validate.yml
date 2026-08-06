@@ -99,6 +99,21 @@ jobs:
             docker exec "$NODE" crictl images 2>/dev/null | head -40 || true
           }
 
+          # === TEMP R2 PROOF (ROB-1214) — intentionally SKIP k3d image import ===
+          # This commit proves the verification gate fails immediately when images
+          # are absent, instead of a 4-minute ImagePullBackOff timeout.
+          # REVERT THIS BLOCK before merge (restore real import loop).
+          echo "R2 PROOF: intentionally skipping k3d image import"
+          dump_images
+          if images_present; then
+            echo "ERROR: images unexpectedly present without import — cannot prove gate"
+            exit 1
+          fi
+          echo "ERROR: images not present in k3d node (import was intentionally skipped for R2 proof)"
+          echo "Expected refs containing: brewdial-api:test and brewdial-api:broken"
+          exit 1
+          # === end TEMP R2 PROOF ===
+
           MAX_ATTEMPTS=3
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             echo "=== import attempt ${attempt}/${MAX_ATTEMPTS}"
