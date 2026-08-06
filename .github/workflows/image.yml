@@ -10,8 +10,23 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # TEMP probe: can feature-branch workflow_dispatch run via --ref?
+  # Bootstrap entry for Deploy OCI before deploy-oci.yml is on default branch.
+  # GitHub only lists/dispatches workflow *paths* registered on the default branch;
+  # a feature-ref run of this registered path can workflow_call ./deploy-oci.yml.
+  # After merge, prefer: gh workflow run deploy-oci.yml -f git_sha=...
+  # Do NOT use this for automatic deploys — only explicit workflow_dispatch.
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "If true, run OCI production deploy (calls deploy-oci.yml) instead of building an image"
+        required: false
+        type: boolean
+        default: false
+      git_sha:
+        description: "Deploy mode only: git commit (full or short) for :sha-<7> image (empty = this ref HEAD)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -19,6 +34,7 @@ permissions:
 jobs:
   build-push:
     name: Build & push (arm64) to GHCR
+    if: github.event_name != 'workflow_dispatch' || inputs.deploy != true
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -73,3 +89,15 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools inspect '${{ steps.tags.outputs.sha_tag }}'
+
+  # Production image deploy (digest-pinned). Implementation lives in deploy-oci.yml.
+  deploy-oci:
+    name: Deploy OCI (via deploy-oci.yml)
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true
+    permissions:
+      contents: read
+      packages: read
+    secrets: inherit
+    uses: ./.github/workflows/deploy-oci.yml
+    with:
+      git_sha: ${{ inputs.git_sha }}

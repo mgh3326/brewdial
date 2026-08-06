@@ -21,6 +21,17 @@ on:
         required: false
         type: string
         default: ""
+  # Allow an already-registered workflow (on default branch) to call this file
+  # from a feature ref before deploy-oci.yml itself is on main. Same jobs/secrets.
+  workflow_call:
+    inputs:
+      git_sha:
+        description: >
+          Git commit (full or short) whose GHCR tag :sha-<7chars> to deploy.
+          Leave empty to use this workflow run's GITHUB_SHA.
+        required: false
+        type: string
+        default: ""
 
 # Minimal top-level permissions (R8). Job elevates packages:read only to
 # resolve the immutable GHCR digest for the release tag.
