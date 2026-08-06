@@ -207,3 +207,22 @@ jobs:
           trap 'kill $PF_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -fs localhost:13022/api/db/health && break || sleep 2; done
           echo
+
+      # Runs even (only) when any earlier step failed — the dump must ALWAYS be
+      # in the log, so a red run is diagnosable without a re-run.
+      - name: Failure diagnostics (always dumped on failure)
+        if: failure()
+        run: |
+          set +e
+          echo "=== get all (brewdial)"
+          kubectl -n brewdial get all -o wide
+          echo "=== describe pods (brewdial-api)"
+          kubectl -n brewdial describe pod -l app=brewdial-api | tail -80
+          echo "=== logs, all containers incl. init (current + previous)"
+          kubectl -n brewdial logs -l app=brewdial-api --all-containers --tail=200
+          kubectl -n brewdial logs -l app=brewdial-api --all-containers --previous --tail=100
+          echo "=== events (brewdial)"
+          kubectl -n brewdial get events --sort-by=.lastTimestamp | tail -50
+          echo "=== get all (migrate-fail, if the negative test got that far)"
+          kubectl -n migrate-fail get all -o wide 2>/dev/null
+          kubectl -n migrate-fail get events --sort-by=.lastTimestamp 2>/dev/null | tail -20
