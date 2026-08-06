@@ -10,7 +10,13 @@ export async function identityMiddleware(c: Context, next: Next) {
     const provider = i >= 0 ? raw.slice(0, i) : ''
     const externalKey = i >= 0 ? raw.slice(i + 1) : ''
     if (VALID.has(provider) && externalKey.length >= 16) {
-      try { c.set('appUserId', await resolveAppUser(getDb(), provider, externalKey)) } catch { /* leave unset */ }
+      // ROB-642 C3: valid header + resolve throws (DB down) → fail CLOSED (503) so a
+      // private write can't silently become public. Garbage headers stay anonymous.
+      try {
+        c.set('appUserId', await resolveAppUser(getDb(), provider, externalKey))
+      } catch {
+        return c.json({ ok: false, error: 'identity temporarily unavailable' }, 503)
+      }
     }
   }
   await next()

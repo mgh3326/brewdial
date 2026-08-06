@@ -8,6 +8,7 @@ export interface FeedbackRow {
   id: string
   recipe_code: string
   bean_id: string | null
+  owner_id: string | null
   ratings: unknown | null
   actual: unknown | null
   comment: string | null
@@ -26,6 +27,7 @@ const FEEDBACK_COLS: ReadonlyArray<keyof DB['feedback']> = [
   'id',
   'recipe_code',
   'bean_id',
+  'owner_id',
   'ratings',
   'actual',
   'comment',
@@ -50,6 +52,7 @@ export function listFeedbackByRecipe(db: Kysely<DB>, code: string): Promise<Feed
 export interface InsertFeedbackPayload {
   recipeCode: string
   beanId?: string | null
+  ownerId?: string | null
   ratings?: unknown
   actual?: unknown
   comment?: string
@@ -114,6 +117,7 @@ export function insertFeedback(
     source: payload.source ?? 'web',
   }
   if (payload.beanId != null) values.bean_id = payload.beanId
+  if (payload.ownerId != null) values.owner_id = payload.ownerId
   if (payload.ratings !== undefined) values.ratings = payload.ratings as unknown
   if (payload.actual !== undefined) values.actual = payload.actual as unknown
   if (payload.comment !== undefined) values.comment = payload.comment

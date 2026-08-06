@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "check": "pnpm --filter @brewdial/shared build && pnpm --filter @brewdial/db build && tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

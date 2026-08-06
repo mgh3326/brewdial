@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { getBean, type BeanSummary } from '../lib/data/beans';
 import { listRecipesByBean } from '../lib/data/recipes';
 import { getMyCollections, saveBean } from '../lib/data/user-content';
+import { fetchRecommendations, type BeanScore } from '../lib/data/recommend';
 import RecipeCard from '../components/RecipeCard';
 import type { RecipeDoc } from '../lib/domain';
 
@@ -14,6 +15,13 @@ const FILTERS: ReadonlyArray<[RecipeFilter, string]> = [
   ['mine', '내 레시피'],
 ];
 
+const BAND_LABEL: Record<BeanScore['band'], string> = {
+  great: '잘 맞음',
+  ok: '무난',
+  adventure: '모험',
+  unknown: '',
+};
+
 export default function BeanDetail({ id }: { id: string }) {
   const [bean, setBean] = useState<BeanSummary | null>(null);
   const [recipes, setRecipes] = useState<RecipeDoc[]>([]);
@@ -23,6 +31,7 @@ export default function BeanDetail({ id }: { id: string }) {
   const [myCodes, setMyCodes] = useState<Set<string>>(new Set());
   const [beanSaved, setBeanSaved] = useState(false);
   const [savingBean, setSavingBean] = useState(false);
+  const [score, setScore] = useState<BeanScore | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -57,6 +66,15 @@ export default function BeanDetail({ id }: { id: string }) {
     })();
   }, [id]);
 
+  // ROB-654 v2 S1: read-time per-bean match score (for axis strip).
+  useEffect(() => {
+    fetchRecommendations()
+      .then((r) => setScore(r.bands[id] ?? null))
+      .catch(() => {
+        /* best-effort: skip the axis strip on failure */
+      });
+  }, [id]);
+
   function handleSaveBean(): void {
     if (savingBean || beanSaved) return;
     setSavingBean(true);
@@ -79,7 +97,14 @@ export default function BeanDetail({ id }: { id: string }) {
     return (
       <div className="screen">
         <div className="error-panel">{error ?? '원두를 찾을 수 없어요.'}</div>
-        <a className="card" href="#/">
+        <a
+          className="card"
+          href="#/"
+          onClick={(e) => {
+            e.preventDefault();
+            location.replace('#/');
+          }}
+        >
           원두 목록으로
         </a>
       </div>
@@ -101,6 +126,20 @@ export default function BeanDetail({ id }: { id: string }) {
       />
       <div className="screen">
         {bean.notes && <p className="sub">{bean.notes}</p>}
+
+        {score && score.band !== 'unknown' && (
+          <div className="axis-strip">
+            <span className={`band band-${score.band}`}>{BAND_LABEL[score.band]}</span>
+            {score.axes.map((a) => (
+              <span key={a.key} className={`axis axis-${a.match}`}>
+                {a.label} {a.value}
+                {a.target != null ? ` (타깃 ${a.target})` : ''}{' '}
+                {a.match === 'hit' ? '✓' : a.match === 'miss' ? '✗' : ''}
+              </span>
+            ))}
+            <p className="muted">{score.why}</p>
+          </div>
+        )}
 
         <div className="row">
           <button

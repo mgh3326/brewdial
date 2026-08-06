@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  validateCreateBeanPurchaseLinkInput,
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
+  validateUpdateBeanAttributesInput,
+  validateUpdatePreferencesInput,
   validateUpdateRecipeInput
 } from './validation.js';
 
@@ -639,4 +642,143 @@ describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
     const r = validateUpdateRecipeInput('nope');
     expect(r.ok).toBe(false);
   });
+});
+
+describe('validateUpdateBeanAttributesInput', () => {
+  it('accepts a full valid attribute set', () => {
+    const r = validateUpdateBeanAttributesInput({
+      roastLevelOrd: 4,
+      agtronMin: 57,
+      agtronMax: 59,
+      acidity: 1,
+      body: 5,
+      decaf: false,
+      flavorCategories: ['nutty_cocoa', 'sweet'],
+      attrsSource: 'roaster_page',
+      sourceUrl: 'https://example.com/x',
+      attrsNotes: '산미1/무게감4.5',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.acidity).toBe(1);
+      expect(r.value.flavorCategories).toEqual(['nutty_cocoa', 'sweet']);
+      expect(r.value.attrsSource).toBe('roaster_page');
+    }
+  });
+
+  it('rejects out-of-range 1..5 axes', () => {
+    for (const bad of [{ acidity: 0 }, { acidity: 6 }, { body: 9 }, { roastLevelOrd: 0 }]) {
+      expect(validateUpdateBeanAttributesInput(bad).ok).toBe(false);
+    }
+  });
+
+  it('rejects agtronMax < agtronMin', () => {
+    const r = validateUpdateBeanAttributesInput({ agtronMin: 90, agtronMax: 50 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/agtronMax must be >= agtronMin/);
+  });
+
+  it('rejects an unknown flavor category', () => {
+    const r = validateUpdateBeanAttributesInput({ flavorCategories: ['chocolate'] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/flavorCategories contains unknown/);
+  });
+
+  it('rejects an unknown attrsSource', () => {
+    expect(validateUpdateBeanAttributesInput({ attrsSource: 'blog' }).ok).toBe(false);
+  });
+
+  it('requires at least one attribute (empty object)', () => {
+    const r = validateUpdateBeanAttributesInput({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/at least one bean attribute/);
+  });
+
+  it('rejects a non-object input', () => {
+    expect(validateUpdateBeanAttributesInput('nope').ok).toBe(false);
+  });
+});
+
+describe('validateCreateBeanPurchaseLinkInput', () => {
+  const VALID = { vendor: 'Kurly', url: 'https://www.kurlyglobal.com/products/m00000176042' };
+
+  it('accepts a minimal vendor + https url', () => {
+    const r = validateCreateBeanPurchaseLinkInput(VALID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.vendor).toBe('Kurly');
+      // Optional fields stay absent so the DB defaults apply.
+      expect(r.value.linkCategory).toBeUndefined();
+      expect(r.value.priceKrw).toBeUndefined();
+    }
+  });
+
+  it('accepts the full optional set', () => {
+    const r = validateCreateBeanPurchaseLinkInput({
+      ...VALID,
+      linkCategory: 'product',
+      priceKrw: 31000,
+      isAffiliate: false,
+      sortOrder: 1
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.priceKrw).toBe(31000);
+  });
+
+  it('requires vendor and url', () => {
+    const r = validateCreateBeanPurchaseLinkInput({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.join(' ')).toMatch(/vendor is required/);
+      expect(r.errors.join(' ')).toMatch(/url is required/);
+    }
+  });
+
+  // bean_purchase_links_url_https — reject before the DB CHECK does.
+  it('rejects a non-https url', () => {
+    const r = validateCreateBeanPurchaseLinkInput({ ...VALID, url: 'http://example.com/x' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/must start with https/);
+  });
+
+  // bean_purchase_links_vendor_len
+  it('rejects a vendor over 60 chars', () => {
+    const r = validateCreateBeanPurchaseLinkInput({ ...VALID, vendor: 'x'.repeat(61) });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/60 characters/);
+  });
+
+  it('rejects an unknown linkCategory', () => {
+    const r = validateCreateBeanPurchaseLinkInput({ ...VALID, linkCategory: 'affiliate' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/linkCategory must be one of/);
+  });
+
+  it('rejects a negative or non-integer priceKrw', () => {
+    expect(validateCreateBeanPurchaseLinkInput({ ...VALID, priceKrw: -1 }).ok).toBe(false);
+    expect(validateCreateBeanPurchaseLinkInput({ ...VALID, priceKrw: 1.5 }).ok).toBe(false);
+  });
+
+  it('rejects a non-object input', () => {
+    expect(validateCreateBeanPurchaseLinkInput('nope').ok).toBe(false);
+  });
+});
+
+describe('validateUpdatePreferencesInput', () => {
+  it('accepts whitelisted like/dislike tags', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['저산미', '다크 로스팅'], dislikes: ['고산미'] });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.value.likes).toEqual(['저산미', '다크 로스팅']); expect(r.value.dislikes).toEqual(['고산미']); }
+  });
+  it('rejects an unknown tag', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['초코비'] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/unknown taste tag/);
+  });
+  it('defaults missing arrays to empty and dedupes', () => {
+    const r = validateUpdatePreferencesInput({ likes: ['저산미', '저산미'] });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.value.likes).toEqual(['저산미']); expect(r.value.dislikes).toEqual([]); }
+  });
+  it('rejects a non-object', () => { expect(validateUpdatePreferencesInput('x').ok).toBe(false); });
 });

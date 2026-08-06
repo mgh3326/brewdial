@@ -1,29 +1,10 @@
-import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '../domain';
-import { validateCreateFeedbackInput } from '../domain';
-import { apiGet, apiSend } from '../api';
+import type { FeedbackDoc, RecipeCode } from '../domain';
+import { apiGet } from '../api';
+import { resolveIdentity } from '../identity';
 import { rowToFeedback, type FeedbackRow } from './mappers';
 
 export async function listFeedbackByRecipe(code: RecipeCode): Promise<FeedbackDoc[]> {
-  const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`);
+  const identity = await resolveIdentity();
+  const rows = await apiGet<FeedbackRow[]>(`/recipes/${encodeURIComponent(code)}/feedback`, { identity });
   return rows.map(rowToFeedback);
-}
-
-export async function createFeedback(input: CreateFeedbackInput): Promise<FeedbackDoc> {
-  const result = validateCreateFeedbackInput(input);
-  if (!result.ok) throw new Error(result.errors.join('; '));
-  const f = result.value;
-
-  const body = {
-    ratings: f.ratings ?? null,
-    actual: f.actual ?? null,
-    comment: f.comment ?? null,
-    rawComment: f.rawComment ?? null,
-    quickTags: f.quickTags ?? null,
-    desiredDirection: f.desiredDirection ?? null,
-    nextHint: f.nextHint ?? null,
-    source: f.source ?? 'web',
-  };
-
-  const row = await apiSend<FeedbackRow>('POST', `/recipes/${encodeURIComponent(f.recipeCode)}/feedback`, body);
-  return rowToFeedback(row);
 }

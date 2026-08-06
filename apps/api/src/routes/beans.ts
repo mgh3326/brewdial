@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { getDb, listBeans, findBeans, getBean } from '@brewdial/db'
+import { getDb, listBeans, findBeans, getBean, listBeanPurchaseLinks } from '@brewdial/db'
 
 export const beans = new Hono()
 
@@ -26,4 +26,13 @@ beans.get('/:id', async (c) => {
   const row = await getBean(db, id)
   if (!row) return c.json({ error: 'not found' }, 404)
   return c.json(row)
+})
+
+// GET /beans/:id/purchase-links — active links only, sort_order asc.
+// Separate from GET /beans/:id so the bean payload shape the mini-app mapper
+// parses (BEAN_COLUMNS) stays unchanged.
+beans.get('/:id/purchase-links', async (c) => {
+  const db = getDb()
+  const rows = await listBeanPurchaseLinks(db, c.req.param('id'))
+  return c.json(rows)
 })

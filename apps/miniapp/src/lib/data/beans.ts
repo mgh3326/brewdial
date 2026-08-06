@@ -12,6 +12,17 @@ interface BeanSummaryRow {
   recipe_count: number;
   latest_recipe_at: string | null;
   has_ai: boolean;
+  // ROB-654 structured attributes (agent-written; UI is v2)
+  roast_level_ord: number | null;
+  agtron_min: number | null;
+  agtron_max: number | null;
+  acidity: number | null;
+  body: number | null;
+  decaf: boolean | null;
+  flavor_categories: string[] | null;
+  attrs_source: string | null;
+  source_url: string | null;
+  attrs_notes: string | null;
 }
 
 export interface BeanSummary {
@@ -25,6 +36,17 @@ export interface BeanSummary {
   recipeCount: number;
   latestRecipeAt?: string;
   hasAi: boolean;
+  // ROB-654 structured attributes
+  roastLevelOrd?: number;
+  agtronMin?: number;
+  agtronMax?: number;
+  acidity?: number;
+  body?: number;
+  decaf?: boolean;
+  flavorCategories?: string[];
+  attrsSource?: string;
+  sourceUrl?: string;
+  attrsNotes?: string;
 }
 
 function rowToBean(r: BeanSummaryRow): BeanSummary {
@@ -40,6 +62,16 @@ function rowToBean(r: BeanSummaryRow): BeanSummary {
   if (r.roast_level != null) b.roastLevel = r.roast_level;
   if (r.notes != null) b.notes = r.notes;
   if (r.latest_recipe_at != null) b.latestRecipeAt = r.latest_recipe_at;
+  if (r.roast_level_ord != null) b.roastLevelOrd = r.roast_level_ord;
+  if (r.agtron_min != null) b.agtronMin = r.agtron_min;
+  if (r.agtron_max != null) b.agtronMax = r.agtron_max;
+  if (r.acidity != null) b.acidity = r.acidity;
+  if (r.body != null) b.body = r.body;
+  if (r.decaf != null) b.decaf = r.decaf;
+  if (r.flavor_categories != null) b.flavorCategories = r.flavor_categories;
+  if (r.attrs_source != null) b.attrsSource = r.attrs_source;
+  if (r.source_url != null) b.sourceUrl = r.source_url;
+  if (r.attrs_notes != null) b.attrsNotes = r.attrs_notes;
   return b;
 }
 

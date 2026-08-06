@@ -1,23 +1,27 @@
-## gstack (REQUIRED — global install)
+# BrewDial
 
-**Before doing ANY work, verify gstack is installed:**
+Agent-friendly coffee recipe and dial-in system. pnpm workspace, Node >= 22.
+
+## Layout
+
+- `apps/api` — backend API
+- `apps/mcp` — MCP server (stdio)
+- `apps/miniapp` — 앱인토스 미니앱 (Vite SPA, `web:build` → `.ait`)
+- `apps/web` — Cloudflare Worker
+- `packages/db` — schema, migrations (`db:migrate`), codegen
+- `packages/shared` — 공용 타입/로직
+
+## Commands
 
 ```bash
-test -d ~/.claude/skills/gstack/bin && echo "GSTACK_OK" || echo "GSTACK_MISSING"
+pnpm build      # 전체 빌드
+pnpm check      # 타입 체크
+pnpm test       # 테스트
+pnpm lint
+pnpm db:migrate # 마이그레이션 적용
 ```
 
-If GSTACK_MISSING: STOP. Do not proceed. Tell the user:
+## Notes
 
-> gstack is required for all AI-assisted work in this repo.
-> Install it:
-> ```bash
-> git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-> cd ~/.claude/skills/gstack && ./setup --team
-> ```
-> Then restart your AI coding tool.
-
-Do not skip skills, ignore gstack errors, or work around missing gstack.
-
-Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
-and /browse are available. Use /browse for all web browsing.
-Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
+- 웹 브라우징이 필요하면 claude-in-chrome MCP(`mcp__claude-in-chrome__*`)를 사용한다.
+- 마이그레이션 추가 전에 프로덕션에 이미 적용된 버전을 `pgmigrations` 테이블에서 확인할 것.

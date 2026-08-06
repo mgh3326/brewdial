@@ -10,6 +10,7 @@ import {
   handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
+  handleUpdatePreferences,
   handleUpdateRecipe
 } from './tools.js';
 import type { ApiConfig } from './config.js';
@@ -154,6 +155,39 @@ describe('handleCreateFeedback', () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '오늘은 산미가 강했음' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error creating feedback');
+  });
+});
+
+describe('handleUpdatePreferences', () => {
+  it('rejects taste tags outside the shared whitelist', async () => {
+    const result = await handleUpdatePreferences(mockConfig, { likes: ['초코비'] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('unknown taste tag');
+  });
+
+  it('POSTs valid preferences to the agent endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ likes: ['저산미'], dislikes: ['고산미'] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleUpdatePreferences(mockConfig, {
+      likes: ['저산미'],
+      dislikes: ['고산미'],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('preference:global');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${mockConfig.baseUrl}/api/agent/preferences/global`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit & { headers: Record<string, string> };
+    expect(init.headers.Authorization).toBe(`Bearer ${mockConfig.agentToken}`);
+    expect(JSON.parse(init.body as string)).toEqual({ likes: ['저산미'], dislikes: ['고산미'] });
   });
 });
 
