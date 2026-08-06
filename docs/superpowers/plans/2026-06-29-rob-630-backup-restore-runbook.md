@@ -65,7 +65,7 @@ and the live comparison (≈seconds). Re-run; if it persists, investigate before
 ## Manual commands (on the box)
 
 ```bash
-ssh -i ~/.ssh/ssh-key-2026-06-23.key opc@140.245.42.173
+ssh -i <ssh-key> opc@<box-host>
 
 # run a backup now
 sudo systemctl start brewdial-backup    # or: /opt/brewdial/deploy/oci/backup.sh

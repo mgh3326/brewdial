@@ -12,8 +12,8 @@ CONFIG="${BREWDIAL_PULL_ENV:-$HOME/.brewdial-backup.env}"
 # shellcheck source=/dev/null
 [ -r "$CONFIG" ] && . "$CONFIG"
 
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/ssh-key-2026-06-23.key}"
-BOX="${BOX:-opc@140.245.42.173}"
+SSH_KEY="${SSH_KEY:-}"
+BOX="${BOX:-}"
 REMOTE_DIR="${REMOTE_DIR:-/var/backups/brewdial/}"
 LOCAL_DIR="${LOCAL_DIR:-$HOME/brewdial-backups}"
 HC_PING_URL="${HC_PULL_PING_URL:-}"
@@ -22,6 +22,8 @@ KEEP_WEEKLY="${KEEP_WEEKLY:-12}"
 KEEP_GLOBALS="${KEEP_GLOBALS:-30}"
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+[ -n "$BOX" ] || { log "ERROR: BOX must be set in $CONFIG or the environment"; exit 1; }
+[ -n "$SSH_KEY" ] || { log "ERROR: SSH_KEY must be set in $CONFIG or the environment"; exit 1; }
 hc()  { [ -n "$HC_PING_URL" ] || return 0; curl -fsS -m 10 --retry 3 "${HC_PING_URL}${1:+/$1}" -o /dev/null || true; }
 on_err() { log "PULL FAILED (line $1)"; hc fail; }
 trap 'on_err "$LINENO"' ERR
