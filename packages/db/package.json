@@ -14,6 +14,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "pnpm --filter @brewdial/shared build && tsc",
+    "check": "pnpm --filter @brewdial/shared build && tsc --noEmit",
     "migrate": "node-pg-migrate -m migrations -j sql up",
     "migrate:down": "node-pg-migrate -m migrations -j sql down",
     "codegen": "kysely-codegen --url=$DATABASE_URL --out-file src/types.ts",
