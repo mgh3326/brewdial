@@ -135,12 +135,19 @@ jobs:
           set -euo pipefail
           kubectl create namespace migrate-fail
           # Same manifests, broken DSN host, in a scratch namespace.
+          # containerPort is remapped to a free port: the healthy variant-A pod
+          # above is hostNetwork and holds :3020 on the (single) node, and the
+          # scheduler's NodePorts plugin refuses a second hostNetwork pod
+          # declaring the same port (observed: FailedScheduling "didn't have
+          # free ports" — itself live proof of why variant A forces maxSurge=0).
+          # The app container never starts in this test, so the port is moot.
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
               -e 's|postgres.brewdial.svc.cluster.local|postgres.does-not-exist|' \
               deploy/oci/k3s/ci/secret-ci.yaml | kubectl apply -f -
           sed 's|namespace: brewdial|namespace: migrate-fail|' deploy/oci/k3s/configmap.yaml | kubectl apply -f -
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
               -e "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" \
+              -e 's|containerPort: 3020|containerPort: 13029|' \
               deploy/oci/k3s/deployment.yaml | kubectl apply -f -
           echo "--- waiting for the migration initContainer to fail..."
           for i in $(seq 1 36); do
@@ -149,7 +156,9 @@ jobs:
             [ "$PHASE" = "CrashLoopBackOff" ] && break
             sleep 5
           done
-          kubectl -n migrate-fail get pods
+          kubectl -n migrate-fail get pods -o wide
+          echo "--- events (migrate-fail):"
+          kubectl -n migrate-fail get events --sort-by=.lastTimestamp | tail -15
           echo "--- init container failure logs:"
           kubectl -n migrate-fail logs -l app=brewdial-api -c migrate --tail=5 || true
           APP_STATUS=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses}')
