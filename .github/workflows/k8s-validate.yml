@@ -149,11 +149,16 @@ jobs:
               -e "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" \
               -e 's|containerPort: 3020|containerPort: 13029|' \
               deploy/oci/k3s/deployment.yaml | kubectl apply -f -
-          echo "--- waiting for the migration initContainer to fail..."
+          echo "--- waiting for the migration initContainer to fail repeatedly..."
+          # restartCount-based detection: polling for the literal waiting reason
+          # "CrashLoopBackOff" is brittle (init-container state flickers between
+          # waiting/terminated and jsonpath errors on the missing key → empty).
+          # restartCount >= 2 with pod STATUS Init:* proves repeated failure.
           for i in $(seq 1 36); do
-            PHASE=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.initContainerStatuses[0].state.waiting.reason}' 2>/dev/null || true)
-            echo "init waiting reason: ${PHASE:-<none>}"
-            [ "$PHASE" = "CrashLoopBackOff" ] && break
+            RC=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.initContainerStatuses[0].restartCount}' 2>/dev/null || true)
+            STATUS=$(kubectl -n migrate-fail get pod -l app=brewdial-api --no-headers 2>/dev/null | awk '{print $3}')
+            echo "init restartCount: ${RC:-<none>}  pod status: ${STATUS:-<none>}"
+            case "$STATUS" in Init:*) [ "${RC:-0}" -ge 2 ] && break;; esac
             sleep 5
           done
           kubectl -n migrate-fail get pods -o wide
@@ -166,8 +171,9 @@ jobs:
           if [ -n "$APP_STATUS" ] && [ "$APP_STATUS" != "[]" ]; then
             echo "ERROR: app container started despite failing migration"; exit 1
           fi
-          [ "$PHASE" = "CrashLoopBackOff" ] || { echo "ERROR: migration failure not observed"; exit 1; }
-          echo "OK: migration failure kept the app container from ever starting"
+          case "$STATUS" in Init:*) : ;; *) echo "ERROR: pod not stuck in Init (status: $STATUS)"; exit 1;; esac
+          [ "${RC:-0}" -ge 2 ] || { echo "ERROR: migration failure not observed (restartCount=$RC)"; exit 1; }
+          echo "OK: migration failure kept the app container from ever starting (restartCount=$RC, status=$STATUS)"
           kubectl delete namespace migrate-fail --wait=false
 
       - name: R5 — rollback ACTUALLY works (broken image rollout → undo)
