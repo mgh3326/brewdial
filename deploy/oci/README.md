@@ -49,8 +49,8 @@ ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
    + `brewdial-verify.timer` (the gate before decommissioning Supabase). Off-box target is the
    Mac (not OCI Object Storage) to stay within the free tier. Full procedure + DR steps:
    `docs/superpowers/plans/2026-06-29-rob-630-backup-restore-runbook.md`.
-3. **k3s Phase 2 design:** the manifest placement, release identity, audit
-   trail, rollback procedure, and non-interactive `KUBECONFIG` requirement
-   are specified in `k3s/RUNBOOK.md` under “Phase 2 design”. The CI workflow
-   and box checkout are not implemented until that design receives its own
-   approval.
+3. **k3s CI deploy (ROB-1214 Phase 2+):** `.github/workflows/deploy-oci.yml`.
+   **`main` = CI baseline** (images). **`production` push = release**
+   (fast-forward only: `git push origin main:production`). Rollback =
+   `gh workflow run deploy-oci.yml -f git_sha=<prior>`. Full procedure:
+   `k3s/RUNBOOK.md` §7.

@@ -6,8 +6,9 @@ ROB-630 backup + weekly verify-restore gate targets host PG).
 
 Phase 1 scope: everything here is validated in CI (`.github/workflows/k8s-validate.yml`).
 **Production cutover to variant B was completed 2026-08-06** (operator-approved).
-This document records the applied shape; Phase 2 CI auto-deploy remains out of
-scope (CF Access unset).
+This document records the applied shape. **CI image deploy** is
+`.github/workflows/deploy-oci.yml` (production push + workflow_dispatch) —
+see §7.
 
 > **Fact accuracy.** Values under **Confirmed** came from a single production
 > session (cutover day). Do not invent additional production IPs, digests, or
@@ -184,10 +185,11 @@ GHCR pull: if the package is public (repo is being flipped public), no pull
 secret is needed. Otherwise: `kubectl -n brewdial create secret docker-registry
 ghcr --docker-server=ghcr.io ...` + `imagePullSecrets` on the Deployment.
 
-## 3. Deploy / update (CI does this; shown here for manual use)
+## 3. Deploy / update (CI does this; shown here for manual emergency use)
 
 Images carry two tags: immutable `:sha-<short>` and moving `:latest`.
-**Always deploy by digest.**
+**Always deploy by digest.** Normal path is CI (see §7). Manual box commands
+only for emergency when Actions is unavailable:
 
 ```bash
 DIGEST=$(crane digest ghcr.io/mgh3326/brewdial:sha-<short>)   # or from the image.yml run log
@@ -206,7 +208,22 @@ migration blocks the app from starting (rollout fails → see §4).
 
 ## 4. Rollback
 
-### 4.1 In-cluster image rollback
+### 4.1 Standard rollback — `workflow_dispatch` with prior `git_sha`
+
+**Do not force-push `production` to roll back.** The standard path is a manual
+Actions run of `Deploy OCI` with the previous healthy commit:
+
+```bash
+# previous healthy short or full SHA that still has ghcr.io/.../brewdial:sha-<short>
+gh workflow run deploy-oci.yml -f git_sha=<prior-sha>
+# then: gh run watch  (confirm DEPLOY_OK + imageID)
+```
+
+Requirements: that SHA must (1) be on `main`'s history and (2) still have a
+GHCR image tag `sha-<7chars>`. The workflow refuses missing images and
+refuses SHAs not reachable from `origin/main` (no silent fallback).
+
+### 4.2 Emergency in-cluster image rollback
 
 ```bash
 kubectl -n brewdial rollout history deploy/brewdial-api
@@ -215,7 +232,9 @@ kubectl -n brewdial rollout status deploy/brewdial-api
 ```
 
 This exact path (broken image → failed rollout → `rollout undo` → healthy) is
-exercised in CI on every PR — see the `k8s-validate.yml` run log.
+exercised in CI on every PR — see the `k8s-validate.yml` run log. Prefer §4.1
+for intentional version selection; use undo when the just-deployed revision is
+bad and the prior ReplicaSet is still known-good.
 
 🔴 **Rollback does NOT undo migrations.** `rollout undo` restores the previous
 pod spec; the database schema stays wherever the newer migration left it.
@@ -318,138 +337,125 @@ are mounted.)
 **Note:** while the systemd unit still runs on `:3020`, free that port first
 (`systemctl stop brewdial-api`) before the rescue container binds it.
 
-## 7. CI deployment (Phase 2 — NOT in this merge)
+## 7. CI release procedure (ROB-1214 Phase 2+)
 
-`.github/workflows/deploy-oci.yml` (CF Tunnel + Access Service Auth → SSH →
-box-local `kubectl apply`) is **deliberately absent** from Phase 1: the CF
-Tunnel SSH route, Access app, Service Auth policy, service token and GitHub
-secrets are all operator-unset, so such a workflow cannot be verified end to
-end today. It lands only after the operator completes the Linear checklist and
-the workflow has been proven on a real run.
+Implemented workflow: `.github/workflows/deploy-oci.yml`.
 
-## 8. Phase 2 design — manifest placement and apply contract (design only)
+### 7.1 Branch roles
 
-This section defines the missing source-of-truth contract for CI deployment.
-It does not add the Phase 2 workflow, a box checkout, a kustomization, or a
-production Deployment. Those are separate implementation and cutover work.
+| Branch | Role |
+|---|---|
+| **`main`** | CI baseline. Every push/PR runs CI Gate, k8s Validation, Container Image. Images are published as `ghcr.io/mgh3326/brewdial:sha-<7chars>` **only** from main (and same-repo PR builds). |
+| **`production`** | **Release decision tip.** A push to `production` runs `Deploy OCI` and ships that commit's image digest to the live cluster. |
 
-### 8.1 Options
+`main` green ≠ live. Live updates only when `production` moves (or when an
+operator runs `workflow_dispatch`).
+
+### 7.2 Standard promotion — fast-forward only
+
+```bash
+# From a machine with push rights (after main is green and image exists):
+git fetch origin
+git push origin main:production
+# → Deploy OCI runs on the production push event for that SHA
+```
+
+**Why fast-forward is mandatory:** `image.yml` builds `sha-<short>` for commits
+on `main`. A **merge-commit** promotion (`git checkout production && git merge
+main && git push`) creates a **new** SHA that never went through the image
+workflow → GHCR has no `sha-<new>` → deploy fails closed with:
+
+```text
+ERROR: no image for sha-XXXX (HTTP …)
+production must be a fast-forward of main so GHCR has …:sha-XXXX
+```
+
+There is **no** fallback to “nearest ancestor image” — that would silently ship
+different code than `production` HEAD.
+
+**Past pitfall:** production was sometimes advanced with merge commits (e.g.
+`c447085` had two parents). That pattern must not return. If `production` is
+not an ancestor of `main`, fix history with an explicit operator decision
+before the next release (do not invent SHAs in CI).
+
+Check before promoting:
+
+```bash
+git fetch origin
+git merge-base --is-ancestor origin/production origin/main && echo "ff-ok"
+# Confirm image exists (Actions image run log, or registry HEAD):
+#   ghcr.io/mgh3326/brewdial:sha-$(git rev-parse --short=7 origin/main)
+```
+
+### 7.3 What the deploy job does
+
+1. Resolve target SHA (`GITHUB_SHA` on production push, or `git_sha` input on
+   dispatch).
+2. **Guard:** target must be an ancestor of `origin/main` (on main's history).
+3. **Guard:** resolve `Docker-Content-Digest` for `sha-<7>`; missing → fail with
+   the fast-forward message above (no alternate tag).
+4. CF Access SSH → box-local `kubectl` with explicit
+   `KUBECONFIG=$HOME/.kube/config` (non-interactive SSH does not load
+   `.bashrc`).
+5. Patch ConfigMap `GIT_SHA`, `kubectl set image` for `api` + `migrate` by
+   **digest**, `rollout status`, NodePort health; on failure `rollout undo`.
+
+Scope is **image + GIT_SHA only**. Manifest structure changes remain manual
+`kubectl apply` by an operator (documented elsewhere in this runbook).
+
+### 7.4 Manual deploy / standard rollback
+
+```bash
+# Deploy or roll back to a known-good main commit that still has a GHCR image:
+gh workflow run deploy-oci.yml -f git_sha=<full-or-short-sha>
+```
+
+This is the **standard rollback** path (see §4.1). Prefer it over force-pushing
+`production` or ad-hoc SSH.
+
+### 7.5 Hard invariants (CI deploy path)
+
+- No kubeconfig in GitHub secrets; no k3s API (6443) exposure; no new firewalld
+  openings for deploy.
+- No `pull_request_target` on the deploy workflow; minimal `permissions`;
+  third-party Actions pinned by full SHA.
+- No silent image substitution when `sha-<short>` is missing.
+
+### 7.6 Audit — what is live
+
+```bash
+export KUBECONFIG=/home/opc/.kube/config
+kubectl -n brewdial get configmap brewdial-api-config -o jsonpath='{.data.GIT_SHA}{"\n"}'
+kubectl -n brewdial get pods -l app=brewdial-api \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.containerStatuses[*]}{.imageID}{"\n"}{end}{end}'
+kubectl -n brewdial get deploy brewdial-api \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+```
+
+Compare `GIT_SHA` / image digest to the Deploy OCI run log and GHCR tag
+`sha-<short>`. Disagreement is drift.
+
+## 8. Historical design notes (Phase 1 era)
+
+Section 8 below recorded pre-implementation design options. **Production CI
+deploy implemented option (c)** — `kubectl set image` + ConfigMap `GIT_SHA`
+only (see §7). Manifest-wide apply remains operator-manual when structure
+changes. Kept for context; §7 is normative for day-to-day release.
+
+### 8.1 Options (historical)
 
 | Option | Manifest location and apply path | Benefit | Cost / failure mode |
 |---|---|---|---|
 | **(a) Box git checkout** | CI connects through CF Access SSH; the box fetches the public repo at an exact commit and runs `kubectl apply -k` locally. | The box retains the manifest source and `git log` gives a local audit trail. No kubeconfig leaves the box. | Requires checkout ownership, disk hygiene, and a deploy identity on the box. A dirty checkout or branch tip would be unsafe, so the script must use detached full-SHA checkouts and fail closed. |
 | **(b) CI streams manifests** | CI renders the selected manifests and sends them over SSH to box-local `kubectl apply -f -`. | No source checkout or deploy key is needed on the box. | The source of what is applied lives primarily in CI logs/artifacts; reconstructing “what is live now” is harder, and a truncated or mismatched stream is a dangerous failure mode. |
-| **(c) `kubectl set image` only** | CI changes the image field on the existing Deployment and leaves manifests on the box unchanged. | Smallest command surface for an image-only release. | It cannot deliver ConfigMap, Secret, Service, migration, policy, or variant changes. Manifest drift is inevitable unless a second apply path is added. |
+| **(c) `kubectl set image` only** — **implemented** | CI changes the image field on the existing Deployment and leaves manifests on the box unchanged. | Smallest command surface for an image-only release. | It cannot deliver ConfigMap structure, Secret, Service, policy, or variant changes. Those stay manual. |
 
-### 8.2 Recommendation: (a), with an immutable release tuple
-
-Recommend **(a) box git checkout**. This preserves the manifest source beside
-the cluster, makes the applied commit independently inspectable with `git
-show`/`git log`, and keeps the kubeconfig on the box. The trade is an extra
-box-side checkout and strict handling of its state; those are controlled and
-observable, whereas option (b)'s source-only-in-CI audit gap and option (c)'s
-manifest drift are harder to recover from.
-
-The checkout should be a dedicated deployment checkout (for example
-`/opt/brewdial-k3s`) rather than overwriting the current rsync copy while the
-systemd service is still live. Before cutover, the operator must choose the
-final path and ownership. The checkout must be clean and detached at the
-release's **full** commit SHA; it must never deploy the moving `main` tip.
-
-The release identity is the tuple:
-
-```
-(manifest commit SHA, image repository, image digest, selected variant)
-```
-
-The Phase 2 implementation must make this tuple one input to one apply. The
-image workflow already produces an immutable `:sha-<short>` tag and records
-the GHCR digest. The deploy job must consume that exact digest for the same
-full commit SHA, verify the box checkout is at that SHA, and render the
-selected kustomize overlay so both the API container and migration
-initContainer use `ghcr.io/...@sha256:<digest>`. Moving tags such as `:latest`
-are for discovery only and must not appear in the applied Deployment.
-
-The resulting Deployment should carry the full commit SHA, image digest, and
-selected variant as labels or annotations, and the release record should
-include the CI run URL. The kustomization/overlay contract must expose the
-variant as an explicit input. **Repo default and production live shape are
-variant (B)**; the overlay input still exists so A can be selected for
-recovery tests without silent defaults drifting.
-
-The intended Phase 2 sequence is:
-
-1. CI builds and pushes the image, then obtains its immutable digest for
-   `GITHUB_SHA`.
-2. Over CF Access SSH, CI runs a non-interactive box-side script. The script
-   fetches the exact full SHA, checks out detached and clean, verifies
-   `git rev-parse HEAD` equals the release SHA, and checks that the selected
-   variant is an approved input.
-3. The script binds the CI-provided digest to the checked-out kustomize
-   overlay, runs `kubectl apply -k`, waits for rollout/readiness and health,
-   and writes the release tuple plus CI run URL to the box's release ledger.
-4. The script prints the applied commit, digest, variant, Deployment
-   revision, and health result. A mismatch, dirty tree, unavailable digest,
-   unreadable kubeconfig, or failed rollout exits non-zero before declaring
-   success.
-
-### 8.3 Audit: determining what is applied now
-
-The operator can answer “what version is in the cluster?” without trusting a
-moving tag by comparing the Deployment metadata, its image digest, the box
-checkout, and the CI release record:
-
-```bash
-export KUBECONFIG=/home/opc/.kube/config
-kubectl -n brewdial get deploy brewdial-api \
-  -o jsonpath='{.metadata.annotations.brewdial\.rob1215/release-sha}{"\n"}{.metadata.annotations.brewdial\.rob1215/image-digest}{"\n"}{.spec.template.spec.containers[*].image}{"\n"}'
-kubectl -n brewdial rollout history deploy/brewdial-api
-cd /opt/brewdial-k3s && git rev-parse HEAD && git log -1 --oneline
-```
-
-The annotation values, the digest-qualified API and migration images, the
-detached checkout's `git rev-parse HEAD`, and the release ledger/CI run URL
-must agree. `kubectl describe`/`get -o yaml` is the cluster-side evidence;
-`git show <SHA>:deploy/oci/k3s/` is the manifest-side evidence. A disagreement
-is drift, not a successful deployment, and must stop further releases until
-reconciled.
-
-### 8.4 Rollback: restore manifest and image together
-
-Rollback is a release rollback, not merely `kubectl set image`:
-
-1. Identify the last healthy release tuple from the annotations, rollout
-   history, and box release ledger. Confirm its image digest still exists in
-   GHCR.
-2. Fetch and check out that prior manifest commit detached on the box. Render
-   the same selected variant with the prior digest and verify that both the
-   API and migration initContainer point to it.
-3. Apply that complete manifest set with the explicit `KUBECONFIG`, wait for
-   rollout and health, then verify the cluster annotations and image digests
-   equal the prior tuple. Keep `kubectl rollout undo` as an emergency shortcut
-   only when the prior PodTemplate is known to contain the exact same
-   manifest and digest; it is not the normal cross-version rollback path.
-4. Record the rollback reason, source and target tuples, operator, time, and
-   health result in the CI/box release records.
-
-`rollout undo` and a digest rollback do not undo database migrations. The
-existing expand/contract rule remains mandatory: a release may expand the
-schema while old code remains compatible; destructive contract work waits
- for a later release. If a rollback meets an incompatible schema, stop and
- use the separately approved database recovery procedure rather than issuing
- an automatic down migration.
-
-### 8.5 Non-interactive SSH and `KUBECONFIG`
+### 8.2 Non-interactive SSH and `KUBECONFIG` (still normative)
 
 The deploy script must explicitly export the kubeconfig before **every**
 `kubectl` invocation. It must not rely on `.bashrc`, an interactive shell, or
-kubectl's implicit fallback. The operator-managed file in this design is
-`/home/opc/.kube/config` (mode 600); if the operator instead chooses the k3s
-default `/etc/rancher/k3s/k3s.yaml`, the script must run kubectl with the
-required privilege and an explicit `KUBECONFIG` value because that file is
-root-readable only.
-
-The preflight must be equivalent to:
+kubectl's implicit fallback. The operator-managed file is
+`/home/opc/.kube/config` (mode 600).
 
 ```bash
 export KUBECONFIG=/home/opc/.kube/config
@@ -458,6 +464,5 @@ kubectl config current-context
 kubectl version --output=yaml
 ```
 
-An unreadable or unexpected kubeconfig is a hard failure. The CI job must
-never receive or store the kubeconfig; it only invokes box-local kubectl over
-the already-approved CF Access SSH route.
+The CI job must never receive or store the kubeconfig; it only invokes
+box-local kubectl over the already-approved CF Access SSH route.
