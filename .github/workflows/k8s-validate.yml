@@ -71,8 +71,59 @@ jobs:
           kubectl cluster-info
           kubectl get nodes -o wide
 
-      - name: Import images into the cluster
-        run: k3d image import --cluster ci "$TEST_IMAGE" "$BROKEN_IMAGE"
+      # k3d image import has a known false-success mode: ctr fails to open the
+      # tarball ("no such file or directory") but k3d still prints
+      # "Successfully imported" and exits 0. Do not trust the exit code or log
+      # line — verify the images are actually present on the node, and retry
+      # the import when verification fails.
+      - name: Import images into the cluster (verified)
+        run: |
+          set -euo pipefail
+          NODE=$(docker ps --format '{{.Names}}' | grep -E '^k3d-ci-server-' | head -1)
+          [ -n "$NODE" ] || { echo "ERROR: k3d server node container not found"; docker ps -a; exit 1; }
+          echo "k3d server node: $NODE"
+
+          images_present() {
+            # List refs in the k8s.io namespace (what kubelet uses).
+            local list
+            list=$(docker exec "$NODE" ctr -n k8s.io images ls -q 2>/dev/null || true)
+            echo "$list" | grep -qE '(^|/)brewdial-api:test(@|$)' || return 1
+            echo "$list" | grep -qE '(^|/)brewdial-api:broken(@|$)' || return 1
+            return 0
+          }
+
+          dump_images() {
+            echo "--- ctr -n k8s.io images ls (brewdial* / all refs sample):"
+            docker exec "$NODE" ctr -n k8s.io images ls 2>/dev/null | head -80 || true
+            echo "--- crictl images (if available):"
+            docker exec "$NODE" crictl images 2>/dev/null | head -40 || true
+          }
+
+          MAX_ATTEMPTS=3
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "=== import attempt ${attempt}/${MAX_ATTEMPTS}"
+            set +e
+            k3d image import --cluster ci "$TEST_IMAGE" "$BROKEN_IMAGE"
+            import_rc=$?
+            set -e
+            echo "k3d image import exit code: ${import_rc} (attempt ${attempt})"
+            dump_images
+            if images_present; then
+              echo "OK: both ${TEST_IMAGE} and ${BROKEN_IMAGE} present in cluster after attempt ${attempt}"
+              exit 0
+            fi
+            echo "WARN: image verification FAILED after attempt ${attempt}/${MAX_ATTEMPTS}"
+            echo "      (k3d exit was ${import_rc}; do not trust exit code alone — see ROB-1214)"
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              echo "retrying import in 3s..."
+              sleep 3
+            fi
+          done
+
+          echo "ERROR: images not present in k3d node after ${MAX_ATTEMPTS} import+verify attempts"
+          echo "Expected refs containing: brewdial-api:test and brewdial-api:broken"
+          dump_images
+          exit 1
 
       - name: R3 — server-side schema validation of ALL manifests
         run: |
@@ -97,8 +148,23 @@ jobs:
           kubectl apply -f deploy/oci/k3s/ci/secret-ci.yaml
           kubectl apply -f deploy/oci/k3s/ci/postgres.yaml
           kubectl -n brewdial rollout status deploy/postgres --timeout=180s
-          # Point the manifest at the locally-imported test image.
-          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml | kubectl apply -f -
+          # CI-only transform of the production deployment YAML:
+          #   1) point image at the locally-imported test tag
+          #   2) imagePullPolicy: Never — missing local image fails immediately
+          #      instead of a multi-minute ImagePullBackOff against Docker Hub.
+          # Production manifests under deploy/oci/k3s/{deployment,variant-b}/
+          # are NOT modified (GHCR pull must keep working there).
+          # shellcheck disable=SC2016
+          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml \
+            | awk '
+                /^[[:space:]]*image:[[:space:]]/ {
+                  print
+                  match($0, /^[[:space:]]*/)
+                  print substr($0, 1, RLENGTH) "imagePullPolicy: Never"
+                  next
+                }
+                { print }
+              ' | kubectl apply -f -
           if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s; then
             echo "=== ROLLOUT FAILED — diagnostics:"
             kubectl -n brewdial get pods -o wide
@@ -107,6 +173,14 @@ jobs:
             kubectl -n brewdial logs -l app=brewdial-api -c api --tail=20 || true
             exit 1
           fi
+          # Prove CI-only Never is live on the running Deployment (not on disk manifests).
+          echo "--- imagePullPolicy (init migrate / container api) must both be Never:"
+          MIGRATE_PP=$(kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.initContainers[0].imagePullPolicy}')
+          API_PP=$(kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}')
+          echo "migrate=${MIGRATE_PP} api=${API_PP}"
+          [ "$MIGRATE_PP" = "Never" ] && [ "$API_PP" = "Never" ] || {
+            echo "ERROR: imagePullPolicy: Never not applied in CI"; exit 1
+          }
           kubectl -n brewdial get deploy,pods -o wide
 
       - name: R4 — health endpoints green through the running pod
@@ -145,10 +219,20 @@ jobs:
               -e 's|postgres.brewdial.svc.cluster.local|postgres.does-not-exist|' \
               deploy/oci/k3s/ci/secret-ci.yaml | kubectl apply -f -
           sed 's|namespace: brewdial|namespace: migrate-fail|' deploy/oci/k3s/configmap.yaml | kubectl apply -f -
+          # CI-only: local image + imagePullPolicy: Never (same as R4; prod YAML untouched).
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
               -e "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" \
               -e 's|containerPort: 3020|containerPort: 13029|' \
-              deploy/oci/k3s/deployment.yaml | kubectl apply -f -
+              deploy/oci/k3s/deployment.yaml \
+            | awk '
+                /^[[:space:]]*image:[[:space:]]/ {
+                  print
+                  match($0, /^[[:space:]]*/)
+                  print substr($0, 1, RLENGTH) "imagePullPolicy: Never"
+                  next
+                }
+                { print }
+              ' | kubectl apply -f -
           echo "--- waiting for the migration initContainer to fail repeatedly..."
           # restartCount-based detection: polling for the literal waiting reason
           # "CrashLoopBackOff" is brittle (init-container state flickers between
@@ -212,7 +296,17 @@ jobs:
         run: |
           set -euo pipefail
           kubectl -n brewdial delete deploy brewdial-api
-          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml | kubectl apply -f -
+          # CI-only: local image + imagePullPolicy: Never (prod variant-b YAML untouched).
+          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml \
+            | awk '
+                /^[[:space:]]*image:[[:space:]]/ {
+                  print
+                  match($0, /^[[:space:]]*/)
+                  print substr($0, 1, RLENGTH) "imagePullPolicy: Never"
+                  next
+                }
+                { print }
+              ' | kubectl apply -f -
           kubectl apply -f deploy/oci/k3s/variant-b/service.yaml
           kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s
           kubectl -n brewdial get deploy,pods,svc -o wide
