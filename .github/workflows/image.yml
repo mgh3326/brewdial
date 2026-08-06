@@ -1,0 +1,66 @@
+name: Container Image
+
+# Builds the BrewDial API image for linux/arm64 (the OCI box is aarch64) and
+# pushes it to GHCR with two tags: immutable `:sha-<short>` and moving `:latest`.
+# Runs on the ARM runner so no QEMU emulation is needed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-push:
+    name: Build & push (arm64) to GHCR
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Compute tags
+        id: tags
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          SHORT="$(git rev-parse --short=7 HEAD)"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${IMAGE}:sha-${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          docker build \
+            --tag '${{ steps.tags.outputs.sha_tag }}' \
+            --tag '${{ steps.tags.outputs.latest_tag }}' \
+            .
+
+      - name: Verify non-root + base digest pin
+        run: |
+          set -euo pipefail
+          echo "Configured user: $(docker image inspect '${{ steps.tags.outputs.sha_tag }}' --format '{{.Config.User}}')"
+          echo "Runtime uid: $(docker run --rm --entrypoint id '${{ steps.tags.outputs.sha_tag }}' -u)"
+          grep '^FROM ' Dockerfile
+
+      - name: Push to GHCR
+        # Fork PRs get a read-only token; never push from them.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+          docker push '${{ steps.tags.outputs.sha_tag }}'
+          docker push '${{ steps.tags.outputs.latest_tag }}'
+
+      - name: Record digest (deployment reference)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect '${{ steps.tags.outputs.sha_tag }}'

@@ -1,0 +1,19 @@
+# VARIANT (B) only — cloudflared entry point into the pod network.
+# NodePort 30020 is bound on the node's loopback-reachable interface;
+# re-point cloudflared to http://127.0.0.1:30020 (NOT 3020) when switching to
+# variant B. NodePort adds NO firewalld rule by itself, but verify the port is
+# not reachable externally (firewalld has no new openings — hard invariant).
+apiVersion: v1
+kind: Service
+metadata:
+  name: brewdial-api
+  namespace: brewdial
+spec:
+  type: NodePort
+  selector:
+    app: brewdial-api
+  ports:
+    - name: http
+      port: 3020
+      targetPort: 3020
+      nodePort: 30020

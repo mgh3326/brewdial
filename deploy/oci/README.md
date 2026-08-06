@@ -11,16 +11,22 @@ Full runbook: `docs/superpowers/plans/2026-06-23-m1-oci-provisioning-runbook.md`
 - **`brewdial-api.service`** (this dir) running, env from `/etc/brewdial/api.env` (600). Binds `127.0.0.1:3020`. `GET /api/health` + `/api/db/health` green.
 - **firewalld:** only `ssh` open (3020/5432 NOT exposed). `cloudflared` installed.
 
+## k3s runtime (upcoming — ROB-1214)
+
+Containerized deploy on single-node k3s: manifests + full runbook in `k3s/`
+(`k3s/RUNBOOK.md`), image built by `.github/workflows/image.yml`. The systemd
+unit below remains the live production setup until the approved cutover.
+
 ## Deploy / update (until a git-based deploy is set up)
 ```bash
 # from a local checkout of main:
 rsync -az --exclude .git --exclude node_modules --exclude dist --exclude .superpowers \
   -e "ssh -i <key>" ./ opc@<host>:/opt/brewdial/
-ssh opc@<host> 'cd /opt/brewdial && pnpm install && \
+ssh -i <key> opc@<host> 'cd /opt/brewdial && pnpm install && \
   pnpm --filter @brewdial/shared --filter @brewdial/db --filter @brewdial/api build && \
   sudo systemctl restart brewdial-api && curl -s localhost:3020/api/health'
 # schema changes:
-ssh opc@<host> 'cd /opt/brewdial/packages/db && \
+ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
   DATABASE_URL=$(grep ^DATABASE_URL /etc/brewdial/api.env|cut -d= -f2-) pnpm exec node-pg-migrate -m migrations -j sql up'
 ```
 

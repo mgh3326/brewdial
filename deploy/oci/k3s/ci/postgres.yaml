@@ -1,0 +1,58 @@
+# CI-VALIDATION ONLY — throwaway in-cluster Postgres for the k3d test cluster
+# (.github/workflows/k8s-validate.yml). NEVER apply to the production box:
+# production Postgres stays on the host outside the cluster (hard invariant,
+# ROB-630 backup/verify-restore gate). Data is disposable (emptyDir).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: brewdial
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: postgrespassword
+            - name: POSTGRES_DB
+              value: brewdial
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: brewdial
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

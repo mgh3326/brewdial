@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brewdial-api-config
+  namespace: brewdial
+data:
+  PORT: "3020"
+  NODE_ENV: "production"
+  # Sentry release tag. Production currently has NO Sentry DSN, so Sentry is
+  # off; these placeholders are the injection points when it is enabled.
+  # Set at deploy time: kubectl -n brewdial patch configmap brewdial-api-config \
+  #   --type merge -p '{"data":{"GIT_SHA":"<sha>"}}'
+  GIT_SHA: ""
+  # Leave empty to keep Sentry disabled (instrument.ts inits only when set).
+  SENTRY_DSN: ""

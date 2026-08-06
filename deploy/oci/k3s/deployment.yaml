@@ -1,0 +1,100 @@
+# BrewDial API — VARIANT (A): hostNetwork.
+#
+# The pod shares the node network namespace, so the existing production wiring
+# is UNCHANGED: DATABASE_URL stays postgres://...@127.0.0.1:5432/... and
+# cloudflared keeps forwarding to http://127.0.0.1:3020. No Postgres config
+# change, no cloudflared change.
+#
+# COST: two pods can never bind 3020 at once → maxSurge MUST be 0 → every
+# rollout has a downtime window (old pod stops before new pod starts).
+# For the zero-downtime variant see variant-b/ (RUNBOOK.md §B documents the
+# choice and the trade-offs).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: brewdial-api
+  namespace: brewdial
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0 # hostNetwork: second pod cannot bind :3020 while first holds it
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: brewdial-api
+  template:
+    metadata:
+      labels:
+        app: brewdial-api
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet # keep cluster DNS working on hostNetwork
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # `node` user in the base image
+        runAsGroup: 1000
+      initContainers:
+        # Schema migrations run BEFORE the app container starts, on every pod
+        # (re)start. node-pg-migrate tracks applied migrations in pgmigrations,
+        # so re-runs are no-ops. If migrations fail, this container exits
+        # non-zero and the app container NEVER starts (Init:CrashLoopBackOff).
+        - name: migrate
+          image: ghcr.io/mgh3326/brewdial:latest # deploy with a digest — see RUNBOOK.md
+          command:
+            - node
+            - /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js
+            - -m
+            - /migrate/migrations
+            - -j
+            - sql
+            - up
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: brewdial-api-secret
+                  key: DATABASE_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: api
+          image: ghcr.io/mgh3326/brewdial:latest # deploy with a digest — see RUNBOOK.md
+          envFrom:
+            - configMapRef:
+                name: brewdial-api-config
+            - secretRef:
+                name: brewdial-api-secret
+          env:
+            # hostNetwork: 127.0.0.1 binding = cloudflared-only reachability,
+            # same as the current systemd service.
+            - name: HOST
+              value: "127.0.0.1"
+          ports:
+            - containerPort: 3020
+          readinessProbe: # ready only when the DB chain works end-to-end
+            httpGet:
+              path: /api/db/health
+              port: 3020
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3020
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
