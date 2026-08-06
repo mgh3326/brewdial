@@ -30,7 +30,7 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: ""
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
 
     steps:
       - name: Checkout repository
