@@ -36,6 +36,22 @@ kubectl apply -f deploy/oci/k3s/variant-b/
 The bridge IP / pod CIDR are only knowable after k3s is installed
 (`ip addr show cni0`, `kubectl get node -o jsonpath='{.spec.podCIDR}'`).
 
+### Traps found by CI (don't re-step on these)
+
+1. **hostNetwork + `HOST=127.0.0.1` ⇒ `httpGet` probes never succeed.**
+   The kubelet probes the *pod IP* — for hostNetwork pods that is the node IP,
+   but the app binds loopback only. Result: rollout times out at 0/1 forever.
+   Variant A therefore uses `exec` probes (`wget -qO- http://127.0.0.1:3020/...`,
+   busybox wget is in the alpine base), which run inside the pod's netns.
+   (CI run 31064047778 failed exactly this way.)
+2. **hostNetwork pods claim their `containerPort`s at schedule time.**
+   A second hostNetwork pod declaring :3020 on the same node is rejected by the
+   scheduler's NodePorts plugin (`FailedScheduling: didn't have free ports`).
+   This is the mechanical reason variant A must run `maxSurge=0` — and why any
+   second copy of the Deployment (canary, debug, another namespace) must drop
+   or remap the declared port. (CI run 31064541318 shows the live event.)
+
+
 ## 1. Operator: install k3s (one-time)
 
 ```bash
