@@ -2,12 +2,16 @@ name: k8s Validation
 
 # Validates the k3s manifests end-to-end on a throwaway k3d cluster:
 #   R3  server-side schema validation (--dry-run=server)
-#   R4  real deployment + readiness + health probes
+#   R4  real deployment of DEFAULT variant (B) + readiness + health probes
 #   R5  rollback ACTUALLY works — an intentionally broken image is deployed,
 #       the rollout fails, and `kubectl rollout undo` restores the prior rev
 #   R6  migrations run before app start; a failing migration blocks the app
-#   R7  variant (A) ↔ (B) switch is applied and both reach readiness
+#   R7  variant (B) ↔ (A) switch is applied and both reach readiness
 # Production is NOT touched from here (hard boundary: box access is operator-only).
+#
+# Layout after ROB-1214 variant-B promotion:
+#   deploy/oci/k3s/deployment.yaml + service.yaml  → DEFAULT (B) pod network
+#   deploy/oci/k3s/variant-a/deployment.yaml       → legacy (A) hostNetwork
 
 on:
   push:
@@ -133,15 +137,15 @@ jobs:
           for f in deploy/oci/k3s/configmap.yaml \
                    deploy/oci/k3s/secret.example.yaml \
                    deploy/oci/k3s/deployment.yaml \
-                   deploy/oci/k3s/variant-b/deployment.yaml \
-                   deploy/oci/k3s/variant-b/service.yaml \
+                   deploy/oci/k3s/service.yaml \
+                   deploy/oci/k3s/variant-a/deployment.yaml \
                    deploy/oci/k3s/ci/postgres.yaml \
                    deploy/oci/k3s/ci/secret-ci.yaml; do
             echo "=== dry-run=server: $f"
             kubectl apply -f "$f" --dry-run=server
           done
 
-      - name: R4 — deploy variant A (hostNetwork) + in-cluster test Postgres
+      - name: R4 — deploy DEFAULT variant B (pod network + NodePort) + in-cluster test Postgres
         run: |
           set -euo pipefail
           kubectl apply -f deploy/oci/k3s/configmap.yaml
@@ -152,8 +156,8 @@ jobs:
           #   1) point image at the locally-imported test tag
           #   2) imagePullPolicy: Never — missing local image fails immediately
           #      instead of a multi-minute ImagePullBackOff against Docker Hub.
-          # Production manifests under deploy/oci/k3s/{deployment,variant-b}/
-          # are NOT modified (GHCR pull must keep working there).
+          # Production manifests under deploy/oci/k3s/ are NOT modified
+          # (GHCR pull must keep working there).
           # shellcheck disable=SC2016
           sed "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml \
             | awk '
@@ -165,6 +169,7 @@ jobs:
                 }
                 { print }
               ' | kubectl apply -f -
+          kubectl apply -f deploy/oci/k3s/service.yaml
           if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s; then
             echo "=== ROLLOUT FAILED — diagnostics:"
             kubectl -n brewdial get pods -o wide
@@ -181,12 +186,20 @@ jobs:
           [ "$MIGRATE_PP" = "Never" ] && [ "$API_PP" = "Never" ] || {
             echo "ERROR: imagePullPolicy: Never not applied in CI"; exit 1
           }
-          kubectl -n brewdial get deploy,pods -o wide
+          # Confirm default shape is B: no hostNetwork, maxSurge allows zero-downtime.
+          HOST_NET=$(kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.hostNetwork}')
+          echo "hostNetwork field (expect empty/false): '${HOST_NET}'"
+          [ -z "$HOST_NET" ] || [ "$HOST_NET" = "false" ] || {
+            echo "ERROR: default deploy must not enable hostNetwork (variant B)"; exit 1
+          }
+          echo "--- strategy (expect maxSurge=1):"
+          kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.strategy}{"\n"}'
+          kubectl -n brewdial get deploy,pods,svc -o wide
 
-      - name: R4 — health endpoints green through the running pod
+      - name: R4 — health endpoints green through the Service (NodePort path)
         run: |
           set -euo pipefail
-          kubectl -n brewdial port-forward deploy/brewdial-api 13020:3020 &
+          kubectl -n brewdial port-forward svc/brewdial-api 13020:3020 &
           PF_PID=$!
           trap 'kill $PF_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -fs localhost:13020/api/health && break || sleep 2; done
@@ -209,20 +222,16 @@ jobs:
           set -euo pipefail
           kubectl create namespace migrate-fail
           # Same manifests, broken DSN host, in a scratch namespace.
-          # containerPort is remapped to a free port: the healthy variant-A pod
-          # above is hostNetwork and holds :3020 on the (single) node, and the
-          # scheduler's NodePorts plugin refuses a second hostNetwork pod
-          # declaring the same port (observed: FailedScheduling "didn't have
-          # free ports" — itself live proof of why variant A forces maxSurge=0).
-          # The app container never starts in this test, so the port is moot.
+          # Default is variant B (pod network) — no hostNetwork port claim, so
+          # a second Deployment declaring containerPort 3020 is fine.
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
               -e 's|postgres.brewdial.svc.cluster.local|postgres.does-not-exist|' \
               deploy/oci/k3s/ci/secret-ci.yaml | kubectl apply -f -
           sed 's|namespace: brewdial|namespace: migrate-fail|' deploy/oci/k3s/configmap.yaml | kubectl apply -f -
           # CI-only: local image + imagePullPolicy: Never (same as R4; prod YAML untouched).
+          # Default is B (pod network) — no hostNetwork port claim, so no containerPort remap.
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
               -e "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" \
-              -e 's|containerPort: 3020|containerPort: 13029|' \
               deploy/oci/k3s/deployment.yaml \
             | awk '
                 /^[[:space:]]*image:[[:space:]]/ {
@@ -264,7 +273,7 @@ jobs:
       - name: R5 — rollback ACTUALLY works (broken image rollout → undo)
         run: |
           set -euo pipefail
-          echo "--- current revision (healthy):"
+          echo "--- current revision (healthy, variant B):"
           kubectl -n brewdial rollout history deploy/brewdial-api
           kubectl -n brewdial set image deploy/brewdial-api api="$BROKEN_IMAGE"
           set +e
@@ -285,19 +294,22 @@ jobs:
           echo "restored image: $RESTORED"
           [ "$RESTORED" = "$TEST_IMAGE" ] || { echo "ERROR: image not restored to $TEST_IMAGE"; exit 1; }
           kubectl -n brewdial get deploy,pods -o wide
-          echo "--- health after rollback:"
-          kubectl -n brewdial port-forward deploy/brewdial-api 13021:3020 &
+          echo "--- health after rollback (via Service):"
+          kubectl -n brewdial port-forward svc/brewdial-api 13021:3020 &
           PF_PID=$!
           trap 'kill $PF_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -fs localhost:13021/api/db/health && break || sleep 2; done
           echo
 
-      - name: R7 — switch variant A → B (pod network + NodePort) and reach readiness
+      - name: R7 — switch variant B → A (hostNetwork) and reach readiness
         run: |
           set -euo pipefail
           kubectl -n brewdial delete deploy brewdial-api
-          # CI-only: local image + imagePullPolicy: Never (prod variant-b YAML untouched).
-          sed "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml \
+          # Service left in place is harmless for hostNetwork A (selectors still
+          # match when A is Ready; traffic path under test is pod port-forward).
+          # CI-only: local image + imagePullPolicy: Never (prod variant-a YAML untouched).
+          # #59 placeholder + #60 path (variant-a = A after B promotion).
+          sed "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" deploy/oci/k3s/variant-a/deployment.yaml \
             | awk '
                 /^[[:space:]]*image:[[:space:]]/ {
                   print
@@ -307,16 +319,29 @@ jobs:
                 }
                 { print }
               ' | kubectl apply -f -
-          kubectl apply -f deploy/oci/k3s/variant-b/service.yaml
-          kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s
-          kubectl -n brewdial get deploy,pods,svc -o wide
-          echo "--- strategy shows surge allowed (zero-downtime capable):"
+          if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s; then
+            echo "=== ROLLOUT FAILED (variant A) — diagnostics:"
+            kubectl -n brewdial get pods -o wide
+            kubectl -n brewdial describe pod -l app=brewdial-api | tail -50
+            kubectl -n brewdial logs -l app=brewdial-api -c migrate --tail=20 || true
+            kubectl -n brewdial logs -l app=brewdial-api -c api --tail=20 || true
+            exit 1
+          fi
+          # Confirm A shape: hostNetwork true, maxSurge 0.
+          HOST_NET=$(kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.hostNetwork}')
+          echo "hostNetwork (expect true): '${HOST_NET}'"
+          [ "$HOST_NET" = "true" ] || { echo "ERROR: variant A must enable hostNetwork"; exit 1; }
+          echo "--- strategy (expect maxSurge=0):"
           kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.strategy}{"\n"}'
-          kubectl -n brewdial port-forward svc/brewdial-api 13022:3020 &
+          kubectl -n brewdial get deploy,pods -o wide
+          # hostNetwork + HOST=127.0.0.1: port-forward to the pod works via
+          # the API server (not kubelet httpGet). Use deploy port-forward.
+          kubectl -n brewdial port-forward deploy/brewdial-api 13022:3020 &
           PF_PID=$!
           trap 'kill $PF_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -fs localhost:13022/api/db/health && break || sleep 2; done
           echo
+          echo "OK: both default B and switched A reached readiness"
 
       # Runs even (only) when any earlier step failed — the dump must ALWAYS be
       # in the log, so a red run is diagnosable without a re-run.

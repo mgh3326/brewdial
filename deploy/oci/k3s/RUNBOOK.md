@@ -5,38 +5,130 @@ Postgres stays on the **host**, outside the cluster (hard invariant — the
 ROB-630 backup + weekly verify-restore gate targets host PG).
 
 Phase 1 scope: everything here is validated in CI (`.github/workflows/k8s-validate.yml`).
-**First production cutover is a separate approval, executed by the operator.**
+**Production cutover to variant B was completed 2026-08-06** (operator-approved).
+This document records the applied shape; Phase 2 CI auto-deploy remains out of
+scope (CF Access unset).
 
-## 0. Decision record — network variant (A) vs (B)
+> **Fact accuracy.** Values under **Confirmed** came from a single production
+> session (cutover day). Do not invent additional production IPs, digests, or
+> ports. Gaps → ask the operator (`NEEDS_INFO`); a wrong public value is worse
+> than an empty one. **Recommendation / procedure** text is labelled separately.
 
-The one real design fork: how pods reach host Postgres and how cloudflared
-reaches the API.
+## 0. Decision record — network variant: **B selected and applied**
 
-| | **(A) hostNetwork** (`deployment.yaml`) | **(B) pod network** (`variant-b/`) |
+### Status (confirmed)
+
+| Field | Value |
+|---|---|
+| Selected variant | **(B) pod network + NodePort 30020** |
+| Decision date | 2026-08-06 (operator approval) |
+| Production application | **complete** (2026-08-06) |
+| Repo default path | `deploy/oci/k3s/deployment.yaml` + `service.yaml` |
+| Legacy shape (preserved) | `deploy/oci/k3s/variant-a/` — hostNetwork; used by §6 recovery and CI |
+
+Earlier Phase 1 text kept (A) as the repo default because it was the only
+shape that needed **no** production Postgres/cloudflared change. That approval
+and change **have now been applied**, so the repo default matches live
+production (B). Variant (A) is **not deleted** — §6 recovery bypass
+(`podman --network host`) shares A's premises.
+
+### Comparison (design)
+
+| | **(B) pod network — DEFAULT** (`deployment.yaml` + `service.yaml`) | **(A) hostNetwork** (`variant-a/`) |
 |---|---|---|
-| `DATABASE_URL` | unchanged (`127.0.0.1:5432`) | must target the **CNI bridge IP** |
-| cloudflared | unchanged (`http://127.0.0.1:3020`) | re-point to NodePort `http://127.0.0.1:30020` |
-| host Postgres config | **no change** | `listen_addresses` += bridge IP, `pg_hba` limited to pod CIDR — **production DB change, operator + separate approval** |
-| rolling updates | `maxSurge=0` forced (two pods can't share :3020) → **downtime window on every rollout** (old pod stops, new pod starts: typically seconds) | `maxSurge=1, maxUnavailable=0` → **zero-downtime** |
-| moving parts | fewest | Service (NodePort) + DB reconfig + cloudflared re-target |
+| `DATABASE_URL` | targets the **CNI bridge IP** (not loopback) | `127.0.0.1:5432` |
+| cloudflared | `http://127.0.0.1:30020` (NodePort) | `http://127.0.0.1:3020` |
+| host Postgres config | `listen_addresses` includes bridge IP; `pg_hba` allows pod CIDR | loopback-only sufficient |
+| rolling updates | `maxSurge=1, maxUnavailable=0` → **zero-downtime** | `maxSurge=0` → downtime window every rollout |
+| coexistence with systemd on :3020 | **possible** (different ports) — used as fallback | **impossible** (both need :3020) |
 
-Production has **not selected A or B**. Phase 1 validates both shapes, while
-the first-cutover approval must select exactly one and record the choice with
-the release. Variant (A) avoids a production Postgres change; variant (B)
-preserves zero-downtime rolling updates but requires the operator-approved
-Postgres and cloudflared changes shown below. The Phase 2 deployment path must
-apply the approved variant overlay and must not silently choose one:
+### Confirmed production preconditions (applied 2026-08-06)
+
+These are **not** optional first-cutover steps anymore — they are the live
+baseline. Re-documenting them so the next operator does not guess.
+
+**1. firewalld rich rule (pod → host Postgres)**
+
+```text
+rule family="ipv4" source address="10.42.0.0/24" port port="5432" protocol="tcp" accept
+```
+
+Notes (confirmed): `--list-ports` remains empty (no blanket open ports).
+External connectivity to 5432, 30020, and 6443 is unavailable (verified at
+cutover). The rich rule is the only intentional path for pod CIDR → host PG.
+
+**2. Postgres listen + `pg_hba`**
+
+- `ALTER SYSTEM SET listen_addresses = 'localhost,10.42.0.1'` then restart.
+- Live sockets after restart (confirmed): `127.0.0.1:5432`, `10.42.0.1:5432`,
+  `[::1]:5432`.
+- Appended to `pg_hba.conf`:
+  `host  brewdial  brewdial_app  10.42.0.0/24  scram-sha-256`
+- Config backups on the box: `*.bak-20260806-0447`.
+- Restart had **0** active connections → no live traffic impact observed.
+
+**3. k8s manifests (variant B)**
+
+- Applied: Deployment + Service (NodePort **30020**).
+- Cutover-day pod IP (confirmed snapshot): `10.42.0.7` (pod IPs change on
+  reschedule — do not hardcode for ops beyond that snapshot).
+- Restarts at cutover validation: **0**.
+- Migration initContainer log: `No migrations to run!` (001–006 already
+  applied; idempotent re-run).
+
+**4. cloudflared (local-file managed tunnel)**
+
+- Config file: `/etc/cloudflared/config.yml`
+- Ingress service changed: `http://127.0.0.1:3020` → `http://127.0.0.1:30020`
+- **Local file management** — no Cloudflare dashboard change required.
+- Backup: `.bak-*` beside the config on the box.
+
+**5. Deployed image (cutover)**
+
+```text
+ghcr.io/mgh3326/brewdial@sha256:b9d4d5d947dbd56fb69adc7640bb162eac59f367164ce88ce2671a6923fa3ad1
+```
+
+Equals tag `sha-4a13cbd` (main HEAD at cutover). **`:latest` was not used.**
+Subsequent deploys must continue to pin digests (see §3).
+
+**6. systemd fallback kept running**
+
+- Unit `brewdial-api` was **not** stopped.
+- Still serves `:3020` with HTTP 200.
+- Emergency rollback: re-point cloudflared ingress to
+  `http://127.0.0.1:3020` only — no need to recreate the unit.
+- Variant B's separate NodePort is what allows both stacks to coexist;
+  that advantage was demonstrated live.
+
+**Also confirmed (not a deploy precondition, operational note):** the live
+pod received a `SENTRY_DSN`, re-enabling Sentry after ~6 weeks off. The repo
+ConfigMap template keeps `SENTRY_DSN` empty; do not commit a DSN.
+
+### Routing proof (confirmed, cutover day)
+
+Public request to `/api/cutover-proof-25963` → 404; **k3s pod logs: 2 lines /
+systemd logs: 0**. Public health, db-health, recipes, beans endpoints: 200.
+
+### Applying or re-applying the default (B) manifests
+
+```bash
+kubectl apply -f deploy/oci/k3s/namespace.yaml
+kubectl apply -f deploy/oci/k3s/configmap.yaml
+# Secret must use bridge IP (see secret.example.yaml / §0 precondition 2):
+#   postgres://brewdial_app:<pw>@10.42.0.1:5432/brewdial
+kubectl apply -f deploy/oci/k3s/deployment.yaml
+kubectl apply -f deploy/oci/k3s/service.yaml
+```
+
+### Switching to variant (A) — only with explicit operator intent
 
 ```bash
 kubectl -n brewdial delete deploy brewdial-api
-# 1. operator: PG listen_addresses += <cni0/bridge IP>, pg_hba += pod CIDR (scram)
-# 2. edit Secret: DATABASE_URL → postgres://brewdial_app:<pw>@<bridge-ip>:5432/brewdial
-kubectl apply -f deploy/oci/k3s/variant-b/
-# 3. cloudflared: service http://127.0.0.1:30020  (was :3020)
+# stop or free :3020 if systemd fallback still binds it
+kubectl apply -f deploy/oci/k3s/variant-a/deployment.yaml
+# Secret DATABASE_URL → 127.0.0.1; cloudflared → :3020
 ```
-
-The bridge IP / pod CIDR are only knowable after k3s is installed
-(`ip addr show cni0`, `kubectl get node -o jsonpath='{.spec.podCIDR}'`).
 
 ### Traps found by CI (don't re-step on these)
 
@@ -65,25 +157,27 @@ curl -sfL https://get.k3s.io | sh -s - server \
 - Traefik/ServiceLB are disabled deliberately: ingress arrives via the
   cloudflared outbound tunnel and firewalld has zero open ports — nothing may
   bind 80/443. (k3s docs: Traefik's LoadBalancer Service uses ports 80/443.)
-- Hard invariants: **no new firewalld openings**, **k3s API (6443) never
-  exposed to the internet**.
+- Hard invariants: **no new firewalld openings** beyond the documented pod-CIDR
+  rich rule in §0, **k3s API (6443) never exposed to the internet**.
 - CI reaches the cluster ONLY via `kubectl` on the box over
   CF Tunnel + Access SSH. **Never put kubeconfig in GitHub secrets.**
 
 ## 2. Operator: first-time cluster setup
 
-The following Secret example is for variant (A) only. Do not apply it until
-the cutover approval records the selected variant. Variant (B) must use the
-node-reachable Postgres address and the approved `pg_hba`/`listen_addresses`
-change described in §0.
+Production uses **variant (B)**. Secret `DATABASE_URL` must reach host Postgres
+via the bridge IP (confirmed `10.42.0.1` — see §0). The loopback form is only
+for variant (A) / recovery.
 
 ```bash
 kubectl apply -f deploy/oci/k3s/namespace.yaml
 kubectl apply -f deploy/oci/k3s/configmap.yaml
-# real secret — values from /etc/brewdial/api.env (never committed):
+# real secret — values from /etc/brewdial/api.env adapted for bridge IP
+# (never committed):
 kubectl -n brewdial create secret generic brewdial-api-secret \
-  --from-literal=DATABASE_URL='postgres://brewdial_app:<pw>@127.0.0.1:5432/brewdial' \
+  --from-literal=DATABASE_URL='postgres://brewdial_app:<pw>@10.42.0.1:5432/brewdial' \
   --from-literal=AGENT_TOKEN='<openssl rand -hex 32>'
+kubectl apply -f deploy/oci/k3s/deployment.yaml
+kubectl apply -f deploy/oci/k3s/service.yaml
 ```
 
 GHCR pull: if the package is public (repo is being flipped public), no pull
@@ -102,7 +196,8 @@ kubectl -n brewdial set image deploy/brewdial-api \
 kubectl -n brewdial patch configmap brewdial-api-config --type merge \
   -p '{"data":{"GIT_SHA":"<short>"}}'
 kubectl -n brewdial rollout status deploy/brewdial-api
-curl -fs localhost:3020/api/db/health
+# health via NodePort (B), not the systemd port:
+curl -fs localhost:30020/api/db/health
 ```
 
 Migrations run in the pod's **initContainer** before the app starts — so a
@@ -110,6 +205,8 @@ deploy that includes migrations applies them automatically, and a failing
 migration blocks the app from starting (rollout fails → see §4).
 
 ## 4. Rollback
+
+### 4.1 In-cluster image rollback
 
 ```bash
 kubectl -n brewdial rollout history deploy/brewdial-api
@@ -129,44 +226,97 @@ pods run N. Never ship a destructive migration in the same release as the code
 that stops using the old shape — a rollback would then run old code against a
 schema it can't handle.
 
-## 5. Cutover (separate approval) — downtime map
+### 4.2 Traffic rollback to systemd fallback (confirmed available)
 
-Variant (A) cutover from systemd to k3s:
+While `brewdial-api.service` remains enabled on `:3020` (see §0 item 6 and §5.2):
 
-1. Deploy the k3s manifests (pod comes up on hostNetwork :3020 **after** the
-   systemd unit releases the port — see next step ordering).
-2. 🔴 **Downtime point**: `sudo systemctl stop brewdial-api` → new pod binds
-   :3020 and passes readiness. This window (seconds) is unavoidable with
-   hostNetwork. **No cloudflared change is needed for variant (A)** — the
-   tunnel keeps hitting `127.0.0.1:3020`.
-3. If/when moving to variant (B) later: 🔴 **second downtime point** is the
-   cloudflared re-target (`:3020` → NodePort `:30020`); the tunnel picks up the
-   new config only after `cloudflared` reload/restart.
+1. Edit `/etc/cloudflared/config.yml` ingress service back to
+   `http://127.0.0.1:3020` (backup files `.bak-*` exist on the box).
+2. Reload/restart `cloudflared`.
+3. Public traffic returns to the systemd stack without touching k3s or PG.
+
+## 5. Cutover map — variant (B) path actually used (2026-08-06)
+
+> **Confirmed path below.** The historical variant-(A) sketch follows for
+> reference only; it was **not** the path production took.
+
+### 5.1 Variant (B) — steps as executed
+
+Order and impact:
+
+| Step | Action | Live impact |
+|---|---|---|
+| 1 | firewalld rich rule (pod CIDR → 5432) | none to public traffic |
+| 2 | Postgres `listen_addresses` + `pg_hba` + **restart** | 🔴 **only live-impact point** — active connections dropped; cutover had 0 active |
+| 3 | Apply B manifests (Deployment + NodePort 30020); Secret uses bridge IP | k3s path ready; public still on systemd via cloudflared→:3020 |
+| 4 | cloudflared ingress `:3020` → `:30020` + reload | traffic flips to k3s; **reversible** by editing config back |
+| 5 | Leave systemd `brewdial-api` **running** on :3020 | dual-stack coexistence (B advantage vs A) |
+
+**What is *not* a hard cutover dependency for B:** stopping systemd. Port
+collision does not occur because NodePort 30020 ≠ 3020.
+
+**Routing proof after step 4:** public `/api/cutover-proof-*` landed in k3s
+pod logs only (see §0).
+
+### 5.2 systemd cleanup — **after observation only** (do not do this now)
+
+**Recommendation (not a current instruction):** after a stability observation
+period of the operator's choosing, and only after an explicit operator
+decision:
+
+1. Confirm public traffic still hits k3s only (log correlation or a fresh
+   proof path).
+2. Confirm cloudflared still points at `:30020` and health on NodePort is green.
+3. Then, and only then: `sudo systemctl disable --now brewdial-api` (or leave
+   enabled-but-stopped per operator preference).
+
+🔴 **Do not stop systemd as part of routine deploys.** Keeping it is the
+fastest traffic rollback (cloudflared re-point only). Duration of the
+observation window is an **operator decision**, not encoded here as a
+deadline.
+
+### 5.3 Variant (A) cutover sketch (reference only — not used in production)
+
+If hostNetwork (A) had been chosen instead:
+
+1. Deploy variant-a manifests only **after** freeing `:3020`.
+2. 🔴 Downtime: `sudo systemctl stop brewdial-api` → pod binds `:3020`.
+3. No cloudflared change for pure A (tunnel stays on `:3020`).
+4. Dual-stack fallback is **not** available (port conflict with systemd).
 
 ## 6. Recovery bypass — k3s is down, serve via podman
 
 If k3s itself is broken, run the **same image** directly (podman 5.x is
-already on the box):
+already on the box). This path mirrors **variant (A)** premises
+(`--network host`, loopback DSN, cloudflared→:3020):
 
 ```bash
+# 0. If cloudflared still points at NodePort 30020, re-point to :3020 first
+#    (or after the container is up) so public traffic reaches the rescue.
+
 # 1. apply any pending migrations first (idempotent, same image):
 sudo podman run --rm --network host --env-file /etc/brewdial/api.env \
   ghcr.io/mgh3326/brewdial@sha256:<digest> \
   node /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js \
     -m /migrate/migrations -j sql up
 
-# 2. serve (hostNetwork → 127.0.0.1:3020, cloudflared path unchanged):
+# 2. serve (hostNetwork → 127.0.0.1:3020):
 sudo podman run -d --name brewdial-api-rescue --restart=always \
   --network host --env-file /etc/brewdial/api.env \
   ghcr.io/mgh3326/brewdial@sha256:<digest>
 
 curl -fs localhost:3020/api/db/health
 # when k3s is healthy again: sudo podman rm -f brewdial-api-rescue
+# and restore cloudflared to :30020 if that is still the production path.
 ```
 
 (`--network host` mirrors variant (A): `127.0.0.1:5432` DSN and the
-cloudflared→3020 path both keep working. SELinux Enforcing is fine here —
-no volumes are mounted.)
+cloudflared→3020 path both keep working **if** `/etc/brewdial/api.env` still
+uses loopback for `DATABASE_URL`. SELinux Enforcing is fine here — no volumes
+are mounted.)
+
+**Note:** while the systemd unit still runs on `:3020`, free that port first
+(`systemctl stop brewdial-api`) before the rescue container binds it.
 
 ## 7. CI deployment (Phase 2 — NOT in this merge)
 
@@ -223,8 +373,9 @@ are for discovery only and must not appear in the applied Deployment.
 The resulting Deployment should carry the full commit SHA, image digest, and
 selected variant as labels or annotations, and the release record should
 include the CI run URL. The kustomization/overlay contract must expose the
-variant as an explicit input; this design intentionally does **not** declare
-variant (A) or (B) as the production default.
+variant as an explicit input. **Repo default and production live shape are
+variant (B)**; the overlay input still exists so A can be selected for
+recovery tests without silent defaults drifting.
 
 The intended Phase 2 sequence is:
 

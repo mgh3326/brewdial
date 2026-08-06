@@ -1,9 +1,13 @@
-# ~/.cloudflared/config.yml on the OCI box (after `cloudflared tunnel create brewdial`)
+# /etc/cloudflared/config.yml on the OCI box (local-file managed tunnel).
 # Hides the OCI origin: cloudflared makes OUTBOUND connections to Cloudflare,
-# so NO inbound port (3020) needs opening in firewalld / the OCI security list.
+# so NO inbound port needs opening in firewalld / the OCI security list.
+#
+# Production (variant B, since 2026-08-06): NodePort 30020.
+# Emergency rollback to systemd fallback: service http://127.0.0.1:3020
+# (see deploy/oci/k3s/RUNBOOK.md §0 item 6 and §4.2).
 tunnel: <TUNNEL_ID>
 credentials-file: /home/opc/.cloudflared/<TUNNEL_ID>.json
 ingress:
   - hostname: api.brewdial.<your-domain>
-    service: http://127.0.0.1:3020
+    service: http://127.0.0.1:30020
   - service: http_status:404
