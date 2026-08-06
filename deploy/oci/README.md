@@ -17,7 +17,12 @@ Containerized deploy on single-node k3s: manifests + full runbook in `k3s/`
 (`k3s/RUNBOOK.md`), image built by `.github/workflows/image.yml`. The systemd
 unit below remains the live production setup until the approved cutover.
 
-## Deploy / update (until a git-based deploy is set up)
+## Current production service (until the approved k3s cutover)
+
+The current production API is the systemd service described above. The
+manual update path below is still valid for that service; it is not the
+Phase 2 k3s deployment path.
+
 ```bash
 # from a local checkout of main:
 rsync -az --exclude .git --exclude node_modules --exclude dist --exclude .superpowers \
@@ -38,4 +43,8 @@ ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
    + `brewdial-verify.timer` (the gate before decommissioning Supabase). Off-box target is the
    Mac (not OCI Object Storage) to stay within the free tier. Full procedure + DR steps:
    `docs/superpowers/plans/2026-06-29-rob-630-backup-restore-runbook.md`.
-3. (Optional) Git-based deploy: add a GitHub **deploy key** on the box for `git pull` instead of rsync.
+3. **k3s Phase 2 design:** the manifest placement, release identity, audit
+   trail, rollback procedure, and non-interactive `KUBECONFIG` requirement
+   are specified in `k3s/RUNBOOK.md` under “Phase 2 design”. The CI workflow
+   and box checkout are not implemented until that design receives its own
+   approval.
