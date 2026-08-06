@@ -166,11 +166,12 @@ jobs:
           kubectl -n migrate-fail get events --sort-by=.lastTimestamp | tail -15
           echo "--- init container failure logs:"
           kubectl -n migrate-fail logs -l app=brewdial-api -c migrate --tail=5 || true
-          APP_STATUS=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses}')
-          echo "app containerStatuses: '${APP_STATUS}'"
-          if [ -n "$APP_STATUS" ] && [ "$APP_STATUS" != "[]" ]; then
-            echo "ERROR: app container started despite failing migration"; exit 1
-          fi
+          APP_STARTED=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses[0].started}')
+          APP_STATE=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses[0].state}')
+          echo "app container started: '${APP_STARTED}'  state: ${APP_STATE}"
+          # While the migration initContainer fails, the app container exists in
+          # status as waiting/PodInitializing — the gate proof is started=false.
+          [ "$APP_STARTED" = "false" ] || { echo "ERROR: app container started despite failing migration"; exit 1; }
           case "$STATUS" in Init:*) : ;; *) echo "ERROR: pod not stuck in Init (status: $STATUS)"; exit 1;; esac
           [ "${RC:-0}" -ge 2 ] || { echo "ERROR: migration failure not observed (restartCount=$RC)"; exit 1; }
           echo "OK: migration failure kept the app container from ever starting (restartCount=$RC, status=$STATUS)"
