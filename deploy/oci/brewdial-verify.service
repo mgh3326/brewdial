@@ -1,0 +1,13 @@
+# /etc/systemd/system/brewdial-verify.service
+# Weekly restore-verification gate. Triggered by brewdial-verify.timer.
+[Unit]
+Description=BrewDial restore-verification (pg_restore into throwaway DB + checksum compare)
+After=postgresql-17.service network-online.target
+Wants=postgresql-17.service network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+ExecStart=/opt/brewdial/deploy/oci/verify-restore.sh
+Nice=10
+IOSchedulingClass=idle

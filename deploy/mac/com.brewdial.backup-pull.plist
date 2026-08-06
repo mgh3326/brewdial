@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template LaunchAgent. Install to ~/Library/LaunchAgents/com.brewdial.backup-pull.plist
+     with __SCRIPT__, __HOME__ replaced by absolute paths, then:
+       launchctl load -w ~/Library/LaunchAgents/com.brewdial.backup-pull.plist
+     Runs daily at 13:00 local (KST) — ~30 min after the box's 03:30 UTC dump.
+     launchd runs a missed job once on wake if the Mac was asleep. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.brewdial.backup-pull</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__SCRIPT__</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>13</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/brewdial-backup-pull.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/brewdial-backup-pull.log</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

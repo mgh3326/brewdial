@@ -1,0 +1,14 @@
+# /etc/systemd/system/brewdial-backup.service
+# Runs the daily pg_dump backup. Triggered by brewdial-backup.timer.
+[Unit]
+Description=BrewDial Postgres backup (pg_dump -Fc + globals, retention)
+After=postgresql-17.service network-online.target
+Wants=postgresql-17.service network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+# Script ships with the repo (rsynced to /opt/brewdial); config + secrets are on the box.
+ExecStart=/opt/brewdial/deploy/oci/backup.sh
+Nice=10
+IOSchedulingClass=idle

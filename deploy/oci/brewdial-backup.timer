@@ -1,0 +1,13 @@
+# /etc/systemd/system/brewdial-backup.timer
+# Daily backup at 03:30 UTC (box is UTC; = 12:30 KST). Persistent=true so a
+# missed run (box was off) fires at next boot.
+[Unit]
+Description=Daily BrewDial Postgres backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
