@@ -41,7 +41,10 @@ jobs:
       - name: Build intentionally-broken image (for the rollback test)
         run: |
           set -euo pipefail
-          printf 'FROM %s\nCMD ["node", "-e", "console.error(\'intentionally broken\'); process.exit(1)"]\n' "$TEST_IMAGE" > Dockerfile.broken
+          cat > Dockerfile.broken <<EOF
+          FROM $TEST_IMAGE
+          CMD ["node", "-e", "console.error('intentionally broken'); process.exit(1)"]
+          EOF
           docker build --tag "$BROKEN_IMAGE" -f Dockerfile.broken .
 
       - name: Install k3d (pinned, checksum-verified)
