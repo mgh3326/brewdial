@@ -1,0 +1,244 @@
+name: k8s Validation
+
+# Validates the k3s manifests end-to-end on a throwaway k3d cluster:
+#   R3  server-side schema validation (--dry-run=server)
+#   R4  real deployment + readiness + health probes
+#   R5  rollback ACTUALLY works — an intentionally broken image is deployed,
+#       the rollout fails, and `kubectl rollout undo` restores the prior rev
+#   R6  migrations run before app start; a failing migration blocks the app
+#   R7  variant (A) ↔ (B) switch is applied and both reach readiness
+# Production is NOT touched from here (hard boundary: box access is operator-only).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TEST_IMAGE: brewdial-api:test
+  BROKEN_IMAGE: brewdial-api:broken
+  K3D_VERSION: v5.9.0
+
+jobs:
+  k3d:
+    name: k3d cluster — deploy, rollback, migration gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build test image from repo Dockerfile
+        run: |
+          set -euo pipefail
+          docker build --tag "$TEST_IMAGE" .
+          echo "uid inside image: $(docker run --rm --entrypoint id "$TEST_IMAGE" -u)"
+
+      - name: Build intentionally-broken image (for the rollback test)
+        run: |
+          set -euo pipefail
+          cat > Dockerfile.broken <<EOF
+          FROM $TEST_IMAGE
+          CMD ["node", "-e", "console.error('intentionally broken'); process.exit(1)"]
+          EOF
+          docker build --tag "$BROKEN_IMAGE" -f Dockerfile.broken .
+
+      - name: Install k3d (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          curl -fsSL -o checksums.txt "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/checksums.txt"
+          EXPECTED=$(awk '$2 == "_dist/k3d-linux-amd64" {print $1}' checksums.txt)
+          [ -n "$EXPECTED" ] || { echo "checksum entry missing"; exit 1; }
+          echo "$EXPECTED  k3d" | sha256sum --check -
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
+          k3d version
+          kubectl version --client
+
+      - name: Create k3d cluster (mirrors prod flags — no traefik/servicelb)
+        run: |
+          set -euo pipefail
+          k3d cluster create ci \
+            --no-lb \
+            --k3s-arg "--disable=traefik@server:*" \
+            --k3s-arg "--disable=servicelb@server:*" \
+            --wait
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Import images into the cluster
+        run: k3d image import --cluster ci "$TEST_IMAGE" "$BROKEN_IMAGE"
+
+      - name: R3 — server-side schema validation of ALL manifests
+        run: |
+          set -euo pipefail
+          kubectl apply -f deploy/oci/k3s/namespace.yaml --dry-run=server
+          kubectl create namespace brewdial --dry-run=client -o yaml | kubectl apply -f -
+          for f in deploy/oci/k3s/configmap.yaml \
+                   deploy/oci/k3s/secret.example.yaml \
+                   deploy/oci/k3s/deployment.yaml \
+                   deploy/oci/k3s/variant-b/deployment.yaml \
+                   deploy/oci/k3s/variant-b/service.yaml \
+                   deploy/oci/k3s/ci/postgres.yaml \
+                   deploy/oci/k3s/ci/secret-ci.yaml; do
+            echo "=== dry-run=server: $f"
+            kubectl apply -f "$f" --dry-run=server
+          done
+
+      - name: R4 — deploy variant A (hostNetwork) + in-cluster test Postgres
+        run: |
+          set -euo pipefail
+          kubectl apply -f deploy/oci/k3s/configmap.yaml
+          kubectl apply -f deploy/oci/k3s/ci/secret-ci.yaml
+          kubectl apply -f deploy/oci/k3s/ci/postgres.yaml
+          kubectl -n brewdial rollout status deploy/postgres --timeout=180s
+          # Point the manifest at the locally-imported test image.
+          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml | kubectl apply -f -
+          if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s; then
+            echo "=== ROLLOUT FAILED — diagnostics:"
+            kubectl -n brewdial get pods -o wide
+            kubectl -n brewdial describe pod -l app=brewdial-api | tail -50
+            kubectl -n brewdial logs -l app=brewdial-api -c migrate --tail=20 || true
+            kubectl -n brewdial logs -l app=brewdial-api -c api --tail=20 || true
+            exit 1
+          fi
+          kubectl -n brewdial get deploy,pods -o wide
+
+      - name: R4 — health endpoints green through the running pod
+        run: |
+          set -euo pipefail
+          kubectl -n brewdial port-forward deploy/brewdial-api 13020:3020 &
+          PF_PID=$!
+          trap 'kill $PF_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do curl -fs localhost:13020/api/health && break || sleep 2; done
+          echo
+          echo "--- GET /api/db/health"
+          curl -fs localhost:13020/api/db/health
+          echo
+
+      - name: R6 — migration initContainer ran BEFORE the app (logs)
+        run: |
+          set -euo pipefail
+          POD=$(kubectl -n brewdial get pod -l app=brewdial-api -o jsonpath='{.items[0].metadata.name}')
+          echo "--- init container 'migrate' logs (pod $POD)"
+          kubectl -n brewdial logs "$POD" -c migrate
+          echo "--- init container terminated successfully:"
+          kubectl -n brewdial get pod "$POD" -o jsonpath='{.status.initContainerStatuses[0].state}{"\n"}'
+
+      - name: R6 — failing migration BLOCKS the app (negative test)
+        run: |
+          set -euo pipefail
+          kubectl create namespace migrate-fail
+          # Same manifests, broken DSN host, in a scratch namespace.
+          # containerPort is remapped to a free port: the healthy variant-A pod
+          # above is hostNetwork and holds :3020 on the (single) node, and the
+          # scheduler's NodePorts plugin refuses a second hostNetwork pod
+          # declaring the same port (observed: FailedScheduling "didn't have
+          # free ports" — itself live proof of why variant A forces maxSurge=0).
+          # The app container never starts in this test, so the port is moot.
+          sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
+              -e 's|postgres.brewdial.svc.cluster.local|postgres.does-not-exist|' \
+              deploy/oci/k3s/ci/secret-ci.yaml | kubectl apply -f -
+          sed 's|namespace: brewdial|namespace: migrate-fail|' deploy/oci/k3s/configmap.yaml | kubectl apply -f -
+          sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
+              -e "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" \
+              -e 's|containerPort: 3020|containerPort: 13029|' \
+              deploy/oci/k3s/deployment.yaml | kubectl apply -f -
+          echo "--- waiting for the migration initContainer to fail repeatedly..."
+          # restartCount-based detection: polling for the literal waiting reason
+          # "CrashLoopBackOff" is brittle (init-container state flickers between
+          # waiting/terminated and jsonpath errors on the missing key → empty).
+          # restartCount >= 2 with pod STATUS Init:* proves repeated failure.
+          for i in $(seq 1 36); do
+            RC=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.initContainerStatuses[0].restartCount}' 2>/dev/null || true)
+            STATUS=$(kubectl -n migrate-fail get pod -l app=brewdial-api --no-headers 2>/dev/null | awk '{print $3}')
+            echo "init restartCount: ${RC:-<none>}  pod status: ${STATUS:-<none>}"
+            case "$STATUS" in Init:*) [ "${RC:-0}" -ge 2 ] && break;; esac
+            sleep 5
+          done
+          kubectl -n migrate-fail get pods -o wide
+          echo "--- events (migrate-fail):"
+          kubectl -n migrate-fail get events --sort-by=.lastTimestamp | tail -15
+          echo "--- init container failure logs:"
+          kubectl -n migrate-fail logs -l app=brewdial-api -c migrate --tail=5 || true
+          APP_STARTED=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses[0].started}')
+          APP_STATE=$(kubectl -n migrate-fail get pod -l app=brewdial-api -o jsonpath='{.items[0].status.containerStatuses[0].state}')
+          echo "app container started: '${APP_STARTED}'  state: ${APP_STATE}"
+          # While the migration initContainer fails, the app container exists in
+          # status as waiting/PodInitializing — the gate proof is started=false.
+          [ "$APP_STARTED" = "false" ] || { echo "ERROR: app container started despite failing migration"; exit 1; }
+          case "$STATUS" in Init:*) : ;; *) echo "ERROR: pod not stuck in Init (status: $STATUS)"; exit 1;; esac
+          [ "${RC:-0}" -ge 2 ] || { echo "ERROR: migration failure not observed (restartCount=$RC)"; exit 1; }
+          echo "OK: migration failure kept the app container from ever starting (restartCount=$RC, status=$STATUS)"
+          kubectl delete namespace migrate-fail --wait=false
+
+      - name: R5 — rollback ACTUALLY works (broken image rollout → undo)
+        run: |
+          set -euo pipefail
+          echo "--- current revision (healthy):"
+          kubectl -n brewdial rollout history deploy/brewdial-api
+          kubectl -n brewdial set image deploy/brewdial-api api="$BROKEN_IMAGE"
+          set +e
+          kubectl -n brewdial rollout status deploy/brewdial-api --timeout=90s
+          RC=$?
+          set -e
+          echo "rollout status exit code with broken image: $RC"
+          if [ "$RC" -eq 0 ]; then
+            echo "ERROR: broken-image rollout unexpectedly succeeded"; exit 1
+          fi
+          echo "--- pods after failed rollout (expect CrashLoopBackOff):"
+          kubectl -n brewdial get pods -o wide
+          kubectl -n brewdial rollout undo deploy/brewdial-api
+          kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s
+          echo "--- revision history after undo:"
+          kubectl -n brewdial rollout history deploy/brewdial-api
+          RESTORED=$(kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.containers[0].image}')
+          echo "restored image: $RESTORED"
+          [ "$RESTORED" = "$TEST_IMAGE" ] || { echo "ERROR: image not restored to $TEST_IMAGE"; exit 1; }
+          kubectl -n brewdial get deploy,pods -o wide
+          echo "--- health after rollback:"
+          kubectl -n brewdial port-forward deploy/brewdial-api 13021:3020 &
+          PF_PID=$!
+          trap 'kill $PF_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do curl -fs localhost:13021/api/db/health && break || sleep 2; done
+          echo
+
+      - name: R7 — switch variant A → B (pod network + NodePort) and reach readiness
+        run: |
+          set -euo pipefail
+          kubectl -n brewdial delete deploy brewdial-api
+          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml | kubectl apply -f -
+          kubectl apply -f deploy/oci/k3s/variant-b/service.yaml
+          kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s
+          kubectl -n brewdial get deploy,pods,svc -o wide
+          echo "--- strategy shows surge allowed (zero-downtime capable):"
+          kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.strategy}{"\n"}'
+          kubectl -n brewdial port-forward svc/brewdial-api 13022:3020 &
+          PF_PID=$!
+          trap 'kill $PF_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do curl -fs localhost:13022/api/db/health && break || sleep 2; done
+          echo
+
+      # Runs even (only) when any earlier step failed — the dump must ALWAYS be
+      # in the log, so a red run is diagnosable without a re-run.
+      - name: Failure diagnostics (always dumped on failure)
+        if: failure()
+        run: |
+          set +e
+          echo "=== get all (brewdial)"
+          kubectl -n brewdial get all -o wide
+          echo "=== describe pods (brewdial-api)"
+          kubectl -n brewdial describe pod -l app=brewdial-api | tail -80
+          echo "=== logs, all containers incl. init (current + previous)"
+          kubectl -n brewdial logs -l app=brewdial-api --all-containers --tail=200
+          kubectl -n brewdial logs -l app=brewdial-api --all-containers --previous --tail=100
+          echo "=== events (brewdial)"
+          kubectl -n brewdial get events --sort-by=.lastTimestamp | tail -50
+          echo "=== get all (migrate-fail, if the negative test got that far)"
+          kubectl -n migrate-fail get all -o wide 2>/dev/null
+          kubectl -n migrate-fail get events --sort-by=.lastTimestamp 2>/dev/null | tail -20

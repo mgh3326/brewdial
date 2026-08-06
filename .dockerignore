@@ -1,0 +1,15 @@
+.git
+.github
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.env
+.env.*
+docs
+deploy
+supabase
+scripts
+apps/miniapp/store-assets
+.DS_Store
+Dockerfile
+.dockerignore
