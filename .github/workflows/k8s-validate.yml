@@ -52,7 +52,9 @@ jobs:
           set -euo pipefail
           curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
           curl -fsSL -o checksums.txt "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/checksums.txt"
-          grep 'k3d-linux-amd64$' checksums.txt | sha256sum --check --ignore-missing
+          EXPECTED=$(awk '$2 == "_dist/k3d-linux-amd64" {print $1}' checksums.txt)
+          [ -n "$EXPECTED" ] || { echo "checksum entry missing"; exit 1; }
+          echo "$EXPECTED  k3d" | sha256sum --check -
           chmod +x k3d
           sudo mv k3d /usr/local/bin/k3d
           k3d version
