@@ -76,15 +76,16 @@ spec:
           ports:
             - containerPort: 3020
           readinessProbe: # ready only when the DB chain works end-to-end
-            httpGet:
-              path: /api/db/health
-              port: 3020
+            # exec probe: with hostNetwork + HOST=127.0.0.1 the kubelet CANNOT
+            # httpGet the pod (it dials the node IP, the app binds loopback
+            # only). exec runs inside the pod's netns where 127.0.0.1 works.
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:3020/api/db/health"]
             initialDelaySeconds: 3
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /api/health
-              port: 3020
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:3020/api/health"]
             initialDelaySeconds: 5
             periodSeconds: 20
           resources:

@@ -99,7 +99,14 @@ jobs:
           kubectl -n brewdial rollout status deploy/postgres --timeout=180s
           # Point the manifest at the locally-imported test image.
           sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml | kubectl apply -f -
-          kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s
+          if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=240s; then
+            echo "=== ROLLOUT FAILED — diagnostics:"
+            kubectl -n brewdial get pods -o wide
+            kubectl -n brewdial describe pod -l app=brewdial-api | tail -50
+            kubectl -n brewdial logs -l app=brewdial-api -c migrate --tail=20 || true
+            kubectl -n brewdial logs -l app=brewdial-api -c api --tail=20 || true
+            exit 1
+          fi
           kubectl -n brewdial get deploy,pods -o wide
 
       - name: R4 — health endpoints green through the running pod
