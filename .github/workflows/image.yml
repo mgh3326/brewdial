@@ -1,7 +1,8 @@
 name: Container Image
 
 # Builds the BrewDial API image for linux/arm64 (the OCI box is aarch64) and
-# pushes it to GHCR with two tags: immutable `:sha-<short>` and moving `:latest`.
+# pushes it to GHCR with an immutable `:sha-<short>` tag and a moving `:latest`
+# tag on main pushes only.
 # Runs on the ARM runner so no QEMU emulation is needed.
 
 on:
@@ -50,13 +51,19 @@ jobs:
           echo "Runtime uid: $(docker run --rm --entrypoint id '${{ steps.tags.outputs.sha_tag }}' -u)"
           grep '^FROM ' Dockerfile
 
-      - name: Push to GHCR
+      - name: Push immutable sha tag to GHCR
         # Fork PRs get a read-only token; never push from them.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           set -euo pipefail
           echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
           docker push '${{ steps.tags.outputs.sha_tag }}'
+
+      - name: Push latest tag to GHCR (main push only)
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
           docker push '${{ steps.tags.outputs.latest_tag }}'
 
       - name: Record digest (deployment reference)

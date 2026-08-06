@@ -41,7 +41,7 @@ spec:
         # so re-runs are no-ops. If migrations fail, this container exits
         # non-zero and the app container NEVER starts (Init:CrashLoopBackOff).
         - name: migrate
-          image: ghcr.io/mgh3326/brewdial:latest # deploy with a digest — see RUNBOOK.md
+          image: ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST # replace before apply — see RUNBOOK.md
           command:
             - node
             - /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js
@@ -62,7 +62,7 @@ spec:
               drop: ["ALL"]
       containers:
         - name: api
-          image: ghcr.io/mgh3326/brewdial:latest # deploy with a digest — see RUNBOOK.md
+          image: ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST # replace before apply — see RUNBOOK.md
           envFrom:
             - configMapRef:
                 name: brewdial-api-config

@@ -155,7 +155,7 @@ jobs:
           # Production manifests under deploy/oci/k3s/{deployment,variant-b}/
           # are NOT modified (GHCR pull must keep working there).
           # shellcheck disable=SC2016
-          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml \
+          sed "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" deploy/oci/k3s/deployment.yaml \
             | awk '
                 /^[[:space:]]*image:[[:space:]]/ {
                   print
@@ -221,7 +221,7 @@ jobs:
           sed 's|namespace: brewdial|namespace: migrate-fail|' deploy/oci/k3s/configmap.yaml | kubectl apply -f -
           # CI-only: local image + imagePullPolicy: Never (same as R4; prod YAML untouched).
           sed -e 's|namespace: brewdial|namespace: migrate-fail|' \
-              -e "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" \
+              -e "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" \
               -e 's|containerPort: 3020|containerPort: 13029|' \
               deploy/oci/k3s/deployment.yaml \
             | awk '
@@ -297,7 +297,7 @@ jobs:
           set -euo pipefail
           kubectl -n brewdial delete deploy brewdial-api
           # CI-only: local image + imagePullPolicy: Never (prod variant-b YAML untouched).
-          sed "s|ghcr.io/mgh3326/brewdial:latest|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml \
+          sed "s|ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST|${TEST_IMAGE}|" deploy/oci/k3s/variant-b/deployment.yaml \
             | awk '
                 /^[[:space:]]*image:[[:space:]]/ {
                   print
