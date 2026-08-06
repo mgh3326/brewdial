@@ -11,17 +11,23 @@ Full runbook: `docs/superpowers/plans/2026-06-23-m1-oci-provisioning-runbook.md`
 - **`brewdial-api.service`** (this dir) running, env from `/etc/brewdial/api.env` (600). Binds `127.0.0.1:3020`. `GET /api/health` + `/api/db/health` green.
 - **firewalld:** only `ssh` open (3020/5432 NOT exposed). `cloudflared` installed.
 
-## k3s runtime (upcoming — ROB-1214)
+## k3s runtime (production since 2026-08-06 — ROB-1214)
 
-Containerized deploy on single-node k3s: manifests + full runbook in `k3s/`
-(`k3s/RUNBOOK.md`), image built by `.github/workflows/image.yml`. The systemd
-unit below remains the live production setup until the approved cutover.
+Public API traffic is served by **k3s variant B** (pod network + NodePort
+30020). Manifests + full runbook: `k3s/` (`k3s/RUNBOOK.md`). Image builds:
+`.github/workflows/image.yml`. Always deploy by digest, never `:latest`.
 
-## Current production service (until the approved k3s cutover)
+**Confirmed at cutover (see RUNBOOK §0 for the full precondition list):**
+cloudflared ingress → `http://127.0.0.1:30020`; host Postgres also listens on
+bridge IP `10.42.0.1` with pod-CIDR `pg_hba`; systemd `brewdial-api` is still
+left running on `:3020` as a reversible fallback (not stopped — observation
+period is an operator decision).
 
-The current production API is the systemd service described above. The
-manual update path below is still valid for that service; it is not the
-Phase 2 k3s deployment path.
+## systemd path (fallback / recovery — not the public path)
+
+The systemd unit below remains installed and was **not** disabled at cutover.
+Use it for emergency traffic rollback (re-point cloudflared to `:3020`) or
+manual rebuilds. It is **not** the Phase 2 k3s deployment path.
 
 ```bash
 # from a local checkout of main:
