@@ -20,6 +20,8 @@ const beanEthiopiaId = randomUUID()
 const beanBrazilId = randomUUID()
 // One bean with NO recipes (recipe_count = 0) — must be excluded from search.
 const beanNoRecipeId = randomUUID()
+// ROB-1291: attr-only bean (no recipes, attrs_source set) — must be searchable.
+const beanAttrOnlyId = randomUUID()
 
 const recipeCode1 = `T-BSEARCH1-${SEED_SUFFIX}`
 const recipeCode2 = `T-BSEARCH2-${SEED_SUFFIX}`
@@ -31,13 +33,15 @@ beforeAll(async () => {
 
   // Clean up potential leftovers.
   await db.deleteFrom('recipes').where('code', 'in', [recipeCode1, recipeCode2, recipeCode3]).execute()
-  await db.deleteFrom('beans').where('id', 'in', [beanEthiopiaId, beanBrazilId, beanNoRecipeId]).execute()
+  await db.deleteFrom('beans').where('id', 'in', [beanEthiopiaId, beanBrazilId, beanNoRecipeId, beanAttrOnlyId]).execute()
 
   // Seed beans.
   await db.insertInto('beans').values([
     { id: beanEthiopiaId, name: `Ethiopia Yirgacheffe ${SEED_SUFFIX}`, roaster: `Acme Roasters ${SEED_SUFFIX}` },
     { id: beanBrazilId,   name: `Brazil Cerrado ${SEED_SUFFIX}`,        roaster: `Blue Bottle ${SEED_SUFFIX}` },
     { id: beanNoRecipeId, name: `NoRecipe Bean ${SEED_SUFFIX}`,          roaster: `Acme Roasters ${SEED_SUFFIX}` },
+    // ROB-1291: no recipes, but structured attrs — searchable via the OR-visibility rule.
+    { id: beanAttrOnlyId, name: `AttrOnly Kurly ${SEED_SUFFIX}`, roaster: `Kurly Roasters ${SEED_SUFFIX}`, attrs_source: 'ai_extracted', acidity: 3 },
   ]).execute()
 
   // Seed active recipes: beanBrazilId gets 2 recipes (higher recipe_count) vs beanEthiopiaId 1 recipe.
@@ -72,8 +76,18 @@ beforeAll(async () => {
 afterAll(async () => {
   const db = getDb()
   await db.deleteFrom('recipes').where('code', 'in', [recipeCode1, recipeCode2, recipeCode3]).execute()
-  await db.deleteFrom('beans').where('id', 'in', [beanEthiopiaId, beanBrazilId, beanNoRecipeId]).execute()
+  await db.deleteFrom('beans').where('id', 'in', [beanEthiopiaId, beanBrazilId, beanNoRecipeId, beanAttrOnlyId]).execute()
   await closeDb()
+})
+
+// ─── ROB-1291: attr-only beans are searchable ────────────────────────────────
+
+test('GET /api/beans?q matches attr-only bean (no recipes, attrs_source set)', async () => {
+  const res = await app.request(`/api/beans?q=${encodeURIComponent('AttrOnly Kurly ' + SEED_SUFFIX)}`)
+  expect(res.status).toBe(200)
+  const rows: Array<Record<string, unknown>> = await res.json()
+  const ids = rows.map((r) => r['id'])
+  expect(ids).toContain(beanAttrOnlyId)
 })
 
 // ─── Search: name ILIKE ───────────────────────────────────────────────────────
