@@ -20,6 +20,8 @@ const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
 
 const beanWithRecipeId = randomUUID()
 const beanNoRecipeId = randomUUID()
+// ROB-1291: attr-only bean (no recipes, structured attrs) — must be listed, after recipe beans.
+const beanAttrOnlyId = randomUUID()
 const recipeCode1 = `T-BEAN1-${SEED_SUFFIX}`
 const recipeCode2 = `T-BEAN2-${SEED_SUFFIX}`
 
@@ -34,7 +36,7 @@ beforeAll(async () => {
 
   // Clean up any potential leftovers from partial prior runs.
   await db.deleteFrom('recipes').where('code', 'in', [recipeCode1, recipeCode2]).execute()
-  await db.deleteFrom('beans').where('id', 'in', [beanWithRecipeId, beanNoRecipeId]).execute()
+  await db.deleteFrom('beans').where('id', 'in', [beanWithRecipeId, beanNoRecipeId, beanAttrOnlyId]).execute()
   await db.deleteFrom('grinders').where('id', 'in', [grinderId1, grinderId2]).execute()
   await db.deleteFrom('drippers').where('id', 'in', [dripperId1, dripperId2]).execute()
 
@@ -42,6 +44,8 @@ beforeAll(async () => {
   await db.insertInto('beans').values([
     { id: beanWithRecipeId, name: `Bean With Recipe ${SEED_SUFFIX}` },
     { id: beanNoRecipeId, name: `Bean No Recipe ${SEED_SUFFIX}` },
+    // Attr-only: no recipes, but structured attributes (Kurly backfill shape).
+    { id: beanAttrOnlyId, name: `Bean Attr Only ${SEED_SUFFIX}`, attrs_source: 'manual', acidity: 2, body: 4 },
   ]).execute()
 
   // Insert active recipes for beanWithRecipeId (this causes bean_summaries to roll up recipe_count > 0).
@@ -80,7 +84,7 @@ beforeAll(async () => {
 afterAll(async () => {
   const db = getDb()
   await db.deleteFrom('recipes').where('code', 'in', [recipeCode1, recipeCode2]).execute()
-  await db.deleteFrom('beans').where('id', 'in', [beanWithRecipeId, beanNoRecipeId]).execute()
+  await db.deleteFrom('beans').where('id', 'in', [beanWithRecipeId, beanNoRecipeId, beanAttrOnlyId]).execute()
   await db.deleteFrom('grinders').where('id', 'in', [grinderId1, grinderId2]).execute()
   await db.deleteFrom('drippers').where('id', 'in', [dripperId1, dripperId2]).execute()
   await closeDb()
@@ -88,7 +92,7 @@ afterAll(async () => {
 
 // ─── GET /api/beans ───────────────────────────────────────────────────────────
 
-test('GET /api/beans returns only beans with recipe_count > 0', async () => {
+test('GET /api/beans returns beans with recipes OR structured attrs (ROB-1291)', async () => {
   const res = await app.request('/api/beans')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
@@ -97,8 +101,25 @@ test('GET /api/beans returns only beans with recipe_count > 0', async () => {
   const ids = rows.map((r) => r['id'])
   // Bean with active recipes should appear.
   expect(ids).toContain(beanWithRecipeId)
-  // Bean with no recipes must NOT appear.
+  // Attr-only bean (no recipes, attrs_source set) should ALSO appear.
+  expect(ids).toContain(beanAttrOnlyId)
+  // Bean with neither recipes nor attrs must NOT appear.
   expect(ids).not.toContain(beanNoRecipeId)
+})
+
+test('GET /api/beans sorts attr-only (recipe-less) beans after recipe-bearing beans', async () => {
+  const res = await app.request('/api/beans')
+  const rows: Array<Record<string, unknown>> = await res.json()
+  const idxRecipe = rows.findIndex((r) => r['id'] === beanWithRecipeId)
+  const idxAttrOnly = rows.findIndex((r) => r['id'] === beanAttrOnlyId)
+  expect(idxRecipe).toBeGreaterThanOrEqual(0)
+  expect(idxAttrOnly).toBeGreaterThan(idxRecipe)
+  // NULLS LAST: once latest_recipe_at is null, it stays null to the end.
+  let seenNull = false
+  for (const r of rows) {
+    if (r['latest_recipe_at'] == null) seenNull = true
+    else expect(seenNull).toBe(false)
+  }
 })
 
 test('GET /api/beans is ordered by latest_recipe_at desc', async () => {

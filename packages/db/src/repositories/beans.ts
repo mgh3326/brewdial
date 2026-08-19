@@ -1,4 +1,4 @@
-import { type Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 
 // Row shape matching the client mapper's BeanSummaryRow
@@ -57,8 +57,16 @@ export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
   return db
     .selectFrom('bean_summaries')
     .select(BEAN_COLS)
-    .where('recipe_count', '>', '0')
-    .orderBy('latest_recipe_at', 'desc')
+    // ROB-1291: attribute-bearing beans (Kurly catalog backfill) are listable even
+    // before their first recipe — visible = has recipes OR has structured attrs.
+    .where((eb) => eb.or([
+      eb('recipe_count', '>', '0'),
+      eb('attrs_source', 'is not', null),
+    ]))
+    // DESC alone puts NULLs FIRST in Postgres — recipe-less (attr-only) beans would
+    // flood the top of the list. Force them below, then stable name order.
+    .orderBy(sql`latest_recipe_at desc nulls last`)
+    .orderBy('name', 'asc')
     .execute() as unknown as Promise<BeanRow[]>
 }
 
@@ -74,10 +82,16 @@ export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<Be
       eb('name', 'ilike', pattern),
       eb('roaster', 'ilike', pattern),
     ]))
-    .where('recipe_count', '>', '0')
+    // ROB-1291: same visibility rule as listBeans — recipes OR structured attrs.
+    .where((eb) => eb.or([
+      eb('recipe_count', '>', '0'),
+      eb('attrs_source', 'is not', null),
+    ]))
     // MCP disambiguation order: most-used beans first (recipe_count DESC).
     // recipe_count is stored as Int8/string; ORDER BY works correctly at the DB level.
+    // Attr-only beans (count 0) sort last; name tiebreak keeps order deterministic.
     .orderBy('recipe_count', 'desc')
+    .orderBy('name', 'asc')
     .limit(clampedLimit)
     .execute() as unknown as Promise<BeanRow[]>
 }
