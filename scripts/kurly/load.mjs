@@ -119,7 +119,11 @@ export function generateBeansSql(entries) {
 
 // psql --csv 출력(bean_key,id,created 헤더)을 파싱한다. 단순 콤마 구분(우리 값에는 콤마/개행이 없음을 보장).
 export function parseBeansCsvOutput(csvText) {
-  const lines = csvText.trim().split("\n").filter((l) => l.length > 0);
+  let lines = csvText.trim().split("\n").filter((l) => l.length > 0);
+  // \pset format csv 가 stdout에 "Output format is csv." 배너를 섞는다 — 헤더 행까지 스킵.
+  const headerAt = lines.findIndex((l) => l.split(",").includes("bean_key"));
+  if (headerAt === -1) throw new Error(`beans.sql csv header not found in output: ${lines[0] ?? "<empty>"}`);
+  lines = lines.slice(headerAt);
   if (lines.length === 0) return [];
   const header = lines[0].split(",");
   const beanKeyIdx = header.indexOf("bean_key");
