@@ -1,0 +1,161 @@
+{
+  "generated_at": "2026-08-19T00:00:00.000Z",
+  "entries": [
+    {
+      "bean_key": "kurly:5052567",
+      "action": "create_new",
+      "existing_bean_id": null,
+      "bean": {
+        "name": "모모스커피 에스쇼콜라 블렌드 원두",
+        "roaster": "모모스커피",
+        "origin": null,
+        "process": null,
+        "roast_level": "미디엄",
+        "notes": "깔끔한 맛, 깊은 여운"
+      },
+      "attrs": {
+        "roast_level_ord": 3,
+        "acidity": 2,
+        "body": 4,
+        "decaf": false,
+        "flavor_categories": ["nutty_cocoa", "sweet"],
+        "attrs_source": "roaster_page",
+        "source_url": "https://www.kurly.com/goods/5052567",
+        "attrs_notes": null
+      },
+      "purchase_links": [
+        { "kurly_no": 5052567, "url": "https://www.kurly.com/goods/5052567", "sku_name": "[모모스커피] 에스쇼콜라 블렌드 원두 200g", "is_sold_out": false }
+      ],
+      "recipe_draft": {
+        "method": "v60",
+        "title": "모모스 에스쇼콜라 기본 레시피",
+        "params": { "doseG": 20, "waterG": 320, "ratio": "1:16", "waterTempC": 92, "grindClicks": 18 },
+        "steps": [
+          { "order": 1, "action": "bloom", "waterG": 40, "durationSec": 30 },
+          { "order": 2, "action": "pour", "waterG": 280, "durationSec": 150 }
+        ],
+        "intent": ["balanced"],
+        "notes": "P2 산출물 fixture"
+      }
+    },
+    {
+      "bean_key": "kurly:5051472",
+      "action": "create_new",
+      "existing_bean_id": null,
+      "bean": {
+        "name": "인텔리젠시아 아날로그 콜드브루",
+        "roaster": "인텔리젠시아",
+        "origin": null,
+        "process": null,
+        "roast_level": null,
+        "notes": null
+      },
+      "attrs": {
+        "roast_level_ord": null,
+        "acidity": null,
+        "body": null,
+        "decaf": false,
+        "flavor_categories": [],
+        "attrs_source": "roaster_page",
+        "source_url": "https://www.kurly.com/goods/5051472",
+        "attrs_notes": null
+      },
+      "purchase_links": [
+        { "kurly_no": 5051472, "url": "https://www.kurly.com/goods/5051472", "sku_name": "[인텔리젠시아] 아날로그 콜드브루 1L", "is_sold_out": false }
+      ],
+      "recipe_draft": null
+    },
+    {
+      "bean_key": "kurly:5060542",
+      "action": "create_new",
+      "existing_bean_id": null,
+      "bean": {
+        "name": "센터커피 시그니처 블렌드",
+        "roaster": "센터커피",
+        "origin": "브라질",
+        "process": "내추럴",
+        "roast_level": "미디엄다크",
+        "notes": null
+      },
+      "attrs": {
+        "roast_level_ord": 4,
+        "acidity": 1,
+        "body": 5,
+        "decaf": false,
+        "flavor_categories": ["roasted"],
+        "attrs_source": "roaster_page",
+        "source_url": "https://www.kurly.com/goods/5060542",
+        "attrs_notes": "로스터 표기 원문 그대로"
+      },
+      "purchase_links": [
+        { "kurly_no": 5060542, "url": "https://www.kurly.com/goods/5060542", "sku_name": "[센터커피] 시그니처 블렌드 200g", "is_sold_out": false }
+      ],
+      "recipe_draft": null
+    },
+    {
+      "bean_key": "kurly:5061559",
+      "action": "link_existing",
+      "existing_bean_id": "bean-existing-aaa",
+      "bean": {
+        "name": "테라로사 게이샤 마운틴",
+        "roaster": "테라로사",
+        "origin": "파나마",
+        "process": "워시드",
+        "roast_level": "라이트",
+        "notes": null
+      },
+      "attrs": {
+        "roast_level_ord": 2,
+        "acidity": 5,
+        "body": 2,
+        "decaf": false,
+        "flavor_categories": ["floral", "fruity"],
+        "attrs_source": "roaster_page",
+        "source_url": "https://www.kurly.com/goods/5061559",
+        "attrs_notes": null
+      },
+      "purchase_links": [
+        { "kurly_no": 5061559, "url": "https://www.kurly.com/goods/5061559", "sku_name": "[테라로사] 게이샤 마운틴 200g", "is_sold_out": false },
+        { "kurly_no": 5061560, "url": "https://www.kurly.com/goods/5061560", "sku_name": "[테라로사] 게이샤 마운틴 500g", "is_sold_out": true }
+      ],
+      "recipe_draft": null
+    },
+    {
+      "bean_key": "kurly:5078339",
+      "action": "link_existing",
+      "existing_bean_id": "bean-existing-bbb",
+      "bean": {
+        "name": "프릳츠 발란스 블렌드",
+        "roaster": "프릳츠",
+        "origin": null,
+        "process": null,
+        "roast_level": "미디엄",
+        "notes": null
+      },
+      "attrs": {
+        "roast_level_ord": 3,
+        "acidity": 3,
+        "body": 3,
+        "decaf": false,
+        "flavor_categories": ["cereal"],
+        "attrs_source": "roaster_page",
+        "source_url": "https://www.kurly.com/goods/5078339",
+        "attrs_notes": null
+      },
+      "purchase_links": [
+        { "kurly_no": 5078339, "url": "https://www.kurly.com/goods/5078339", "sku_name": "[프릳츠] 발란스 블렌드 200g", "is_sold_out": false }
+      ],
+      "recipe_draft": null
+    },
+    {
+      "bean_key": "kurly:5054121",
+      "action": "skip",
+      "existing_bean_id": null,
+      "bean": null,
+      "attrs": null,
+      "purchase_links": [],
+      "recipe_draft": null,
+      "skip_reason": "P2 매칭 실패 — 유령쌍둥이 의심(로스터 표기 불일치)"
+    }
+  ]
+}
