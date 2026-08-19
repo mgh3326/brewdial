@@ -296,7 +296,8 @@ export function requireAgentToken(worktreeRoot) {
 
 // beans.sql을 ssh 경유 psql로 실행한다. --execute 에서만 호출되며, 이 job에서는 절대 실행하지 않는다.
 function execBeansSqlViaSsh(sql) {
-  const result = spawnSync("ssh", ["-i", SSH_KEY_PATH, SSH_TARGET, 'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f -'], {
+  // DSN은 박스의 /etc/brewdial/api.env에만 있다 (원격 셸 env에 없음) — sudo로 읽어 psql에 넘긴다.
+  const result = spawnSync("ssh", ["-i", SSH_KEY_PATH, SSH_TARGET, 'DSN=$(sudo grep ^DATABASE_URL /etc/brewdial/api.env | cut -d= -f2-); psql "$DSN" -v ON_ERROR_STOP=1 -f -'], {
     input: sql,
     encoding: "utf8",
   });
