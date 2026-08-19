@@ -1,0 +1,37 @@
+[
+  {
+    "bean_key": "kurly:5052567",
+    "bean_id": "bean-new-001",
+    "created": true,
+    "link_ids": ["link-001"],
+    "recipe_codes": ["COF-0001"]
+  },
+  {
+    "bean_key": "kurly:5051472",
+    "bean_id": "bean-new-002",
+    "created": true,
+    "link_ids": ["link-002"],
+    "recipe_codes": []
+  },
+  {
+    "bean_key": "kurly:5060542",
+    "bean_id": "bean-new-003",
+    "created": true,
+    "link_ids": ["link-003"],
+    "recipe_codes": []
+  },
+  {
+    "bean_key": "kurly:5061559",
+    "bean_id": "bean-existing-aaa",
+    "created": false,
+    "link_ids": ["link-004", "link-005"],
+    "recipe_codes": []
+  },
+  {
+    "bean_key": "kurly:5078339",
+    "bean_id": "bean-existing-bbb",
+    "created": false,
+    "link_ids": ["link-006"],
+    "recipe_codes": []
+  }
+]
