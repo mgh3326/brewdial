@@ -22,9 +22,6 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        # Paketo's runtime user is cnb (uid/gid 1000).
-        runAsUser: 1000
-        runAsGroup: 1000
       initContainers:
         # Keep the existing Node image and command: it contains /migrate and
         # is the single migration implementation until a later phase changes it.
@@ -46,6 +43,9 @@ spec:
                   key: DATABASE_URL
           securityContext:
             runAsNonRoot: true
+            # Existing Node image's `node` user is uid/gid 1000.
+            runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
@@ -85,8 +85,9 @@ spec:
               memory: 768Mi
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            # CI `id` check: Paketo noble-tiny cnb is uid 1002/gid 1001.
+            runAsUser: 1002
+            runAsGroup: 1001
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

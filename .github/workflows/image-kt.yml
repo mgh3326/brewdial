@@ -70,12 +70,36 @@ jobs:
         run: |
           set -euo pipefail
           CONFIGURED_USER="$(docker image inspect '${{ steps.tags.outputs.sha_tag }}' --format '{{.Config.User}}')"
-          RUNTIME_UID="$(docker run --rm --entrypoint id '${{ steps.tags.outputs.sha_tag }}' -u)"
+          # Paketo's tiny run image intentionally omits coreutils. Mount a
+          # pinned static BusyBox `id` only for this probe; Docker still applies
+          # the target image's configured cnb user before executing it.
+          PROBE_CONTAINER="uid-probe-${RANDOM}-${RANDOM}"
+          PROBE_BINARY="${RUNNER_TEMP}/id"
+          cleanup() {
+            docker rm -f "${PROBE_CONTAINER}" >/dev/null 2>&1 || true
+            rm -f "${PROBE_BINARY}"
+          }
+          trap cleanup EXIT
+          docker create --name "${PROBE_CONTAINER}" \
+            docker.io/library/busybox@sha256:2f00809d318560dc1f14d7c10fffd18bfd4dd133b56b04f60fda7f45719b3950 >/dev/null
+          docker cp "${PROBE_CONTAINER}:/bin/busybox" "${PROBE_BINARY}"
+          docker rm "${PROBE_CONTAINER}" >/dev/null
+          chmod 0555 "${PROBE_BINARY}"
+          runtime_id() {
+            docker run --rm \
+              --mount type=bind,src="${PROBE_BINARY}",dst=/usr/local/bin/id,readonly \
+              --env PATH=/usr/local/bin \
+              --entrypoint id '${{ steps.tags.outputs.sha_tag }}' "$@"
+          }
+          RUNTIME_ID="$(runtime_id)"
+          RUNTIME_UID="$(runtime_id -u)"
           echo "Configured user: ${CONFIGURED_USER}"
+          echo "Runtime identity: ${RUNTIME_ID}"
           echo "Runtime uid: ${RUNTIME_UID}"
           echo "Image size bytes: $(docker image inspect '${{ steps.tags.outputs.sha_tag }}' --format '{{.Size}}')"
-          [ "${CONFIGURED_USER}" = "cnb" ] || { echo "ERROR: expected Paketo cnb user"; exit 1; }
-          [ "${RUNTIME_UID}" != "0" ] || { echo "ERROR: image runs as root"; exit 1; }
+          [ "${CONFIGURED_USER}" = "1002:1001" ] || { echo "ERROR: expected Paketo cnb user 1002:1001"; exit 1; }
+          case "${RUNTIME_ID}" in *"(cnb)"*) ;; *) echo "ERROR: expected cnb runtime identity"; exit 1;; esac
+          [ "${RUNTIME_UID}" = "1002" ] || { echo "ERROR: expected Paketo cnb uid 1002"; exit 1; }
 
       - name: Push immutable sha tag to GHCR
         # Fork PRs get a read-only token; never push from them.
