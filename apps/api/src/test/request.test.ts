@@ -30,11 +30,11 @@ test('allows a remote API_TEST_BASE_URL only with API_TEST_ALLOW_REMOTE=1', asyn
 })
 
 test('allows a localhost API_TEST_BASE_URL without an override', async () => {
-  process.env.API_TEST_BASE_URL = 'http://127.0.0.1:3020'
+  process.env.API_TEST_BASE_URL = 'http://localhost:3020'
   delete process.env.API_TEST_ALLOW_REMOTE
   const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
 
   await expect(request('/api/health')).resolves.toMatchObject({ status: 200 })
-  expect(fetchMock).toHaveBeenCalledWith(new URL('http://127.0.0.1:3020/api/health'), undefined)
+  expect(fetchMock).toHaveBeenCalledWith(new URL('http://localhost:3020/api/health'), undefined)
 })
