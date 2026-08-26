@@ -1,0 +1,23 @@
+server:
+  port: 3021
+
+spring:
+  application:
+    name: brewdial-api
+  datasource:
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  jackson:
+    time-zone: UTC
+    datatype:
+      datetime:
+        write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
