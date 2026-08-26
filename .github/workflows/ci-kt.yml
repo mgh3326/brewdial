@@ -75,19 +75,6 @@ jobs:
         working-directory: apps/api-kt
         run: ./gradlew --no-daemon build
 
-      - name: Contract tests vs Spring (2a + 2b)
+      - name: Contract tests vs Spring (full suite)
         working-directory: apps/api-kt
-        run: |
-          scripts/contract-test.sh \
-            apps/api/src/routes/health.test.ts \
-            apps/api/src/cors.test.ts \
-            apps/api/src/routes/beans.test.ts \
-            apps/api/src/routes/beans.search.test.ts \
-            apps/api/src/routes/recipes.test.ts \
-            apps/api/src/routes/recipes.write.test.ts \
-            apps/api/src/routes/feedback.owner.test.ts \
-            apps/api/src/routes/me.test.ts \
-            apps/api/src/routes/me.recommendations.test.ts \
-            apps/api/src/routes/me.preferences.test.ts \
-            apps/api/src/routes/me.write-lock.test.ts \
-            apps/api/src/routes/shape.test.ts
+        run: scripts/contract-test.sh

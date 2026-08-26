@@ -13,6 +13,7 @@ class ReadRepository(
     private val recipeRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.recipe(resultSet) }
     private val feedbackRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.feedback(resultSet) }
     private val purchaseLinkRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.purchaseLink(resultSet) }
+    private val preferenceRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.preference(resultSet) }
     private val grinderRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.grinder(resultSet) }
     private val dripperRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.dripper(resultSet) }
 
@@ -119,6 +120,42 @@ class ReadRepository(
             )
         }
 
+    /** Agent writes can inspect test and superseded rows, unlike public reads. */
+    fun findRecipeAnyStatus(code: String): LinkedHashMap<String, Any?>? = queryOne(
+        "select $RECIPE_SELECT from recipes where code = ?",
+        recipeRow,
+        code
+    )
+
+    fun findFeedback(id: String): LinkedHashMap<String, Any?>? = queryOne(
+        "select $FEEDBACK_SELECT from feedback where id = cast(? as uuid)",
+        feedbackRow,
+        id
+    )
+
+    fun findPurchaseLink(id: String): LinkedHashMap<String, Any?>? = queryOne(
+        "select $PURCHASE_LINK_SELECT from bean_purchase_links where id = cast(? as uuid)",
+        purchaseLinkRow,
+        id
+    )
+
+    fun findGlobalPreference(): LinkedHashMap<String, Any?>? = queryOne(
+        "select $PREFERENCE_SELECT from preferences where id = 'global'",
+        preferenceRow
+    )
+
+    fun findResyncSource(beanId: String): ResyncSource? = jdbcTemplate.query(
+        """
+        select code, bean_snapshot
+        from recipes
+        where bean_id = ? and bean_snapshot is not null and owner_id is null
+        order by updated_at desc
+        limit 1
+        """.trimIndent(),
+        RowMapper { resultSet, _ -> ResyncSource(resultSet.getString("code"), resultSet.getString("bean_snapshot")) },
+        beanId
+    ).firstOrNull()
+
     fun listFeedback(code: String): List<LinkedHashMap<String, Any?>> = jdbcTemplate.query(
         """
         select $FEEDBACK_SELECT from feedback
@@ -160,6 +197,9 @@ class ReadRepository(
         const val PURCHASE_LINK_SELECT = """
             id, bean_id, vendor, url, link_category, price_krw, is_affiliate, active, sort_order
         """
+        const val PREFERENCE_SELECT = """
+            id, likes, dislikes, default_params, created_at, updated_at
+        """
         const val GRINDER_SELECT = """
             id, name, um_per_click_est, um_per_click_source, zero_ref, stepless, brew_method_ranges,
             anchor_point, notes, created_at, updated_at
@@ -170,3 +210,5 @@ class ReadRepository(
         """
     }
 }
+
+class ResyncSource(val code: String, val beanSnapshot: String)

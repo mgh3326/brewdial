@@ -65,6 +65,15 @@ class ApiRowMapper(
         )
     )
 
+    fun preference(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
+        ApiResponseShape.preferenceColumns,
+        listOf(
+            resultSet.getString("id"), textArray(resultSet, "likes"), textArray(resultSet, "dislikes"),
+            json(resultSet, "default_params"), timestamp(resultSet, "created_at"),
+            timestamp(resultSet, "updated_at")
+        )
+    )
+
     fun grinder(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
         ApiResponseShape.grinderColumns,
         listOf(

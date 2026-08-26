@@ -31,6 +31,10 @@ object ApiResponseShape {
         "active", "sort_order"
     )
 
+    val preferenceColumns: List<String> = listOf(
+        "id", "likes", "dislikes", "default_params", "created_at", "updated_at"
+    )
+
     val grinderColumns: List<String> = listOf(
         "id", "name", "um_per_click_est", "um_per_click_source", "zero_ref", "stepless",
         "brew_method_ranges", "anchor_point", "notes", "created_at", "updated_at"
