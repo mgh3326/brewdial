@@ -1,19 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { agentRouter } from './agent.js'
-import { agentAuth } from '../middleware/agent-auth.js'
 
-// Build a self-contained Hono app with agentAuth + agentRouter mounted.
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  return app
-}
-
-const app = makeApp()
 
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
 const seededCode = `T-AGFB-${SEED_SUFFIX}`
@@ -74,7 +63,7 @@ function agentReq(path: string, options?: RequestInit): Request {
 // ─── POST /api/agent/feedback ─────────────────────────────────────────────────
 
 test('POST /api/agent/feedback {recipeCode, source:"agent", rawComment} → 201, source=agent', async () => {
-  const res = await app.request(agentReq('/api/agent/feedback', {
+  const res = await request(agentReq('/api/agent/feedback', {
     method: 'POST',
     body: JSON.stringify({ recipeCode: seededCode, source: 'agent', rawComment: 'very smooth' }),
   }))
@@ -87,7 +76,7 @@ test('POST /api/agent/feedback {recipeCode, source:"agent", rawComment} → 201,
 })
 
 test('POST /api/agent/feedback source:"mcp" → allowed (201)', async () => {
-  const res = await app.request(agentReq('/api/agent/feedback', {
+  const res = await request(agentReq('/api/agent/feedback', {
     method: 'POST',
     body: JSON.stringify({ recipeCode: seededCode, source: 'mcp', rawComment: 'mcp test' }),
   }))
@@ -98,7 +87,7 @@ test('POST /api/agent/feedback source:"mcp" → allowed (201)', async () => {
 })
 
 test('POST /api/agent/feedback source omitted → defaults to "agent"', async () => {
-  const res = await app.request(agentReq('/api/agent/feedback', {
+  const res = await request(agentReq('/api/agent/feedback', {
     method: 'POST',
     body: JSON.stringify({ recipeCode: seededCode, rawComment: 'no source field' }),
   }))
@@ -109,7 +98,7 @@ test('POST /api/agent/feedback source omitted → defaults to "agent"', async ()
 })
 
 test('POST /api/agent/feedback source:"web" → 400 (not in agent whitelist)', async () => {
-  const res = await app.request(agentReq('/api/agent/feedback', {
+  const res = await request(agentReq('/api/agent/feedback', {
     method: 'POST',
     body: JSON.stringify({ recipeCode: seededCode, source: 'web' }),
   }))
@@ -117,7 +106,7 @@ test('POST /api/agent/feedback source:"web" → 400 (not in agent whitelist)', a
 })
 
 test('POST /api/agent/feedback nonexistent recipeCode → 404 (NOT 500)', async () => {
-  const res = await app.request(agentReq('/api/agent/feedback', {
+  const res = await request(agentReq('/api/agent/feedback', {
     method: 'POST',
     body: JSON.stringify({ recipeCode: `DOES-NOT-EXIST-${SEED_SUFFIX}`, rawComment: 'ghost' }),
   }))
@@ -127,7 +116,7 @@ test('POST /api/agent/feedback nonexistent recipeCode → 404 (NOT 500)', async 
 // ─── GET /api/agent/preferences/global ───────────────────────────────────────
 
 test('GET /api/agent/preferences/global → 200 with shape {id, likes, dislikes, default_params}', async () => {
-  const res = await app.request(agentReq('/api/agent/preferences/global'))
+  const res = await request(agentReq('/api/agent/preferences/global'))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> | null = await res.json()
   // Row seeded in beforeAll; should be present but could be null if seeding failed.
@@ -142,7 +131,7 @@ test('GET /api/agent/preferences/global → 200 with shape {id, likes, dislikes,
 // ─── agentAuth gate ───────────────────────────────────────────────────────────
 
 test('POST /api/agent/feedback without agent token → 401', async () => {
-  const res = await app.request('/api/agent/feedback', {
+  const res = await request('/api/agent/feedback', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ recipeCode: seededCode }),
@@ -151,6 +140,6 @@ test('POST /api/agent/feedback without agent token → 401', async () => {
 })
 
 test('GET /api/agent/preferences/global without agent token → 401', async () => {
-  const res = await app.request('/api/agent/preferences/global')
+  const res = await request('/api/agent/preferences/global')
   expect(res.status).toBe(401)
 })

@@ -1,19 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { beans } from './beans.js'
-import { registries } from './registries.js'
 
-// Build a self-contained Hono app for tests (not the main app.ts — Task 6 mounts these).
-function makeApp() {
-  const app = new Hono()
-  app.route('/api/beans', beans)
-  app.route('/api', registries)
-  return app
-}
-
-const app = makeApp()
 
 // Unique seed IDs so tests are re-run safe.
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -93,7 +82,7 @@ afterAll(async () => {
 // ─── GET /api/beans ───────────────────────────────────────────────────────────
 
 test('GET /api/beans returns beans with recipes OR structured attrs (ROB-1291)', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -108,7 +97,7 @@ test('GET /api/beans returns beans with recipes OR structured attrs (ROB-1291)',
 })
 
 test('GET /api/beans sorts attr-only (recipe-less) beans after recipe-bearing beans', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   const rows: Array<Record<string, unknown>> = await res.json()
   const idxRecipe = rows.findIndex((r) => r['id'] === beanWithRecipeId)
   const idxAttrOnly = rows.findIndex((r) => r['id'] === beanAttrOnlyId)
@@ -123,7 +112,7 @@ test('GET /api/beans sorts attr-only (recipe-less) beans after recipe-bearing be
 })
 
 test('GET /api/beans is ordered by latest_recipe_at desc', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   const rows: Array<Record<string, unknown>> = await res.json()
   // Verify ordering: each row's latest_recipe_at >= the next row's (nulls last).
   for (let i = 0; i < rows.length - 1; i++) {
@@ -136,7 +125,7 @@ test('GET /api/beans is ordered by latest_recipe_at desc', async () => {
 })
 
 test('GET /api/beans rows contain expected snake_case keys', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   const rows: Array<Record<string, unknown>> = await res.json()
   const row = rows.find((r) => r['id'] === beanWithRecipeId)
   expect(row).toBeTruthy()
@@ -153,7 +142,7 @@ test('GET /api/beans rows contain expected snake_case keys', async () => {
 })
 
 test('GET /api/beans row has recipe_count > 0 for seeded bean', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   const rows: Array<Record<string, unknown>> = await res.json()
   const row = rows.find((r) => r['id'] === beanWithRecipeId)
   expect(row).toBeTruthy()
@@ -163,7 +152,7 @@ test('GET /api/beans row has recipe_count > 0 for seeded bean', async () => {
 // ─── GET /api/beans/:id ───────────────────────────────────────────────────────
 
 test('GET /api/beans/:id returns the bean row', async () => {
-  const res = await app.request(`/api/beans/${beanWithRecipeId}`)
+  const res = await request(`/api/beans/${beanWithRecipeId}`)
   expect(res.status).toBe(200)
   const row: Record<string, unknown> = await res.json()
   expect(row['id']).toBe(beanWithRecipeId)
@@ -173,13 +162,13 @@ test('GET /api/beans/:id returns the bean row', async () => {
 })
 
 test('GET /api/beans/:id 404 for non-existent id', async () => {
-  const res = await app.request(`/api/beans/${randomUUID()}`)
+  const res = await request(`/api/beans/${randomUUID()}`)
   expect(res.status).toBe(404)
 })
 
 test('GET /api/beans/:id returns bean even without recipes (no recipe_count filter)', async () => {
   // getBean should return the row regardless of recipe_count (no filter on single lookup).
-  const res = await app.request(`/api/beans/${beanNoRecipeId}`)
+  const res = await request(`/api/beans/${beanNoRecipeId}`)
   // The bean_summaries view may or may not include rows with recipe_count=0; either 200 or 404 is valid.
   // We just assert it doesn't crash (no 500).
   expect([200, 404]).toContain(res.status)
@@ -188,7 +177,7 @@ test('GET /api/beans/:id returns bean even without recipes (no recipe_count filt
 // ─── GET /api/grinders ────────────────────────────────────────────────────────
 
 test('GET /api/grinders returns grinder rows ordered by name', async () => {
-  const res = await app.request('/api/grinders')
+  const res = await request('/api/grinders')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -203,7 +192,7 @@ test('GET /api/grinders returns grinder rows ordered by name', async () => {
 })
 
 test('GET /api/grinders rows contain expected keys', async () => {
-  const res = await app.request('/api/grinders')
+  const res = await request('/api/grinders')
   const rows: Array<Record<string, unknown>> = await res.json()
   const row = rows.find((r) => (r['id'] as string) === grinderId1)
   expect(row).toBeTruthy()
@@ -214,7 +203,7 @@ test('GET /api/grinders rows contain expected keys', async () => {
 // ─── GET /api/drippers ────────────────────────────────────────────────────────
 
 test('GET /api/drippers returns dripper rows ordered by continuum_position', async () => {
-  const res = await app.request('/api/drippers')
+  const res = await request('/api/drippers')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -229,7 +218,7 @@ test('GET /api/drippers returns dripper rows ordered by continuum_position', asy
 })
 
 test('GET /api/drippers rows contain expected keys', async () => {
-  const res = await app.request('/api/drippers')
+  const res = await request('/api/drippers')
   const rows: Array<Record<string, unknown>> = await res.json()
   const row = rows.find((r) => (r['id'] as string) === dripperId1)
   expect(row).toBeTruthy()

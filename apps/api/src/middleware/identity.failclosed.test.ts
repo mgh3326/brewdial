@@ -21,7 +21,7 @@ function appUnderTest() {
 
 const VALID_KEY = 'toss_anon:failclosedtest_' + '0'.repeat(20)
 
-test('valid identity header + resolve throws → 503 fail-closed', async () => {
+test.skipIf(!!process.env.API_TEST_BASE_URL)('valid identity header + resolve throws → 503 fail-closed', async () => {
   const res = await appUnderTest().request('/pub', {
     headers: { 'X-BrewDial-Identity': VALID_KEY },
   })
@@ -30,14 +30,14 @@ test('valid identity header + resolve throws → 503 fail-closed', async () => {
   expect(body['error']).toBe('identity temporarily unavailable')
 })
 
-test('no header (public GET) → 200 anonymous, unaffected by fail-closed', async () => {
+test.skipIf(!!process.env.API_TEST_BASE_URL)('no header (public GET) → 200 anonymous, unaffected by fail-closed', async () => {
   const res = await appUnderTest().request('/pub')
   expect(res.status).toBe(200)
   const body = await res.json()
   expect(body['id']).toBeNull()
 })
 
-test('garbage header (bad provider / short key) → 200 anonymous, not 503', async () => {
+test.skipIf(!!process.env.API_TEST_BASE_URL)('garbage header (bad provider / short key) → 200 anonymous, not 503', async () => {
   const res = await appUnderTest().request('/pub', {
     headers: { 'X-BrewDial-Identity': 'bogus:short' },
   })

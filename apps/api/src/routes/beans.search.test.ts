@@ -1,16 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { beans } from './beans.js'
 
-function makeApp() {
-  const app = new Hono()
-  app.route('/api/beans', beans)
-  return app
-}
-
-const app = makeApp()
 
 // Unique suffix so re-runs don't collide.
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -83,7 +75,7 @@ afterAll(async () => {
 // ─── ROB-1291: attr-only beans are searchable ────────────────────────────────
 
 test('GET /api/beans?q matches attr-only bean (no recipes, attrs_source set)', async () => {
-  const res = await app.request(`/api/beans?q=${encodeURIComponent('AttrOnly Kurly ' + SEED_SUFFIX)}`)
+  const res = await request(`/api/beans?q=${encodeURIComponent('AttrOnly Kurly ' + SEED_SUFFIX)}`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])
@@ -93,7 +85,7 @@ test('GET /api/beans?q matches attr-only bean (no recipes, attrs_source set)', a
 // ─── Search: name ILIKE ───────────────────────────────────────────────────────
 
 test('GET /api/beans?q=ethio returns matching bean by name (case-insensitive)', async () => {
-  const res = await app.request('/api/beans?q=ethio')
+  const res = await request('/api/beans?q=ethio')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -102,7 +94,7 @@ test('GET /api/beans?q=ethio returns matching bean by name (case-insensitive)', 
 })
 
 test('GET /api/beans?q=ETHIOPIA returns matching bean (uppercase query)', async () => {
-  const res = await app.request('/api/beans?q=ETHIOPIA')
+  const res = await request('/api/beans?q=ETHIOPIA')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])
@@ -112,7 +104,7 @@ test('GET /api/beans?q=ETHIOPIA returns matching bean (uppercase query)', async 
 // ─── Search: roaster ILIKE ────────────────────────────────────────────────────
 
 test('GET /api/beans?q=acme matches by roaster (case-insensitive)', async () => {
-  const res = await app.request('/api/beans?q=acme')
+  const res = await request('/api/beans?q=acme')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])
@@ -125,7 +117,7 @@ test('GET /api/beans?q=acme matches by roaster (case-insensitive)', async () => 
 // ─── Search: no match ─────────────────────────────────────────────────────────
 
 test('GET /api/beans?q=zzznomatch returns empty array', async () => {
-  const res = await app.request('/api/beans?q=zzznomatch')
+  const res = await request('/api/beans?q=zzznomatch')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -137,7 +129,7 @@ test('GET /api/beans?q=zzznomatch returns empty array', async () => {
 test('GET /api/beans?q=<roaster> excludes beans with recipe_count=0', async () => {
   // beanNoRecipeId has the same roaster as beanEthiopiaId but no recipes.
   const suffix = SEED_SUFFIX
-  const res = await app.request(`/api/beans?q=${encodeURIComponent('Acme Roasters ' + suffix)}`)
+  const res = await request(`/api/beans?q=${encodeURIComponent('Acme Roasters ' + suffix)}`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])
@@ -150,7 +142,7 @@ test('GET /api/beans?q=<roaster> excludes beans with recipe_count=0', async () =
 // ─── No q: existing listBeans still works ─────────────────────────────────────
 
 test('GET /api/beans (no q) still returns list including seeded bean with recipes', async () => {
-  const res = await app.request('/api/beans')
+  const res = await request('/api/beans')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -162,7 +154,7 @@ test('GET /api/beans (no q) still returns list including seeded bean with recipe
 // ─── Limit clamp ──────────────────────────────────────────────────────────────
 
 test('GET /api/beans?q=a&limit=1 respects limit clamp', async () => {
-  const res = await app.request('/api/beans?q=a&limit=1')
+  const res = await request('/api/beans?q=a&limit=1')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -171,7 +163,7 @@ test('GET /api/beans?q=a&limit=1 respects limit clamp', async () => {
 })
 
 test('GET /api/beans?q=a&limit=999 clamps to 25', async () => {
-  const res = await app.request('/api/beans?q=a&limit=999')
+  const res = await request('/api/beans?q=a&limit=999')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -181,7 +173,7 @@ test('GET /api/beans?q=a&limit=999 clamps to 25', async () => {
 // ─── NaN limit floor (Fix 3) ──────────────────────────────────────────────────
 
 test('GET /api/beans?q=a&limit=abc falls back to default (≤10 results, no error)', async () => {
-  const res = await app.request('/api/beans?q=a&limit=abc')
+  const res = await request('/api/beans?q=a&limit=abc')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -193,7 +185,7 @@ test('GET /api/beans?q=a&limit=abc falls back to default (≤10 results, no erro
 
 test('GET /api/beans?q=<suffix> returns higher recipe_count bean first', async () => {
   // Brazil (recipe_count=2) should appear before Ethiopia (recipe_count=1).
-  const res = await app.request(`/api/beans?q=${encodeURIComponent(SEED_SUFFIX)}`)
+  const res = await request(`/api/beans?q=${encodeURIComponent(SEED_SUFFIX)}`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])
@@ -209,7 +201,7 @@ test('GET /api/beans?q=<suffix> returns higher recipe_count bean first', async (
 // ─── Whitespace trim (Fix 2) ──────────────────────────────────────────────────
 
 test('GET /api/beans?q= ethio  (surrounding whitespace) matches Ethiopia bean', async () => {
-  const res = await app.request(`/api/beans?q=${encodeURIComponent(' ethio ')}`)
+  const res = await request(`/api/beans?q=${encodeURIComponent(' ethio ')}`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   const ids = rows.map((r) => r['id'])

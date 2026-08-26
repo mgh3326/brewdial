@@ -11,18 +11,18 @@
  *  2. GET /api/health from an allowed web origin → 200, echoes that origin.
  *  3. A disallowed origin is NOT echoed back.
  *
- * Uses Hono's built-in `app.request()` — no real HTTP server needed.
+ * Uses Hono's built-in `request()` — no real HTTP server needed.
  */
 
 import { describe, expect, test } from 'vitest'
-import { app } from './app.js'
+import { request } from './test/request.js'
 
 const TOSS_TEST_ORIGIN = 'https://brewdial.private-apps.tossmini.com'
 const WEB_ORIGIN = 'https://coffee.robinco.dev'
 
 describe('CORS — OPTIONS preflight (Toss WebView origin)', () => {
   test('OPTIONS /api/recipes from Toss QR-test origin → 204/200, echoes origin + credentials', async () => {
-    const res = await app.request('/api/recipes', {
+    const res = await request('/api/recipes', {
       method: 'OPTIONS',
       headers: {
         Origin: TOSS_TEST_ORIGIN,
@@ -47,7 +47,7 @@ describe('CORS — OPTIONS preflight (Toss WebView origin)', () => {
 
 describe('CORS — simple request (web origin)', () => {
   test('GET /api/health from an allowed web origin → 200, echoes that origin', async () => {
-    const res = await app.request('/api/health', {
+    const res = await request('/api/health', {
       method: 'GET',
       headers: { Origin: WEB_ORIGIN },
     })
@@ -59,7 +59,7 @@ describe('CORS — simple request (web origin)', () => {
 
 describe('CORS — disallowed origin', () => {
   test('a foreign origin is NOT echoed back', async () => {
-    const res = await app.request('/api/health', {
+    const res = await request('/api/health', {
       method: 'GET',
       headers: { Origin: 'https://evil.example.com' },
     })
@@ -72,17 +72,17 @@ describe('CORS — disallowed origin', () => {
 
 describe('routing — served at both /api/* and /* (client base omits /api)', () => {
   test('GET /api/health → 200 (canonical prefix)', async () => {
-    const res = await app.request('/api/health')
+    const res = await request('/api/health')
     expect(res.status).toBe(200)
   })
 
   test('GET /health → 200 (client base omits /api)', async () => {
-    const res = await app.request('/health')
+    const res = await request('/health')
     expect(res.status).toBe(200)
   })
 
   test('OPTIONS /me/collections (no /api) from Toss origin → preflight 204, echoes origin', async () => {
-    const res = await app.request('/me/collections', {
+    const res = await request('/me/collections', {
       method: 'OPTIONS',
       headers: {
         Origin: TOSS_TEST_ORIGIN,

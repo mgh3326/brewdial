@@ -1,3 +1,4 @@
+import { request } from '../test/request.js'
 /**
  * agent.beans.test.ts — ROB-654 PATCH /api/agent/beans/:id
  *
@@ -7,20 +8,10 @@
  *   - the shared validator + DB CHECKs reject bad values with 400 (not 500)
  *   - unknown bean id → 404, and the agentAuth gate applies
  */
-import { Hono } from 'hono'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { agentRouter } from './agent.js'
-import { agentAuth } from '../middleware/agent-auth.js'
 
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  return app
-}
-const app = makeApp()
 
 const SEED = randomUUID().replace(/-/g, '').slice(0, 8)
 let beanId: string
@@ -54,7 +45,7 @@ function agentReq(path: string, options?: RequestInit): Request {
 }
 
 test('PATCH /api/agent/beans/:id valid attrs → 200, persisted + surfaced via view', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({
       roastLevelOrd: 4,
@@ -84,7 +75,7 @@ test('PATCH /api/agent/beans/:id valid attrs → 200, persisted + surfaced via v
 })
 
 test('PATCH partial → only provided fields change', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ acidity: 3 }),
   }))
@@ -95,7 +86,7 @@ test('PATCH partial → only provided fields change', async () => {
 })
 
 test('PATCH acidity=9 (out of 1..5) → 400', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ acidity: 9 }),
   }))
@@ -103,7 +94,7 @@ test('PATCH acidity=9 (out of 1..5) → 400', async () => {
 })
 
 test('PATCH unknown flavor category → 400', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ flavorCategories: ['chocolate'] }),
   }))
@@ -111,7 +102,7 @@ test('PATCH unknown flavor category → 400', async () => {
 })
 
 test('PATCH agtronMax < agtronMin (both in one request) → 400', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ agtronMin: 90, agtronMax: 50 }),
   }))
@@ -120,20 +111,20 @@ test('PATCH agtronMax < agtronMin (both in one request) → 400', async () => {
 
 test('PATCH partial agtron that inverts the STORED bound → 400 (not a raw CHECK 500)', async () => {
   // Persist a valid range first.
-  const seed = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const seed = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ agtronMin: 57, agtronMax: 59 }),
   }))
   expect(seed.status).toBe(200)
   // Then send ONLY agtronMax, below the stored agtron_min — validator skips the
   // cross-check (single field), so the repo's merged-range guard must catch it as 400.
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ agtronMax: 40 }),
   }))
   expect(res.status).toBe(400)
   // Symmetric: only agtronMin, above the stored agtron_max.
-  const res2 = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res2 = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({ agtronMin: 90 }),
   }))
@@ -141,7 +132,7 @@ test('PATCH partial agtron that inverts the STORED bound → 400 (not a raw CHEC
 })
 
 test('PATCH empty body → 400 (at least one attribute required)', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}`, {
+  const res = await request(agentReq(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     body: JSON.stringify({}),
   }))
@@ -149,7 +140,7 @@ test('PATCH empty body → 400 (at least one attribute required)', async () => {
 })
 
 test('PATCH unknown bean id → 404', async () => {
-  const res = await app.request(agentReq('/api/agent/beans/00000000-0000-0000-0000-000000000000', {
+  const res = await request(agentReq('/api/agent/beans/00000000-0000-0000-0000-000000000000', {
     method: 'PATCH',
     body: JSON.stringify({ acidity: 2 }),
   }))
@@ -157,7 +148,7 @@ test('PATCH unknown bean id → 404', async () => {
 })
 
 test('PATCH without agent token → 401', async () => {
-  const res = await app.request(`/api/agent/beans/${beanId}`, {
+  const res = await request(`/api/agent/beans/${beanId}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ acidity: 2 }),

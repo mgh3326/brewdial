@@ -1,18 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb, insertAgentRecipe } from '@brewdial/db'
-import { agentRouter } from './agent.js'
-import { agentAuth } from '../middleware/agent-auth.js'
 
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  return app
-}
-
-const app = makeApp()
 
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
 const createdCodes: string[] = []
@@ -48,7 +38,7 @@ test('PATCH /api/agent/recipes/:code {title} → 200, version incremented, title
   createdCodes.push(row.code)
   expect(row.version).toBe(1)
 
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/recipes/${row.code}`, {
       method: 'PATCH',
       body: JSON.stringify({ title: 'Updated Title' }),
@@ -62,7 +52,7 @@ test('PATCH /api/agent/recipes/:code {title} → 200, version incremented, title
 })
 
 test('PATCH /api/agent/recipes/:code with unknown code → 404', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}`, {
       method: 'PATCH',
       body: JSON.stringify({ title: 'Ghost' }),
@@ -72,7 +62,7 @@ test('PATCH /api/agent/recipes/:code with unknown code → 404', async () => {
 })
 
 test('PATCH /api/agent/recipes/:code without agent token → 401', async () => {
-  const res = await app.request(`/api/agent/recipes/any-code`, {
+  const res = await request(`/api/agent/recipes/any-code`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: 'No Auth' }),
@@ -87,7 +77,7 @@ test('PATCH /api/agent/recipes/:code/status {status:archived} → 200, status=ar
   const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage Status Seed ${SEED_SUFFIX}` })
   createdCodes.push(row.code)
 
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/recipes/${row.code}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'archived' }),
@@ -104,7 +94,7 @@ test('PATCH /api/agent/recipes/:code/status with invalid status → 400', async 
   const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage BadStatus ${SEED_SUFFIX}` })
   createdCodes.push(row.code)
 
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/recipes/${row.code}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'deleted' }),
@@ -114,7 +104,7 @@ test('PATCH /api/agent/recipes/:code/status with invalid status → 400', async 
 })
 
 test('PATCH /api/agent/recipes/:code/status with unknown code → 404', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'archived' }),
@@ -124,7 +114,7 @@ test('PATCH /api/agent/recipes/:code/status with unknown code → 404', async ()
 })
 
 test('PATCH /api/agent/recipes/:code/status without agent token → 401', async () => {
-  const res = await app.request(`/api/agent/recipes/any-code/status`, {
+  const res = await request(`/api/agent/recipes/any-code/status`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ status: 'archived' }),
@@ -140,7 +130,7 @@ test('POST /api/agent/recipes/supersede → old.status=superseded + superseded_b
   const newRow = await insertAgentRecipe(db, { method: 'v60', title: `Lineage New ${SEED_SUFFIX}` })
   createdCodes.push(oldRow.code, newRow.code)
 
-  const res = await app.request(
+  const res = await request(
     agentReq('/api/agent/recipes/supersede', {
       method: 'POST',
       body: JSON.stringify({ oldCode: oldRow.code, newCode: newRow.code }),
@@ -162,7 +152,7 @@ test('POST /api/agent/recipes/supersede with oldCode===newCode → 400 (self-sup
   const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage SelfSupersede ${SEED_SUFFIX}` })
   createdCodes.push(row.code)
 
-  const res = await app.request(
+  const res = await request(
     agentReq('/api/agent/recipes/supersede', {
       method: 'POST',
       body: JSON.stringify({ oldCode: row.code, newCode: row.code }),
@@ -188,7 +178,7 @@ test('POST /api/agent/recipes/supersede with unknown oldCode → 404', async () 
   const newRow = await insertAgentRecipe(db, { method: 'v60', title: `Lineage Supersede404 ${SEED_SUFFIX}` })
   createdCodes.push(newRow.code)
 
-  const res = await app.request(
+  const res = await request(
     agentReq('/api/agent/recipes/supersede', {
       method: 'POST',
       body: JSON.stringify({ oldCode: `DOES-NOT-EXIST-${SEED_SUFFIX}`, newCode: newRow.code }),
@@ -198,7 +188,7 @@ test('POST /api/agent/recipes/supersede with unknown oldCode → 404', async () 
 })
 
 test('POST /api/agent/recipes/supersede without agent token → 401', async () => {
-  const res = await app.request('/api/agent/recipes/supersede', {
+  const res = await request('/api/agent/recipes/supersede', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ oldCode: 'a', newCode: 'b' }),

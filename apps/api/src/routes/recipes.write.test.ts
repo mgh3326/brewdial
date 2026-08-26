@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { closeDb, getDb } from '@brewdial/db'
-import { app } from '../app.js'
+import { request } from '../test/request.js'
 
 const seed = randomUUID().replace(/-/g, '').slice(0, 8)
 const feedbackRecipeCode = `T-WRITELOCK-${seed}`
@@ -36,7 +36,7 @@ test('anonymous public writes are removed through both app mounts', async () => 
 
   for (const prefix of ['/api', '']) {
     for (const route of LOCKED_WRITES) {
-      const res = await app.request(`${prefix}${route.path}`, {
+      const res = await request(`${prefix}${route.path}`, {
         method: route.method,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(route.body),
