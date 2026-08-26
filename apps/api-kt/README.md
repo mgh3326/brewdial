@@ -19,3 +19,17 @@ The runner starts Spring on `127.0.0.1:3021`, polls `/api/db/health`, and always
 This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate 7.4.5.Final. The versions come from the Spring Initializr GA-generated project. Hibernate is configured with `ddl-auto: validate` because the PostgreSQL schema is owned by the repository migrations.
 
 Follow-up work is tracked in ROB-1316.
+
+## Container image and production runtime
+
+The arm64 OCI image is built only in CI by `image-kt.yml` using `bootBuildImage`; a local Docker build is not required. Set `SPRING_PROFILES_ACTIVE=prod` in Kubernetes to enable graceful shutdown and Spring Boot JSON console logs.
+
+| Variable | Default / source | Purpose |
+| --- | --- | --- |
+| `PORT` | `3021` | HTTP listener port. |
+| `SPRING_PROFILES_ACTIVE` | ConfigMap: `prod` | Enables production runtime settings. |
+| `DATABASE_URL` | Secret, required | PostgreSQL connection URL. |
+| `AGENT_TOKEN` | Secret, required | Agent endpoint authentication token. |
+| `JAVA_TOOL_OPTIONS` | ConfigMap | JVM memory, GC, and thread-stack tuning. |
+| `GIT_SHA` | ConfigMap | Release identifier passed to Sentry. |
+| `SENTRY_DSN` | ConfigMap, empty | Enables Sentry only when a DSN is supplied. |
