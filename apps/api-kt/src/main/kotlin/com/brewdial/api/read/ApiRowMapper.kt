@@ -88,6 +88,42 @@ class ApiRowMapper(
         )
     )
 
+    fun savedRecipe(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
+        ApiResponseShape.savedRecipeColumns,
+        listOf(
+            uuid(resultSet, "id"), uuid(resultSet, "app_user_id"), resultSet.getString("recipe_code"),
+            json(resultSet, "snapshot"), resultSet.getString("note"), timestamp(resultSet, "created_at")
+        )
+    )
+
+    fun savedBean(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
+        ApiResponseShape.savedBeanColumns,
+        listOf(
+            uuid(resultSet, "id"), uuid(resultSet, "app_user_id"), resultSet.getString("bean_id"),
+            resultSet.getString("note"), timestamp(resultSet, "created_at")
+        )
+    )
+
+    fun userGear(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
+        ApiResponseShape.userGearColumns,
+        listOf(
+            uuid(resultSet, "id"), uuid(resultSet, "app_user_id"), resultSet.getString("kind"),
+            uuid(resultSet, "grinder_id"), uuid(resultSet, "dripper_id"), resultSet.getString("label"),
+            json(resultSet, "details"), boolean(resultSet, "is_default"), timestamp(resultSet, "created_at"),
+            timestamp(resultSet, "updated_at")
+        )
+    )
+
+    fun calibration(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
+        ApiResponseShape.calibrationColumns,
+        listOf(
+            uuid(resultSet, "id"), uuid(resultSet, "app_user_id"), uuid(resultSet, "from_grinder_id"),
+            uuid(resultSet, "to_grinder_id"), resultSet.getString("from_label"), resultSet.getString("to_label"),
+            resultSet.getString("anchor_method"), json(resultSet, "samples"), resultSet.getString("source"),
+            resultSet.getString("notes"), timestamp(resultSet, "created_at"), timestamp(resultSet, "updated_at")
+        )
+    )
+
     private fun uuid(resultSet: ResultSet, column: String): String? = resultSet.getObject(column)?.toString()
 
     private fun boolean(resultSet: ResultSet, column: String): Boolean? = resultSet.getObject(column) as? Boolean

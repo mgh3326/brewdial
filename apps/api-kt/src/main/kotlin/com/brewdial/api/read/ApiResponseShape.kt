@@ -41,6 +41,24 @@ object ApiResponseShape {
         "recommended_dose_range", "size_models", "notes", "created_at", "updated_at"
     )
 
+    val savedRecipeColumns: List<String> = listOf(
+        "id", "app_user_id", "recipe_code", "snapshot", "note", "created_at"
+    )
+
+    val savedBeanColumns: List<String> = listOf(
+        "id", "app_user_id", "bean_id", "note", "created_at"
+    )
+
+    val userGearColumns: List<String> = listOf(
+        "id", "app_user_id", "kind", "grinder_id", "dripper_id", "label", "details",
+        "is_default", "created_at", "updated_at"
+    )
+
+    val calibrationColumns: List<String> = listOf(
+        "id", "app_user_id", "from_grinder_id", "to_grinder_id", "from_label", "to_label",
+        "anchor_method", "samples", "source", "notes", "created_at", "updated_at"
+    )
+
     fun linkedRow(columns: List<String>, values: List<Any?>): LinkedHashMap<String, Any?> {
         require(columns.size == values.size) { "Response values must align with contract columns" }
         return LinkedHashMap<String, Any?>(columns.size).also { row ->
