@@ -18,4 +18,10 @@ The runner starts Spring on `127.0.0.1:3021`, polls `/api/db/health`, and always
 
 This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate 7.4.5.Final. The versions come from the Spring Initializr GA-generated project. Hibernate is configured with `ddl-auto: validate` because the PostgreSQL schema is owned by the repository migrations.
 
+## Intentional differences from Hono
+
+- PostgreSQL timestamps retain microsecond precision here; Hono serializes them at millisecond precision.
+- PostgreSQL `int8` and `numeric` values are JSON numbers here, rather than Hono's strings.
+- Array request bodies on agent write routes return `400 {"error":"invalid body"}`.
+
 Follow-up work is tracked in ROB-1316.
