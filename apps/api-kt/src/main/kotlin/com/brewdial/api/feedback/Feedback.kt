@@ -4,18 +4,18 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
-import org.hibernate.annotations.Immutable
+import org.hibernate.annotations.DynamicInsert
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Immutable
+@DynamicInsert
 @Table(name = "feedback")
 class Feedback {
     @Id
-    @Column(name = "id", nullable = false, insertable = false, updatable = false)
+    @Column(name = "id", nullable = false, updatable = false)
     var id: UUID? = null
 
     @Column(name = "recipe_code", nullable = false)
@@ -53,7 +53,7 @@ class Feedback {
     @Column(name = "next_hint", columnDefinition = "text[]")
     var nextHint: List<String>? = null
 
-    @Column(name = "source", nullable = false, insertable = false, updatable = false)
+    @Column(name = "source", nullable = false, updatable = false)
     var source: String = "web"
 
     @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)

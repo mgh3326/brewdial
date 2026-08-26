@@ -4,16 +4,16 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
-import org.hibernate.annotations.Immutable
+import org.hibernate.annotations.DynamicInsert
 import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Immutable
+@DynamicInsert
 @Table(name = "bean_purchase_links")
 class BeanPurchaseLink {
     @Id
-    @Column(name = "id", nullable = false, insertable = false, updatable = false)
+    @Column(name = "id", nullable = false, updatable = false)
     var id: UUID? = null
 
     @Column(name = "bean_id", nullable = false)
@@ -25,20 +25,20 @@ class BeanPurchaseLink {
     @Column(name = "url", nullable = false)
     var url: String = ""
 
-    @Column(name = "link_category", nullable = false, insertable = false, updatable = false)
-    var linkCategory: String = "product"
+    @Column(name = "link_category", nullable = false, updatable = false)
+    var linkCategory: String? = null
 
     @Column(name = "price_krw")
     var priceKrw: Int? = null
 
-    @Column(name = "is_affiliate", nullable = false, insertable = false, updatable = false)
-    var isAffiliate: Boolean = false
+    @Column(name = "is_affiliate", nullable = false, updatable = false)
+    var isAffiliate: Boolean? = null
 
-    @Column(name = "active", nullable = false, insertable = false, updatable = false)
-    var active: Boolean = true
+    @Column(name = "active", nullable = false, updatable = false)
+    var active: Boolean? = null
 
-    @Column(name = "sort_order", nullable = false, insertable = false, updatable = false)
-    var sortOrder: Int = 0
+    @Column(name = "sort_order", nullable = false, updatable = false)
+    var sortOrder: Int? = null
 
     @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
     var createdAt: Instant? = null
