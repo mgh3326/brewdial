@@ -1,0 +1,92 @@
+# Kotlin API can coexist with the Node API: its Service uses NodePort 30021
+# while the Node migration initContainer continues to own database migrations.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: brewdial-api-kt
+  namespace: brewdial
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: brewdial-api-kt
+  template:
+    metadata:
+      labels:
+        app: brewdial-api-kt
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # Paketo's runtime user is cnb (uid/gid 1000).
+        runAsUser: 1000
+        runAsGroup: 1000
+      initContainers:
+        # Keep the existing Node image and command: it contains /migrate and
+        # is the single migration implementation until a later phase changes it.
+        - name: migrate
+          image: ghcr.io/mgh3326/brewdial@sha256:REPLACE_WITH_RELEASE_DIGEST # replace before apply — see RUNBOOK.md
+          command:
+            - node
+            - /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js
+            - -m
+            - /migrate/migrations
+            - -j
+            - sql
+            - up
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: brewdial-api-secret
+                  key: DATABASE_URL
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: api
+          image: ghcr.io/mgh3326/brewdial-api-kt@sha256:REPLACE_WITH_RELEASE_DIGEST # replace before apply — see RUNBOOK.md
+          envFrom:
+            - configMapRef:
+                name: brewdial-api-kt-config
+            - secretRef:
+                name: brewdial-api-secret
+          ports:
+            - name: http
+              containerPort: 3021
+          startupProbe:
+            httpGet:
+              path: /api/db/health
+              port: 3021
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/db/health
+              port: 3021
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3021
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

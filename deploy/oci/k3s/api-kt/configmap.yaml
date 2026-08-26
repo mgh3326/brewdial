@@ -1,0 +1,17 @@
+# Runtime values for the JVM Kotlin API. Secret values remain in the existing
+# brewdial-api-secret and are deliberately not duplicated here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brewdial-api-kt-config
+  namespace: brewdial
+data:
+  PORT: "3021"
+  SPRING_PROFILES_ACTIVE: "prod"
+  # The OCI box has 2 vCPU and this pod is limited to 768Mi: reserve headroom
+  # for non-heap memory, prefer SerialGC, and cap each thread stack at 512KiB.
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Xss512k"
+  # Set to the immutable image source SHA by the Phase 3 operator.
+  GIT_SHA: ""
+  # Leave empty in Git. The Sentry SDK stays disabled without a DSN.
+  SENTRY_DSN: ""

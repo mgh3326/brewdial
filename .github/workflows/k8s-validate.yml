@@ -138,6 +138,9 @@ jobs:
                    deploy/oci/k3s/secret.example.yaml \
                    deploy/oci/k3s/deployment.yaml \
                    deploy/oci/k3s/service.yaml \
+                   deploy/oci/k3s/api-kt/configmap.yaml \
+                   deploy/oci/k3s/api-kt/deployment.yaml \
+                   deploy/oci/k3s/api-kt/service.yaml \
                    deploy/oci/k3s/variant-a/deployment.yaml \
                    deploy/oci/k3s/ci/postgres.yaml \
                    deploy/oci/k3s/ci/secret-ci.yaml; do
