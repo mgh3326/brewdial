@@ -466,3 +466,74 @@ kubectl version --output=yaml
 
 The CI job must never receive or store the kubeconfig; it only invokes
 box-local kubectl over the already-approved CF Access SSH route.
+
+## 9. Kotlin API (`api-kt`) — Phase 3 cutover (not yet executed)
+
+> This is an operator-run Phase 3 procedure. ROB-1317 only adds the image
+> workflow, manifests, and this runbook; it does not apply anything to the OCI
+> box, k3s, cloudflared, or GHCR manually.
+
+The Kotlin Deployment is deliberately separate from `brewdial-api`: its app
+label is `brewdial-api-kt`, its Service is NodePort **30021**, and its
+initContainer keeps using the existing Node image and `/migrate` command. The
+current Node Deployment and NodePort **30020** must remain intact throughout
+the cutover and the one-week observation period.
+
+### 9.1 Confirm immutable images before changing the cluster
+
+1. Wait for this PR's **Kotlin API Container Image** Actions run to be green.
+   Copy the `Digest:` for `ghcr.io/mgh3326/brewdial-api-kt:sha-<short>` from
+   `docker buildx imagetools inspect`; do not use `:latest`.
+2. Select the known-good, digest-pinned Node image for the `migrate`
+   initContainer. It remains the migration implementation for this cutover.
+3. In `deploy/oci/k3s/api-kt/deployment.yaml`, replace each
+   `REPLACE_WITH_RELEASE_DIGEST`: the `migrate` image gets the selected Node
+   digest and the `api` image gets the Kotlin image digest. Review the rendered
+   image strings before applying; never commit a real replacement digest as an
+   accidental substitute for an audited release decision.
+
+### 9.2 Prepare the parallel Kotlin path (box-local kubectl only)
+
+On the OCI box, with the operator-managed kubeconfig from §8.2:
+
+```bash
+kubectl apply -f deploy/oci/k3s/api-kt/configmap.yaml
+kubectl apply -f deploy/oci/k3s/api-kt/deployment.yaml
+kubectl apply -f deploy/oci/k3s/api-kt/service.yaml
+kubectl -n brewdial rollout status deploy/brewdial-api-kt
+curl -fsS localhost:30021/api/db/health
+```
+
+Do not alter `brewdial-api`, `brewdial-api` Service, or the current
+cloudflared ingress at this stage. Capture comparable baseline and Kotlin
+measurements if desired (the script makes 100 loopback health requests):
+
+```bash
+deploy/oci/k3s/measure-api.sh brewdial-api 30020
+deploy/oci/k3s/measure-api.sh brewdial-api-kt 30021
+```
+
+### 9.3 Flip traffic only after NodePort 30021 is healthy
+
+Back up `/etc/cloudflared/config.yml`, edit its ingress service from
+`http://127.0.0.1:30020` to `http://127.0.0.1:30021`, then restart
+cloudflared using the box's existing service manager. Confirm public health
+and database-health traffic after the restart. This is the only traffic flip;
+the old Deployment remains live as the rollback target.
+
+### 9.4 Observe for one week, then roll back by ingress if needed
+
+For one full week, keep both Deployments and both Services running. Review
+Kotlin pod restarts, startup time, cgroup memory values, p50/p99 health timing,
+and public error signals. Do **not** stop or delete the Node Deployment during
+this observation window.
+
+If Kotlin traffic must be rolled back, change the cloudflared ingress back
+from `http://127.0.0.1:30021` to `http://127.0.0.1:30020`, restart
+cloudflared, and verify `curl -fsS localhost:30020/api/db/health`. Leave the
+old Node Deployment in place; no Kubernetes rollback is required for the
+traffic reversal.
+
+`deploy-oci.yml` remains **Node API only**. It does not deploy, update, or
+roll back `brewdial-api-kt`; any Phase 3 Kubernetes action requires explicit
+operator attendance.
