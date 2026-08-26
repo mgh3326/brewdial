@@ -8,16 +8,17 @@ import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
 /**
- * The only recipe INSERT path.  The guard flag and persist share the transaction
- * bound EntityManager connection; issuing the flag through JdbcTemplate would not
- * provide that guarantee.
+ * The only production recipe INSERT path. Under JpaTransactionManager,
+ * JdbcTemplate also receives the transaction-bound connection via DataSourceUtils.
+ * The EntityManager native query is used here because sharing the JPA write session
+ * is explicit in this code.
  */
 @Repository
 class AgentRecipeWriteRepository(
     private val entityManager: EntityManager
 ) {
     @Transactional
-    fun insertAgentRecipe(input: CreateRecipeInput, ownerWriteAllowed: Boolean = true): Recipe {
+    fun insertAgentRecipe(input: CreateRecipeInput): Recipe {
         val recipe = Recipe().apply {
             id = UUID.randomUUID()
             method = input.method
@@ -36,9 +37,7 @@ class AgentRecipeWriteRepository(
             version = 1
             status = "active"
         }
-        if (ownerWriteAllowed) {
-            entityManager.createNativeQuery("select set_config('bd.owner_write_ok','on',true)").singleResult
-        }
+        entityManager.createNativeQuery("select set_config('bd.owner_write_ok','on',true)").singleResult
         entityManager.persist(recipe)
         entityManager.flush()
         entityManager.refresh(recipe)

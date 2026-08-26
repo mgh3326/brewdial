@@ -2,6 +2,8 @@ package com.brewdial.api.agent
 
 import com.brewdial.api.validation.BeanAttributesInput
 import com.brewdial.api.validation.CreateRecipeInput
+import com.brewdial.api.recipe.Recipe
+import jakarta.persistence.EntityManager
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -18,6 +20,7 @@ import org.springframework.context.annotation.Import
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @SpringBootTest
@@ -29,6 +32,12 @@ class AgentWriteIntegrationTest {
 
     @Autowired
     private lateinit var writes: AgentWriteService
+
+    @Autowired
+    private lateinit var entityManager: EntityManager
+
+    @Autowired
+    private lateinit var transactionTemplate: TransactionTemplate
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -50,12 +59,43 @@ class AgentWriteIntegrationTest {
 
     @Test
     fun guardProofWithoutSetConfigForcesManualCreatedBy() {
-        val recipe = recipeWrites.insertAgentRecipe(
-            CreateRecipeInput(method = "v60", title = "Guard proof ${UUID.randomUUID()}"),
-            ownerWriteAllowed = false
+        val code = transactionTemplate.execute {
+            Recipe().apply {
+                id = UUID.randomUUID()
+                method = "v60"
+                title = "Guard proof ${UUID.randomUUID()}"
+                createdBy = "agent"
+                ownerId = null
+                isOfficial = false
+                version = 1
+                status = "active"
+            }.also { recipe ->
+                entityManager.persist(recipe)
+                entityManager.flush()
+                entityManager.refresh(recipe)
+            }.code
+        } ?: error("guard proof recipe did not receive a code")
+        recipeCodes += code
+
+        val row = jdbcTemplate.queryForMap("select created_by from recipes where code = ?", code)
+        assertEquals("manual", row["created_by"])
+    }
+
+    @Test
+    fun productionCreateRecipeWritesAgentOwnedGuardedFields() {
+        val response = writes.createRecipe(CreateRecipeInput("v60", "Production path ${UUID.randomUUID()}"))
+        val code = response["code"] as String
+        recipeCodes += code
+
+        val row = jdbcTemplate.queryForMap(
+            "select created_by, owner_id, is_official, version, code from recipes where code = ?",
+            code
         )
-        recipeCodes += recipe.code
-        assertEquals("manual", recipe.createdBy)
+        assertEquals("agent", row["created_by"])
+        assertEquals(null, row["owner_id"])
+        assertEquals(false, row["is_official"])
+        assertEquals(1, row["version"])
+        assertEquals(true, (row["code"] as String).startsWith("COF-"))
     }
 
     @Test
@@ -67,10 +107,12 @@ class AgentWriteIntegrationTest {
             writes.supersede(old.code, "DOES-NOT-EXIST-${UUID.randomUUID()}")
         }
 
-        val row = jdbcTemplate.queryForMap(
-            "select status, superseded_by, supersedes from recipes where code = ?",
-            old.code
-        )
+        val row = transactionTemplate.execute {
+            jdbcTemplate.queryForMap(
+                "select status, superseded_by, supersedes from recipes where code = ?",
+                old.code
+            )
+        } ?: error("rollback verification transaction did not return the old recipe")
         assertEquals("active", row["status"])
         assertEquals(null, row["superseded_by"])
         assertEquals(null, row["supersedes"])

@@ -3,7 +3,9 @@ package com.brewdial.api.validation
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import tools.jackson.databind.ObjectMapper
 
 /** Golden cases ported from packages/shared/src/validation.test.ts (24 cases). */
@@ -54,6 +56,57 @@ class AgentValidationTest {
     }
 
     @Test fun preferencesRejectUnknownTag() = assertError(validateUpdatePreferencesInput(json("""{"likes":["초코비"]}""")), "unknown taste tag")
+
+    @TestFactory
+    fun beanIntegerBoundaryGoldens(): List<DynamicTest> = listOf(
+        BeanBoundary("roastLevelOrd", 1, true, "roastLevelOrd must be an integer 1-5"),
+        BeanBoundary("roastLevelOrd", 0, false, "roastLevelOrd must be an integer 1-5"),
+        BeanBoundary("roastLevelOrd", 5, true, "roastLevelOrd must be an integer 1-5"),
+        BeanBoundary("roastLevelOrd", 6, false, "roastLevelOrd must be an integer 1-5"),
+        BeanBoundary("acidity", 1, true, "acidity must be an integer 1-5"),
+        BeanBoundary("acidity", 0, false, "acidity must be an integer 1-5"),
+        BeanBoundary("acidity", 5, true, "acidity must be an integer 1-5"),
+        BeanBoundary("acidity", 6, false, "acidity must be an integer 1-5"),
+        BeanBoundary("body", 1, true, "body must be an integer 1-5"),
+        BeanBoundary("body", 0, false, "body must be an integer 1-5"),
+        BeanBoundary("body", 5, true, "body must be an integer 1-5"),
+        BeanBoundary("body", 6, false, "body must be an integer 1-5"),
+        BeanBoundary("agtronMin", 0, true, "agtronMin must be an integer 0-150"),
+        BeanBoundary("agtronMin", -1, false, "agtronMin must be an integer 0-150"),
+        BeanBoundary("agtronMin", 150, true, "agtronMin must be an integer 0-150"),
+        BeanBoundary("agtronMin", 151, false, "agtronMin must be an integer 0-150"),
+        BeanBoundary("agtronMax", 0, true, "agtronMax must be an integer 0-150"),
+        BeanBoundary("agtronMax", -1, false, "agtronMax must be an integer 0-150"),
+        BeanBoundary("agtronMax", 150, true, "agtronMax must be an integer 0-150"),
+        BeanBoundary("agtronMax", 151, false, "agtronMax must be an integer 0-150")
+    ).map { boundary ->
+        DynamicTest.dynamicTest("${boundary.field}=${boundary.value} is ${if (boundary.accepted) "accepted" else "rejected"}") {
+            val result = validateUpdateBeanAttributesInput(json("""{"${boundary.field}":${boundary.value}}"""))
+            assertEquals(boundary.accepted, result.ok, result.errors.joinToString(" | "))
+            if (!boundary.accepted) assertEquals(listOf(boundary.error), result.errors)
+        }
+    }
+
+    @TestFactory
+    fun purchaseLinkIntegerBoundaryGoldens(): List<DynamicTest> = listOf(
+        PurchaseBoundary("priceKrw", 0, true, "priceKrw must be a non-negative integer"),
+        PurchaseBoundary("priceKrw", -1, false, "priceKrw must be a non-negative integer"),
+        PurchaseBoundary("sortOrder", Int.MIN_VALUE, true, "sortOrder must be an integer"),
+        PurchaseBoundary("sortOrder", -1, true, "sortOrder must be an integer"),
+        PurchaseBoundary("sortOrder", 0, true, "sortOrder must be an integer"),
+        PurchaseBoundary("sortOrder", Int.MAX_VALUE, true, "sortOrder must be an integer")
+    ).map { boundary ->
+        DynamicTest.dynamicTest("${boundary.field}=${boundary.value} follows the shared rule") {
+            val result = validateCreateBeanPurchaseLinkInput(json("""
+                {"vendor":"Kurly","url":"https://example.com/x","${boundary.field}":${boundary.value}}
+            """))
+            assertEquals(boundary.accepted, result.ok, result.errors.joinToString(" | "))
+            if (!boundary.accepted) assertEquals(listOf(boundary.error), result.errors)
+        }
+    }
+
+    private data class BeanBoundary(val field: String, val value: Int, val accepted: Boolean, val error: String)
+    private data class PurchaseBoundary(val field: String, val value: Int, val accepted: Boolean, val error: String)
 
     private fun assertError(result: ValidationResult<*>, expected: String) {
         assertFalse(result.ok)
