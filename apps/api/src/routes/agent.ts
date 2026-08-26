@@ -44,7 +44,7 @@ agentRouter.patch('/recipes/:code', async (c) => {
   const db = getDb()
   const code = c.req.param('code')
   const body = await c.req.json().catch(() => null)
-  if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'invalid body' }, 400)
 
   // Strip guard-protected fields — server must never write these on update
   const { title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious, dripperPortability } = body as Record<string, unknown>
@@ -149,7 +149,7 @@ const AGENT_FEEDBACK_SOURCES = new Set(['agent', 'mcp', 'coffee_profile', 'api']
 
 agentRouter.post('/feedback', async (c) => {
   const body = await c.req.json().catch(() => null)
-  if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'invalid body' }, 400)
 
   const b = body as Record<string, unknown>
   const recipeCode = b['recipeCode']
