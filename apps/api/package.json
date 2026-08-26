@@ -7,7 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "check": "pnpm --filter @brewdial/shared build && pnpm --filter @brewdial/db build && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:http": "bash scripts/test-http.sh"
   },
   "dependencies": {
     "@brewdial/db": "workspace:*",
