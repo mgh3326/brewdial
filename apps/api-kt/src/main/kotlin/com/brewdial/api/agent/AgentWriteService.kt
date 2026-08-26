@@ -71,12 +71,14 @@ class AgentWriteService(
 
     @Transactional
     fun supersede(oldCode: String, newCode: String): LinkedHashMap<String, Any?> {
-        // Resolve both before mutation.  The transaction still protects against any
-        // later exception, and this preserves the Hono error's missing-code detail.
         val old = recipe(oldCode) ?: throw AgentRecipeMissingException(oldCode)
-        val replacement = recipe(newCode) ?: throw AgentRecipeMissingException(newCode)
         old.status = "superseded"
         old.supersededBy = newCode
+        // Match Hono: write old first, then rely on this transaction to roll it
+        // back if the replacement cannot be found.
+        entityManager.flush()
+
+        val replacement = recipe(newCode) ?: throw AgentRecipeMissingException(newCode)
         replacement.supersedes = oldCode
         entityManager.flush()
         val oldRow = readRepository.findRecipeAnyStatus(oldCode) ?: throw AgentRecipeMissingException(oldCode)

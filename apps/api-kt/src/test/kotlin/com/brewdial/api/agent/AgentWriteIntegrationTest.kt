@@ -107,10 +107,12 @@ class AgentWriteIntegrationTest {
             writes.supersede(old.code, "DOES-NOT-EXIST-${UUID.randomUUID()}")
         }
 
-        val row = jdbcTemplate.queryForMap(
-            "select status, superseded_by, supersedes from recipes where code = ?",
-            old.code
-        )
+        val row = transactionTemplate.execute {
+            jdbcTemplate.queryForMap(
+                "select status, superseded_by, supersedes from recipes where code = ?",
+                old.code
+            )
+        } ?: error("rollback verification transaction did not return the old recipe")
         assertEquals("active", row["status"])
         assertEquals(null, row["superseded_by"])
         assertEquals(null, row["supersedes"])
