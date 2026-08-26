@@ -1,0 +1,13 @@
+server:
+  shutdown: graceful
+
+logging:
+  structured:
+    format:
+      # Spring Boot 4 built-in Logstash JSON formatter.
+      console: logstash
+
+sentry:
+  # An empty ConfigMap value resolves to an empty DSN and disables the SDK.
+  dsn: "${SENTRY_DSN:}"
+  release: "${GIT_SHA:}"

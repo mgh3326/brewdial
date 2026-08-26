@@ -1,0 +1,16 @@
+# Separate NodePort keeps the existing Node deployment reachable on 30020 until
+# the Phase 3 cloudflared cutover is explicitly performed by an operator.
+apiVersion: v1
+kind: Service
+metadata:
+  name: brewdial-api-kt
+  namespace: brewdial
+spec:
+  type: NodePort
+  selector:
+    app: brewdial-api-kt
+  ports:
+    - name: http
+      port: 3021
+      targetPort: 3021
+      nodePort: 30021
