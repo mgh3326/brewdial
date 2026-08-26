@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { app } from '../app.js'
+import { request } from '../test/request.js'
 import { getDb, closeDb } from '@brewdial/db'
 import { randomUUID } from 'node:crypto'
 
@@ -31,7 +31,7 @@ afterAll(async () => {
 // ─── Agent auth gate ──────────────────────────────────────────────────────────
 
 test('POST /api/agent/recipes without token → 401', async () => {
-  const res = await app.request('/api/agent/recipes', {
+  const res = await request('/api/agent/recipes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'v60', title: `Mount Smoke No-Auth ${SEED_SUFFIX}` }),
@@ -40,7 +40,7 @@ test('POST /api/agent/recipes without token → 401', async () => {
 })
 
 test('POST /api/agent/recipes with Bearer test-token → 201', async () => {
-  const res = await app.request('/api/agent/recipes', {
+  const res = await request('/api/agent/recipes', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -56,7 +56,7 @@ test('POST /api/agent/recipes with Bearer test-token → 201', async () => {
 })
 
 test('GET /api/agent/preferences/global with token → 200', async () => {
-  const res = await app.request('/api/agent/preferences/global', {
+  const res = await request('/api/agent/preferences/global', {
     headers: { 'authorization': 'Bearer test-token' },
   })
   expect(res.status).toBe(200)
@@ -65,19 +65,19 @@ test('GET /api/agent/preferences/global with token → 200', async () => {
 // ─── M3 public routes intact ──────────────────────────────────────────────────
 
 test('GET /api/recipes → 200 (M3 public route intact)', async () => {
-  const res = await app.request('/api/recipes')
+  const res = await request('/api/recipes')
   expect(res.status).toBe(200)
   const rows = await res.json()
   expect(Array.isArray(rows)).toBe(true)
 })
 
 test('GET /api/me/collections without identity → 401 (M3 identity guard intact)', async () => {
-  const res = await app.request('/api/me/collections')
+  const res = await request('/api/me/collections')
   expect(res.status).toBe(401)
 })
 
 test('GET /api/health → 200 (health route intact)', async () => {
-  const res = await app.request('/api/health')
+  const res = await request('/api/health')
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   expect(body['ok']).toBe(true)

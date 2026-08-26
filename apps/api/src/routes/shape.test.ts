@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { app } from '../app.js'
+import { request } from '../test/request.js'
 
 // ── Column sets the client expects ──────────────────────────────────────────
 // Taken verbatim from apps/miniapp/src/lib/data/mappers.ts
@@ -65,14 +65,14 @@ afterAll(async () => {
 
 describe('route smoke tests', () => {
   test('GET /api/health → 200', async () => {
-    const res = await app.request('/api/health')
+    const res = await request('/api/health')
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.ok).toBe(true)
   })
 
   test('GET /api/me/collections without identity → 401', async () => {
-    const res = await app.request('/api/me/collections')
+    const res = await request('/api/me/collections')
     expect(res.status).toBe(401)
   })
 })
@@ -81,7 +81,7 @@ describe('route smoke tests', () => {
 
 describe('GET /api/recipes shape parity', () => {
   test('every RECIPE_COLUMNS key is present in each row', async () => {
-    const res = await app.request('/api/recipes')
+    const res = await request('/api/recipes')
     expect(res.status).toBe(200)
     const rows: Array<Record<string, unknown>> = await res.json()
 
@@ -99,7 +99,7 @@ describe('GET /api/recipes shape parity', () => {
 
 describe('GET /api/recipes/:code/feedback shape parity', () => {
   test('every FEEDBACK_COLUMNS key is present in each row', async () => {
-    const res = await app.request(`/api/recipes/${recipeCode}/feedback`)
+    const res = await request(`/api/recipes/${recipeCode}/feedback`)
     expect(res.status).toBe(200)
     const rows: Array<Record<string, unknown>> = await res.json()
 
@@ -117,7 +117,7 @@ describe('GET /api/recipes/:code/feedback shape parity', () => {
 describe('GET /api/me/collections shape parity', () => {
   test('top-level keys === [savedRecipes, savedBeans, gear, calibration, myRecipes]', async () => {
     // First save a recipe so the identity exists and collections are non-trivially populated.
-    const saveRes = await app.request('/api/me/saved-recipes', {
+    const saveRes = await request('/api/me/saved-recipes', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -127,7 +127,7 @@ describe('GET /api/me/collections shape parity', () => {
     })
     expect(saveRes.status).toBe(201)
 
-    const colRes = await app.request('/api/me/collections', {
+    const colRes = await request('/api/me/collections', {
       headers: { 'X-BrewDial-Identity': identityKey },
     })
     expect(colRes.status).toBe(200)

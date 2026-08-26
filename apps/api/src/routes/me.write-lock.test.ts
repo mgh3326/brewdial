@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { app } from '../app.js'
+import { request } from '../test/request.js'
 import { closeDb, getDb } from '@brewdial/db'
 
 const seed = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -40,22 +40,22 @@ afterAll(async () => {
 
 test('identity-scoped visitor storage writes and collections remain available', async () => {
   const headers = { 'content-type': 'application/json', 'X-BrewDial-Identity': identity }
-  const savedRecipe = await app.request('/api/me/saved-recipes', {
+  const savedRecipe = await request('/api/me/saved-recipes', {
     method: 'POST',
     headers,
     body: JSON.stringify({ code: recipeCode }),
   })
-  const savedBean = await app.request('/api/me/saved-beans', {
+  const savedBean = await request('/api/me/saved-beans', {
     method: 'POST',
     headers,
     body: JSON.stringify({ beanId }),
   })
-  const gear = await app.request('/api/me/gear', {
+  const gear = await request('/api/me/gear', {
     method: 'PUT',
     headers,
     body: JSON.stringify({ kind: 'grinder', label: `Write Lock Grinder ${seed}` }),
   })
-  const calibration = await app.request('/api/me/calibration', {
+  const calibration = await request('/api/me/calibration', {
     method: 'PUT',
     headers,
     body: JSON.stringify({
@@ -64,7 +64,7 @@ test('identity-scoped visitor storage writes and collections remain available', 
       samples: [{ fromClicks: 20, toClicks: 15 }],
     }),
   })
-  const collections = await app.request('/api/me/collections', {
+  const collections = await request('/api/me/collections', {
     headers: { 'X-BrewDial-Identity': identity },
   })
 

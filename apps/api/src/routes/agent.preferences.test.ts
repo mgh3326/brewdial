@@ -1,17 +1,7 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { closeDb, getDb, getGlobalPreference, setGlobalPreference } from '@brewdial/db'
-import { agentAuth } from '../middleware/agent-auth.js'
-import { agentRouter } from './agent.js'
 
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  return app
-}
-
-const app = makeApp()
 const AUTH = { authorization: 'Bearer test-token', 'content-type': 'application/json' }
 const previousToken = process.env.AGENT_TOKEN
 
@@ -28,7 +18,7 @@ afterAll(async () => {
 test('POST /api/agent/preferences/global with token → 200 and persists the value', async () => {
   const previous = await getGlobalPreference(getDb())
   try {
-    const res = await app.request('/api/agent/preferences/global', {
+    const res = await request('/api/agent/preferences/global', {
       method: 'POST',
       headers: AUTH,
       body: JSON.stringify({ likes: ['저산미', '고소함'], dislikes: ['고산미'] }),
@@ -47,7 +37,7 @@ test('POST /api/agent/preferences/global with token → 200 and persists the val
 })
 
 test('POST /api/agent/preferences/global without token → 401', async () => {
-  const res = await app.request('/api/agent/preferences/global', {
+  const res = await request('/api/agent/preferences/global', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ likes: ['저산미'] }),
@@ -56,7 +46,7 @@ test('POST /api/agent/preferences/global without token → 401', async () => {
 })
 
 test('POST /api/agent/preferences/global with an unknown tag → 400', async () => {
-  const res = await app.request('/api/agent/preferences/global', {
+  const res = await request('/api/agent/preferences/global', {
     method: 'POST',
     headers: AUTH,
     body: JSON.stringify({ likes: ['초코비'] }),

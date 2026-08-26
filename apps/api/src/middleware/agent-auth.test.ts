@@ -25,16 +25,16 @@ afterEach(() => {
 })
 
 test('no Authorization header → 401', async () => {
-  const app = makeApp()
-  const res = await app.request('/agent/x')
+  const testApp = makeApp()
+  const res = await testApp.request('/agent/x')
   expect(res.status).toBe(401)
   const body = await res.json()
   expect(body).toEqual({ ok: false, error: 'agent auth required' })
 })
 
 test('wrong token → 401', async () => {
-  const app = makeApp()
-  const res = await app.request('/agent/x', {
+  const testApp = makeApp()
+  const res = await testApp.request('/agent/x', {
     headers: { Authorization: 'Bearer wrong-token' },
   })
   expect(res.status).toBe(401)
@@ -43,8 +43,8 @@ test('wrong token → 401', async () => {
 })
 
 test('correct Bearer token → 200', async () => {
-  const app = makeApp()
-  const res = await app.request('/agent/x', {
+  const testApp = makeApp()
+  const res = await testApp.request('/agent/x', {
     headers: { Authorization: 'Bearer test-token' },
   })
   expect(res.status).toBe(200)
@@ -54,9 +54,9 @@ test('correct Bearer token → 200', async () => {
 
 test('AGENT_TOKEN unset → 503 (fail closed, no stack trace)', async () => {
   delete process.env.AGENT_TOKEN
-  const app = makeApp()
+  const testApp = makeApp()
   // The middleware returns a clean 503 when AGENT_TOKEN is unset (no throw, no stderr stack trace).
-  const res = await app.request('/agent/x', {
+  const res = await testApp.request('/agent/x', {
     headers: { Authorization: 'Bearer test-token' },
   })
   expect(res.status).toBe(503)

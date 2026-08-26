@@ -1,20 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { agentRouter } from './agent.js'
-import { agentAuth } from '../middleware/agent-auth.js'
 
-// Build a self-contained Hono app with agentAuth + agentRouter mounted
-// (Task 6 mounts these in the real app; here we mount them for testing).
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  return app
-}
-
-const app = makeApp()
 
 // Track rows created by tests so we can clean them up afterward (re-run safe).
 const createdCodes: string[] = []
@@ -64,7 +52,7 @@ function agentReq(path: string, options?: RequestInit): Request {
 // ─── POST /api/agent/recipes ─────────────────────────────────────────────────
 
 test('POST /api/agent/recipes {method,title} → 201, created_by=agent, server-controlled fields', async () => {
-  const res = await app.request(agentReq('/api/agent/recipes', {
+  const res = await request(agentReq('/api/agent/recipes', {
     method: 'POST',
     body: JSON.stringify({ method: 'v60', title: 'Agent Basic Recipe' }),
   }))
@@ -80,7 +68,7 @@ test('POST /api/agent/recipes {method,title} → 201, created_by=agent, server-c
 })
 
 test('POST /api/agent/recipes with beanSnapshot (no beanId) → bean_id non-null (trigger linked)', async () => {
-  const res = await app.request(agentReq('/api/agent/recipes', {
+  const res = await request(agentReq('/api/agent/recipes', {
     method: 'POST',
     body: JSON.stringify({
       method: 'aeropress',
@@ -99,7 +87,7 @@ test('POST /api/agent/recipes with beanSnapshot (no beanId) → bean_id non-null
 
 test('POST /api/agent/recipes with injected owner_id/is_official/created_by → those fields ignored', async () => {
   const fakeOwnerId = randomUUID()
-  const res = await app.request(agentReq('/api/agent/recipes', {
+  const res = await request(agentReq('/api/agent/recipes', {
     method: 'POST',
     body: JSON.stringify({
       method: 'kalita',
@@ -121,7 +109,7 @@ test('POST /api/agent/recipes with injected owner_id/is_official/created_by → 
 // ─── GET /api/agent/recipes/:code — any-status reads ─────────────────────────
 
 test('GET /api/agent/recipes/:code returns test-status recipe (any-status)', async () => {
-  const res = await app.request(agentReq(`/api/agent/recipes/${testStatusCode}`))
+  const res = await request(agentReq(`/api/agent/recipes/${testStatusCode}`))
   expect(res.status).toBe(200)
   const row: Record<string, unknown> = await res.json()
   expect(row['code']).toBe(testStatusCode)
@@ -129,14 +117,14 @@ test('GET /api/agent/recipes/:code returns test-status recipe (any-status)', asy
 })
 
 test('GET /api/agent/recipes/:code returns 404 for unknown code', async () => {
-  const res = await app.request(agentReq(`/api/agent/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}`))
+  const res = await request(agentReq(`/api/agent/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}`))
   expect(res.status).toBe(404)
 })
 
 // ─── agentAuth gate ───────────────────────────────────────────────────────────
 
 test('POST /api/agent/recipes without agent token → 401', async () => {
-  const res = await app.request('/api/agent/recipes', {
+  const res = await request('/api/agent/recipes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'v60', title: 'No Auth Recipe' }),
@@ -145,12 +133,12 @@ test('POST /api/agent/recipes without agent token → 401', async () => {
 })
 
 test('GET /api/agent/recipes/:code without agent token → 401', async () => {
-  const res = await app.request(`/api/agent/recipes/${testStatusCode}`)
+  const res = await request(`/api/agent/recipes/${testStatusCode}`)
   expect(res.status).toBe(401)
 })
 
 test('POST /api/agent/recipes with wrong token → 401', async () => {
-  const res = await app.request('/api/agent/recipes', {
+  const res = await request('/api/agent/recipes', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

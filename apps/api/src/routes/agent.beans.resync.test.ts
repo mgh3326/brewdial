@@ -1,3 +1,4 @@
+import { request } from '../test/request.js'
 /**
  * agent.beans.resync.test.ts — POST /api/agent/beans/:id/resync
  *                              POST /api/agent/beans/:id/purchase-links
@@ -13,23 +14,11 @@
  *   - PRIVATE recipe snapshots are not a resync source (owner privacy, ROB-642)
  *   - purchase links round-trip, and the public GET returns active links only
  */
-import { Hono } from 'hono'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { getDb, closeDb } from '@brewdial/db'
-import { agentRouter } from './agent.js'
-import { beans as beansRouter } from './beans.js'
-import { agentAuth } from '../middleware/agent-auth.js'
 
-function makeApp() {
-  const app = new Hono()
-  app.use('/api/agent/*', agentAuth)
-  app.route('/api/agent', agentRouter)
-  app.route('/api/beans', beansRouter)
-  return app
-}
-const app = makeApp()
 
 const SEED = randomUUID().replace(/-/g, '').slice(0, 8)
 let beanId: string
@@ -116,7 +105,7 @@ function agentReq(path: string, options?: RequestInit): Request {
 // ── resync ───────────────────────────────────────────────────────────────────
 
 test('resync with no recipes → 200, no source, nothing changed', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   expect(body['sourceRecipeCode']).toBeNull()
@@ -137,7 +126,7 @@ test('resync copies non-key identity fields from the public snapshot', async () 
     },
   })
 
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   expect(body['sourceRecipeCode']).toBe(`COF-RSY1-${SEED}`)
@@ -154,7 +143,7 @@ test('resync copies non-key identity fields from the public snapshot', async () 
 })
 
 test('resync is idempotent — a second call changes nothing', async () => {
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   expect(body['changed']).toEqual([])
@@ -168,7 +157,7 @@ test('blank / absent snapshot fields do not blank out stored values (coalesce)',
     snapshot: { name: 'x', origin: '   ', roastLevel: '중배전' },
   })
 
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   expect(body['changed']).toEqual(['roast_level'])
@@ -187,7 +176,7 @@ test('a PRIVATE recipe snapshot is never a resync source', async () => {
     ownerId,
   })
 
-  const res = await app.request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
   expect(res.status).toBe(200)
   const body: Record<string, unknown> = await res.json()
   // Newest PUBLIC snapshot is still RSY2, so nothing changes and the private text
@@ -197,14 +186,14 @@ test('a PRIVATE recipe snapshot is never a resync source', async () => {
 })
 
 test('resync unknown bean → 404', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/beans/does-not-exist-${SEED}/resync`, { method: 'POST' })
   )
   expect(res.status).toBe(404)
 })
 
 test('resync without the agent token → 401', async () => {
-  const res = await app.request(
+  const res = await request(
     new Request(`http://localhost/api/agent/beans/${beanId}/resync`, { method: 'POST' })
   )
   expect(res.status).toBe(401)
@@ -213,7 +202,7 @@ test('resync without the agent token → 401', async () => {
 // ── purchase links ───────────────────────────────────────────────────────────
 
 test('POST purchase-links → 201, then public GET returns it', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/beans/${beanId}/purchase-links`, {
       method: 'POST',
       body: JSON.stringify({
@@ -231,7 +220,7 @@ test('POST purchase-links → 201, then public GET returns it', async () => {
   expect(row['price_krw']).toBe(31000)
   expect(row['active']).toBe(true)
 
-  const list = await app.request(new Request(`http://localhost/api/beans/${beanId}/purchase-links`))
+  const list = await request(new Request(`http://localhost/api/beans/${beanId}/purchase-links`))
   expect(list.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await list.json()
   expect(rows).toHaveLength(1)
@@ -246,7 +235,7 @@ test('GET purchase-links omits inactive rows', async () => {
     .where('bean_id', '=', beanId)
     .execute()
 
-  const list = await app.request(new Request(`http://localhost/api/beans/${beanId}/purchase-links`))
+  const list = await request(new Request(`http://localhost/api/beans/${beanId}/purchase-links`))
   expect(list.status).toBe(200)
   expect(await list.json()).toEqual([])
 
@@ -258,7 +247,7 @@ test('GET purchase-links omits inactive rows', async () => {
 })
 
 test('POST purchase-links with a non-https url → 400', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/beans/${beanId}/purchase-links`, {
       method: 'POST',
       body: JSON.stringify({ vendor: 'Kurly', url: 'http://example.com/x' }),
@@ -268,7 +257,7 @@ test('POST purchase-links with a non-https url → 400', async () => {
 })
 
 test('POST purchase-links for an unknown bean → 404 (not a raw FK 500)', async () => {
-  const res = await app.request(
+  const res = await request(
     agentReq(`/api/agent/beans/does-not-exist-${SEED}/purchase-links`, {
       method: 'POST',
       body: JSON.stringify({ vendor: 'Kurly', url: 'https://example.com/x' }),
@@ -278,7 +267,7 @@ test('POST purchase-links for an unknown bean → 404 (not a raw FK 500)', async
 })
 
 test('GET purchase-links for an unknown bean → 200 with an empty list', async () => {
-  const res = await app.request(
+  const res = await request(
     new Request(`http://localhost/api/beans/does-not-exist-${SEED}/purchase-links`)
   )
   expect(res.status).toBe(200)

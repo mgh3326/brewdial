@@ -1,20 +1,8 @@
-import { Hono } from 'hono'
+import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { getDb, closeDb } from '@brewdial/db'
-import { recipes } from './recipes.js'
-import { feedback } from './feedback.js'
 
-// Build a self-contained Hono app for tests (not the main app.ts — Task 6 mounts these).
-function makeApp() {
-  const app = new Hono()
-  app.route('/api/recipes', recipes)
-  // feedback route handles /:code/feedback — mount alongside recipes
-  app.route('/api/recipes', feedback)
-  return app
-}
-
-const app = makeApp()
 
 // Unique seed IDs / codes so tests are re-run safe.
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -96,7 +84,7 @@ afterAll(async () => {
 // ─── GET /api/recipes ────────────────────────────────────────────────────────
 
 test('GET /api/recipes returns only active recipes', async () => {
-  const res = await app.request('/api/recipes')
+  const res = await request('/api/recipes')
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -112,7 +100,7 @@ test('GET /api/recipes returns only active recipes', async () => {
 })
 
 test('GET /api/recipes returns rows newest-first', async () => {
-  const res = await app.request('/api/recipes')
+  const res = await request('/api/recipes')
   const rows: Array<Record<string, unknown>> = await res.json()
   // Verify order: each row's created_at >= the next row's created_at.
   for (let i = 0; i < rows.length - 1; i++) {
@@ -123,14 +111,14 @@ test('GET /api/recipes returns rows newest-first', async () => {
 })
 
 test('GET /api/recipes respects ?limit=', async () => {
-  const res = await app.request('/api/recipes?limit=1')
+  const res = await request('/api/recipes?limit=1')
   expect(res.status).toBe(200)
   const rows: Array<unknown> = await res.json()
   expect(rows.length).toBe(1)
 })
 
 test('GET /api/recipes rows contain expected snake_case keys', async () => {
-  const res = await app.request('/api/recipes')
+  const res = await request('/api/recipes')
   const rows: Array<Record<string, unknown>> = await res.json()
   const row = rows.find((r) => r['code'] === activeCode1)
   expect(row).toBeTruthy()
@@ -150,7 +138,7 @@ test('GET /api/recipes rows contain expected snake_case keys', async () => {
 // ─── GET /api/recipes?beanId= ─────────────────────────────────────────────────
 
 test('GET /api/recipes?beanId= filters by bean + active only', async () => {
-  const res = await app.request(`/api/recipes?beanId=${beanId}`)
+  const res = await request(`/api/recipes?beanId=${beanId}`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   // Only the bean recipe should be returned.
@@ -164,7 +152,7 @@ test('GET /api/recipes?beanId= filters by bean + active only', async () => {
 })
 
 test('GET /api/recipes?beanId= returns empty array for unknown bean', async () => {
-  const res = await app.request(`/api/recipes?beanId=${randomUUID()}`)
+  const res = await request(`/api/recipes?beanId=${randomUUID()}`)
   expect(res.status).toBe(200)
   const rows: Array<unknown> = await res.json()
   expect(rows).toEqual([])
@@ -173,7 +161,7 @@ test('GET /api/recipes?beanId= returns empty array for unknown bean', async () =
 // ─── GET /api/recipes/:code ───────────────────────────────────────────────────
 
 test('GET /api/recipes/:code returns the recipe row', async () => {
-  const res = await app.request(`/api/recipes/${activeCode1}`)
+  const res = await request(`/api/recipes/${activeCode1}`)
   expect(res.status).toBe(200)
   const row: Record<string, unknown> = await res.json()
   expect(row['code']).toBe(activeCode1)
@@ -181,18 +169,18 @@ test('GET /api/recipes/:code returns the recipe row', async () => {
 })
 
 test('GET /api/recipes/:code 404 for test-status recipe', async () => {
-  const res = await app.request(`/api/recipes/${testCode}`)
+  const res = await request(`/api/recipes/${testCode}`)
   expect(res.status).toBe(404)
 })
 
 test('GET /api/recipes/:code 404 for non-existent code', async () => {
-  const res = await app.request(`/api/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}`)
+  const res = await request(`/api/recipes/DOES-NOT-EXIST-${SEED_SUFFIX}`)
   expect(res.status).toBe(404)
 })
 
 test('GET /api/recipes/:code returns superseded recipe (not filtered out)', async () => {
   // Only test-status is excluded; superseded should still be accessible by code.
-  const res = await app.request(`/api/recipes/${supersededCode}`)
+  const res = await request(`/api/recipes/${supersededCode}`)
   expect(res.status).toBe(200)
   const row: Record<string, unknown> = await res.json()
   expect(row['code']).toBe(supersededCode)
@@ -202,7 +190,7 @@ test('GET /api/recipes/:code returns superseded recipe (not filtered out)', asyn
 // ─── GET /api/recipes/:code/feedback ─────────────────────────────────────────
 
 test('GET /api/recipes/:code/feedback returns seeded feedback', async () => {
-  const res = await app.request(`/api/recipes/${activeCode1}/feedback`)
+  const res = await request(`/api/recipes/${activeCode1}/feedback`)
   expect(res.status).toBe(200)
   const rows: Array<Record<string, unknown>> = await res.json()
   expect(Array.isArray(rows)).toBe(true)
@@ -212,7 +200,7 @@ test('GET /api/recipes/:code/feedback returns seeded feedback', async () => {
 })
 
 test('GET /api/recipes/:code/feedback contains expected snake_case keys', async () => {
-  const res = await app.request(`/api/recipes/${activeCode1}/feedback`)
+  const res = await request(`/api/recipes/${activeCode1}/feedback`)
   const rows: Array<Record<string, unknown>> = await res.json()
   const fb = rows.find((r) => r['id'] === feedbackId)
   expect(fb).toBeTruthy()
@@ -225,7 +213,7 @@ test('GET /api/recipes/:code/feedback contains expected snake_case keys', async 
 })
 
 test('GET /api/recipes/:code/feedback returns empty array for no feedback', async () => {
-  const res = await app.request(`/api/recipes/${activeCode2}/feedback`)
+  const res = await request(`/api/recipes/${activeCode2}/feedback`)
   expect(res.status).toBe(200)
   const rows: Array<unknown> = await res.json()
   expect(rows).toEqual([])
