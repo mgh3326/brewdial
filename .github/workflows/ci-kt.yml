@@ -53,8 +53,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install database package dependencies
-        run: pnpm install --frozen-lockfile --filter @brewdial/db...
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared and database packages
+        run: |
+          pnpm --filter @brewdial/shared build
+          pnpm --filter @brewdial/db build
 
       - name: Run database migrations
         run: pnpm db:migrate
@@ -69,3 +74,17 @@ jobs:
       - name: Build Kotlin API
         working-directory: apps/api-kt
         run: ./gradlew --no-daemon build
+
+      - name: Contract tests vs Spring (2a subset)
+        working-directory: apps/api-kt
+        run: |
+          scripts/contract-test.sh \
+            apps/api/src/routes/health.test.ts \
+            apps/api/src/cors.test.ts \
+            apps/api/src/routes/beans.test.ts \
+            apps/api/src/routes/beans.search.test.ts \
+            apps/api/src/routes/recipes.test.ts \
+            apps/api/src/routes/recipes.write.test.ts \
+            apps/api/src/routes/feedback.owner.test.ts
+          scripts/contract-test.sh apps/api/src/routes/shape.test.ts \
+            -t 'GET /api/recipes(?:/:code/feedback)? shape parity'
