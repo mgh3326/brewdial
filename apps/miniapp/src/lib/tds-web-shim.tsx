@@ -3,7 +3,7 @@
 // ("앱인토스 개발에만 사용할 수 있어요"), so the web target aliases @toss/tds-mobile
 // and @toss/tds-mobile-ait to this file (see vite.config.ts, VITE_TARGET=web).
 // The .ait (Toss) build keeps the real TDS. Styled via .web-top / .web-btn in index.css.
-import type { CSSProperties, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react';
 
 export function TDSMobileAITProvider({ children }: { children?: ReactNode; brandPrimaryColor?: string }) {
   return <>{children}</>;
@@ -64,3 +64,60 @@ export function Button({
     </button>
   );
 }
+
+type DialogButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
+
+function DialogTitle({ children }: { children?: ReactNode }) {
+  return <h2 className="web-dialog-title">{children}</h2>;
+}
+
+function DialogDescription({ children }: { children?: ReactNode }) {
+  return <p className="web-dialog-description">{children}</p>;
+}
+
+function DialogButton({ children, ...props }: DialogButtonProps) {
+  return <button className="web-dialog-button" {...props}>{children}</button>;
+}
+
+function ConfirmDialogImpl({
+  open,
+  title,
+  description,
+  cancelButton,
+  confirmButton,
+  closeOnDimmerClick = true,
+  onClose,
+}: {
+  open?: boolean;
+  title?: ReactNode;
+  description?: ReactNode;
+  cancelButton?: ReactNode;
+  confirmButton?: ReactNode;
+  closeOnDimmerClick?: boolean;
+  closeOnBackEvent?: boolean;
+  onClose?: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="web-dialog-backdrop"
+      role="presentation"
+      onClick={(event) => {
+        if (closeOnDimmerClick && event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      <div className="web-dialog" role="dialog" aria-modal="true" aria-labelledby="web-dialog-title">
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{description}</DialogDescription>
+        <div className="web-dialog-actions">{cancelButton}{confirmButton}</div>
+      </div>
+    </div>
+  );
+}
+
+export const ConfirmDialog = Object.assign(ConfirmDialogImpl, {
+  Title: DialogTitle,
+  Description: DialogDescription,
+  ConfirmButton: DialogButton,
+  CancelButton: DialogButton,
+});

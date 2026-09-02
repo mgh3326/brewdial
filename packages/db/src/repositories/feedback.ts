@@ -1,4 +1,4 @@
-import { type Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 
 // Row shape matching the client mapper's FeedbackRow
@@ -40,13 +40,37 @@ const FEEDBACK_COLS: ReadonlyArray<keyof DB['feedback']> = [
   'updated_at',
 ]
 
-export function listFeedbackByRecipe(db: Kysely<DB>, code: string): Promise<FeedbackRow[]> {
-  return db
+export function listFeedbackByRecipe(
+  db: Kysely<DB>,
+  code: string,
+  callerAppUserId?: string
+): Promise<FeedbackRow[]> {
+  let q = db
     .selectFrom('feedback')
     .select(FEEDBACK_COLS)
     .where('recipe_code', '=', code)
-    .orderBy('created_at', 'desc')
-    .execute() as unknown as Promise<FeedbackRow[]>
+  // Owner-scoped feedback is private. Public/anonymous feedback remains
+  // visible, while an identity may also see its own private feedback.
+  q = callerAppUserId
+    ? q.where((eb) => eb.or([eb('owner_id', 'is', null), eb('owner_id', '=', callerAppUserId)]))
+    : q.where('owner_id', 'is', null)
+  return q.orderBy('created_at', 'desc').execute() as unknown as Promise<FeedbackRow[]>
+}
+
+/**
+ * Count feedback owned by one app user since the start of the current UTC day.
+ * This is a database aggregate rather than an in-memory rate counter.
+ */
+export async function countOwnedFeedbackToday(db: Kysely<DB>, ownerId: string): Promise<number> {
+  const result = await sql<{ count: number }>`
+    select count(*)::int as count
+    from feedback
+    where owner_id = ${ownerId}::uuid
+      and created_at >= (
+        date_trunc('day', now() at time zone 'utc') at time zone 'utc'
+      )
+  `.execute(db)
+  return Number(result.rows[0]?.count ?? 0)
 }
 
 export interface InsertFeedbackPayload {

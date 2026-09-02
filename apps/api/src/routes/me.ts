@@ -1,13 +1,160 @@
 import { Hono } from 'hono'
-import { getDb, saveRecipe, saveBean, upsertGear, upsertCalibration, listBeans, getTasteSignals, getGlobalPreference } from '@brewdial/db'
-import { deriveTasteTarget, scoreBean, type BeanAttributes } from '@brewdial/shared'
+import {
+  countOwnedFeedbackToday,
+  countOwnedRecipesToday,
+  getDb,
+  getRecipeAnyStatus,
+  getRecipeByCode,
+  insertFeedback,
+  insertManualRecipe,
+  saveRecipe,
+  saveBean,
+  setRecipeStatus,
+  updateRecipe,
+  upsertGear,
+  upsertCalibration,
+  listBeans,
+  getTasteSignals,
+  getGlobalPreference,
+} from '@brewdial/db'
+import {
+  deriveTasteTarget,
+  scoreBean,
+  validateCreateFeedbackInput,
+  validateCreateRecipeInput,
+  validateUpdateRecipeInput,
+  type BeanAttributes,
+} from '@brewdial/shared'
 import { requireIdentity } from '../middleware/identity.js'
 import { getMyCollections } from '../services/collections.js'
 import type { GearInput, CalibrationInput } from '@brewdial/db'
 
 export const me = new Hono()
 
+// Database-backed abuse limits. Keep these values in one place so the recipe
+// and feedback routes cannot drift apart.
+export const DAILY_RECIPE_LIMIT = 20
+export const DAILY_FEEDBACK_LIMIT = 100
+
 // All /me routes require identity (scoped by appUserId from c.get('appUserId')).
+
+// POST /me/recipes — create a private human recipe for the resolved identity.
+me.post('/recipes', requireIdentity, async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const result = validateCreateRecipeInput(body)
+  if (!result.ok) {
+    return c.json({ error: 'validation failed', details: result.errors }, 400)
+  }
+
+  const appUserId = c.get('appUserId') as string
+  const db = getDb()
+  if ((await countOwnedRecipesToday(db, appUserId)) >= DAILY_RECIPE_LIMIT) {
+    return c.json({ error: 'daily recipe limit exceeded' }, 429)
+  }
+
+  // The schema's canonical value for a human-authored recipe is `manual`.
+  // The route deliberately ignores any client-supplied createdBy/owner fields.
+  const input = result.value
+  const row = await insertManualRecipe(db, {
+    method: input.method,
+    title: input.title,
+    ownerId: appUserId,
+    beanId: input.beanId,
+    beanSnapshot: input.beanSnapshot,
+    params: input.params,
+    steps: input.steps,
+    intent: input.intent,
+    notes: input.notes,
+    adjustmentFromPrevious: input.adjustmentFromPrevious,
+    dripperPortability: input.dripperPortability,
+  })
+  return c.json(row, 201)
+})
+
+// PATCH /me/recipes/:code — owner-only editable recipe update.
+me.patch('/recipes/:code', requireIdentity, async (c) => {
+  const db = getDb()
+  const code = c.req.param('code') as string
+  const appUserId = c.get('appUserId') as string
+  const existing = await getRecipeAnyStatus(db, code)
+  // Keep non-owner and missing resources indistinguishable.
+  if (!existing || existing.owner_id !== appUserId) return c.json({ error: 'not found' }, 404)
+
+  const body = await c.req.json().catch(() => null)
+  const result = validateUpdateRecipeInput(body)
+  if (!result.ok) {
+    return c.json({ error: 'validation failed', details: result.errors }, 400)
+  }
+
+  try {
+    const row = await updateRecipe(db, code, result.value)
+    return c.json(row)
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND') {
+      return c.json({ error: 'not found' }, 404)
+    }
+    throw err
+  }
+})
+
+// DELETE /me/recipes/:code — owner-only soft delete.
+me.delete('/recipes/:code', requireIdentity, async (c) => {
+  const db = getDb()
+  const code = c.req.param('code') as string
+  const appUserId = c.get('appUserId') as string
+  const existing = await getRecipeAnyStatus(db, code)
+  if (!existing || existing.owner_id !== appUserId) return c.json({ error: 'not found' }, 404)
+
+  try {
+    const row = await setRecipeStatus(db, code, 'archived')
+    return c.json(row)
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND') {
+      return c.json({ error: 'not found' }, 404)
+    }
+    throw err
+  }
+})
+
+// POST /me/recipes/:code/feedback — private feedback on a recipe visible to
+// the caller (public/AI recipes or the caller's own recipe).
+me.post('/recipes/:code/feedback', requireIdentity, async (c) => {
+  const db = getDb()
+  const code = c.req.param('code') as string
+  const appUserId = c.get('appUserId') as string
+  const recipe = await getRecipeByCode(db, code, appUserId)
+  if (!recipe) return c.json({ error: 'recipe not found' }, 404)
+
+  const body = await c.req.json().catch(() => null)
+  // The path is authoritative; recipeCode/source/ownerId from the body are
+  // never trusted for this identity-scoped write.
+  const result = validateCreateFeedbackInput({
+    ...(body && typeof body === 'object' && !Array.isArray(body) ? body : {}),
+    recipeCode: code,
+  })
+  if (!result.ok) {
+    return c.json({ error: 'validation failed', details: result.errors }, 400)
+  }
+  if ((await countOwnedFeedbackToday(db, appUserId)) >= DAILY_FEEDBACK_LIMIT) {
+    return c.json({ error: 'daily feedback limit exceeded' }, 429)
+  }
+
+  const input = result.value
+  const row = await insertFeedback(db, {
+    recipeCode: code,
+    beanId: recipe.bean_id,
+    ownerId: appUserId,
+    ratings: input.ratings,
+    actual: input.actual,
+    comment: input.comment,
+    rawComment: input.rawComment,
+    quickTags: input.quickTags,
+    desiredDirection: input.desiredDirection,
+    nextHint: input.nextHint,
+    source: 'web',
+  })
+  return c.json(row, 201)
+})
 
 // POST /me/saved-recipes — bookmark a recipe by code
 me.post('/saved-recipes', requireIdentity, async (c) => {

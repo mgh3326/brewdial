@@ -1,11 +1,11 @@
-import { Top } from '@toss/tds-mobile';
+import { ConfirmDialog, Top } from '@toss/tds-mobile';
 import { useEffect, useState } from 'react';
 import type { BeanSummary } from '../lib/data/beans';
 import { listBeans } from '../lib/data/beans';
 import { getMyCollections } from '../lib/data/user-content';
 import type { RecipeDoc } from '../lib/domain';
 import { asRecipeCode } from '../lib/nav';
-import { getRecipeByCode } from '../lib/data/recipes';
+import { deleteRecipe, getRecipeByCode } from '../lib/data/recipes';
 import BeanCard from '../components/BeanCard';
 import RecipeCard from '../components/RecipeCard';
 
@@ -18,6 +18,59 @@ interface SavedBeanRow {
 }
 
 type Status = 'loading' | 'ready' | 'error';
+
+function OwnedRecipeItem({ recipe, onDeleted }: { recipe: RecipeDoc; onDeleted: (code: string) => void }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirmDelete() {
+    setError(null);
+    setBusy(true);
+    try {
+      await deleteRecipe(recipe.code);
+      setDialogOpen(false);
+      onDeleted(recipe.code);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack-tight">
+      <RecipeCard recipe={recipe} mine />
+      <div className="row">
+        <a className="btn-save" href={`#/recipes/${recipe.code}/edit`}>수정</a>
+        <button className="btn-save danger" type="button" onClick={() => setDialogOpen(true)} disabled={busy}>
+          삭제
+        </button>
+      </div>
+      {error && <p className="error-panel">{error}</p>}
+      <ConfirmDialog
+        open={dialogOpen}
+        title="레시피를 삭제할까요?"
+        description="삭제하면 저장함의 내 레시피에서 숨겨져요."
+        closeOnDimmerClick={!busy}
+        closeOnBackEvent={!busy}
+        onClose={() => {
+          if (!busy) setDialogOpen(false);
+        }}
+        cancelButton={
+          <ConfirmDialog.CancelButton type="button" onClick={() => setDialogOpen(false)} disabled={busy}>
+            취소
+          </ConfirmDialog.CancelButton>
+        }
+        confirmButton={
+          <ConfirmDialog.ConfirmButton type="button" onClick={() => void confirmDelete()} disabled={busy}>
+            {busy ? '삭제 중…' : '삭제'}
+          </ConfirmDialog.ConfirmButton>
+        }
+      />
+    </div>
+  );
+}
 
 export default function Saved() {
   const [status, setStatus] = useState<Status>('loading');
@@ -114,13 +167,20 @@ export default function Saved() {
             </section>
 
             <section className="stack-tight">
-              <h2>내 레시피 {myRecipes.length > 0 ? myRecipes.length : ''}</h2>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <h2>내 레시피 {myRecipes.length > 0 ? myRecipes.length : ''}</h2>
+                <a className="btn-save" href="#/new-recipe">새 레시피</a>
+              </div>
               {myRecipes.length === 0 ? (
                 <p className="empty">내 레시피가 없어요. 새 레시피를 만들어보세요.</p>
               ) : (
                 <div className="stack">
                   {myRecipes.map((r) => (
-                    <RecipeCard key={`mr-${r.code}`} recipe={r} mine />
+                    <OwnedRecipeItem
+                      key={`mr-${r.code}`}
+                      recipe={r}
+                      onDeleted={(code) => setMyRecipes((current) => current.filter((item) => item.code !== code))}
+                    />
                   ))}
                 </div>
               )}

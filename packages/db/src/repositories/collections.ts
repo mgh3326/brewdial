@@ -112,6 +112,7 @@ export async function getMyCollections(db: Kysely<DB>, appUserId: string): Promi
       .selectFrom('recipes')
       .select('code')
       .where('owner_id', '=', appUserId)
+      .where('status', '=', 'active')
       .execute(),
   ])
 

@@ -77,6 +77,23 @@ export function listRecentRecipes(db: Kysely<DB>, limit = 20): Promise<RecipeRow
     .execute() as unknown as Promise<RecipeRow[]>
 }
 
+/**
+ * Count recipes owned by one app user since the start of the current UTC day.
+ * The API uses this DB aggregate for the per-identity abuse limit; it is
+ * intentionally not an in-memory counter.
+ */
+export async function countOwnedRecipesToday(db: Kysely<DB>, ownerId: string): Promise<number> {
+  const result = await sql<{ count: number }>`
+    select count(*)::int as count
+    from recipes
+    where owner_id = ${ownerId}::uuid
+      and created_at >= (
+        date_trunc('day', now() at time zone 'utc') at time zone 'utc'
+      )
+  `.execute(db)
+  return Number(result.rows[0]?.count ?? 0)
+}
+
 export function getRecipeByCode(
   db: Kysely<DB>,
   code: string,

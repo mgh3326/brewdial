@@ -3,6 +3,9 @@ import type { CreateFeedbackInput, CreateRecipeInput } from './api-types';
 import { isRecipeCode } from './schemas';
 import type {
   ActualBrewParams,
+  BeanAttributes,
+  BeanAttrsSource,
+  BeanFlavorCategory,
   BrewMethod,
   Confidence,
   DripperClass,
@@ -20,7 +23,12 @@ import type {
   RecipeParams,
   RecipeStep
 } from './types';
-import { QUICK_FEEDBACK_TAGS } from './types';
+import {
+  BEAN_ATTRS_SOURCES,
+  BEAN_FLAVOR_CATEGORIES,
+  QUICK_FEEDBACK_TAGS,
+  TASTE_TAGS
+} from './types';
 
 export type ValidationResult<T> =
   | { ok: true; value: T; warnings: string[] }
@@ -644,6 +652,203 @@ export function validateUpdateRecipeInput(
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value, warnings: [] };
+}
+
+// ── ROB-654: bean attribute writes (agent PATCH + MCP tool). At least one field
+// required. The DB CHECK constraints are the backstop; this returns clean 400s.
+export function validateUpdateBeanAttributesInput(
+  input: unknown
+): ValidationResult<BeanAttributes> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const value: BeanAttributes = {};
+
+  if (input.roastLevelOrd !== undefined) {
+    if (!isInt(input.roastLevelOrd) || input.roastLevelOrd < 1 || input.roastLevelOrd > 5) {
+      errors.push('roastLevelOrd must be an integer 1-5');
+    } else value.roastLevelOrd = input.roastLevelOrd;
+  }
+  if (input.acidity !== undefined) {
+    if (!isInt(input.acidity) || input.acidity < 1 || input.acidity > 5) {
+      errors.push('acidity must be an integer 1-5');
+    } else value.acidity = input.acidity;
+  }
+  if (input.body !== undefined) {
+    if (!isInt(input.body) || input.body < 1 || input.body > 5) {
+      errors.push('body must be an integer 1-5');
+    } else value.body = input.body;
+  }
+  if (input.agtronMin !== undefined) {
+    if (!isInt(input.agtronMin) || input.agtronMin < 0 || input.agtronMin > 150) {
+      errors.push('agtronMin must be an integer 0-150');
+    } else value.agtronMin = input.agtronMin;
+  }
+  if (input.agtronMax !== undefined) {
+    if (!isInt(input.agtronMax) || input.agtronMax < 0 || input.agtronMax > 150) {
+      errors.push('agtronMax must be an integer 0-150');
+    } else value.agtronMax = input.agtronMax;
+  }
+  if (
+    value.agtronMin !== undefined &&
+    value.agtronMax !== undefined &&
+    value.agtronMax < value.agtronMin
+  ) {
+    errors.push('agtronMax must be >= agtronMin');
+  }
+  if (input.decaf !== undefined) {
+    if (typeof input.decaf !== 'boolean') errors.push('decaf must be a boolean');
+    else value.decaf = input.decaf;
+  }
+  if (input.flavorCategories !== undefined) {
+    if (!isStringArray(input.flavorCategories)) {
+      errors.push('flavorCategories must be a string array');
+    } else {
+      const allowed = new Set<string>(BEAN_FLAVOR_CATEGORIES);
+      const invalid = input.flavorCategories.filter((t) => !allowed.has(t));
+      if (invalid.length > 0) {
+        errors.push(
+          `flavorCategories contains unknown values: ${invalid.join(', ')} (allowed: ${BEAN_FLAVOR_CATEGORIES.join(', ')})`
+        );
+      } else {
+        value.flavorCategories = input.flavorCategories as BeanFlavorCategory[];
+      }
+    }
+  }
+  if (input.attrsSource !== undefined) {
+    if (
+      typeof input.attrsSource !== 'string' ||
+      !BEAN_ATTRS_SOURCES.includes(input.attrsSource as BeanAttrsSource)
+    ) {
+      errors.push(`attrsSource must be one of ${BEAN_ATTRS_SOURCES.join(', ')}`);
+    } else {
+      value.attrsSource = input.attrsSource as BeanAttrsSource;
+    }
+  }
+  const sourceUrl = pickString(input, 'sourceUrl', errors, 'input');
+  if (sourceUrl !== undefined && sourceUrl.length > 0) value.sourceUrl = sourceUrl;
+  const attrsNotes = pickString(input, 'attrsNotes', errors, 'input');
+  if (attrsNotes !== undefined && attrsNotes.length > 0) value.attrsNotes = attrsNotes;
+
+  if (errors.length === 0 && Object.keys(value).length === 0) {
+    errors.push('at least one bean attribute is required');
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
+}
+
+// ── bean purchase links (agent write) ────────────────────────────────────────
+// Mirrors the bean_purchase_links CHECK constraints (001_core_schema) so callers
+// get a clean 400 instead of a raw 23514.
+
+export const BEAN_LINK_CATEGORIES = [
+  'product',
+  'lowest_price',
+  'coupon',
+  'generic'
+] as const;
+export type BeanLinkCategory = (typeof BEAN_LINK_CATEGORIES)[number];
+
+export interface CreateBeanPurchaseLinkInput {
+  vendor: string;
+  url: string;
+  linkCategory?: BeanLinkCategory;
+  priceKrw?: number;
+  isAffiliate?: boolean;
+  sortOrder?: number;
+}
+
+export function validateCreateBeanPurchaseLinkInput(
+  input: unknown
+): ValidationResult<CreateBeanPurchaseLinkInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const vendor = pickString(input, 'vendor', errors, 'input');
+  if (vendor === undefined || vendor.length === 0) {
+    errors.push('vendor is required');
+  } else if (vendor.length > 60) {
+    errors.push('vendor must be 60 characters or fewer');
+  }
+
+  const url = pickString(input, 'url', errors, 'input');
+  if (url === undefined || url.length === 0) {
+    errors.push('url is required');
+  } else if (!url.startsWith('https://')) {
+    // bean_purchase_links_url_https — https only, no http/protocol-relative.
+    errors.push('url must start with https://');
+  } else if (url.length > 2048) {
+    errors.push('url must be 2048 characters or fewer');
+  }
+
+  let linkCategory: BeanLinkCategory | undefined;
+  if (input.linkCategory !== undefined) {
+    if (
+      typeof input.linkCategory !== 'string' ||
+      !BEAN_LINK_CATEGORIES.includes(input.linkCategory as BeanLinkCategory)
+    ) {
+      errors.push(`linkCategory must be one of ${BEAN_LINK_CATEGORIES.join(', ')}`);
+    } else {
+      linkCategory = input.linkCategory as BeanLinkCategory;
+    }
+  }
+
+  let priceKrw: number | undefined;
+  if (input.priceKrw !== undefined) {
+    if (!isInt(input.priceKrw) || input.priceKrw < 0) {
+      errors.push('priceKrw must be a non-negative integer');
+    } else priceKrw = input.priceKrw;
+  }
+
+  let isAffiliate: boolean | undefined;
+  if (input.isAffiliate !== undefined) {
+    if (typeof input.isAffiliate !== 'boolean') errors.push('isAffiliate must be a boolean');
+    else isAffiliate = input.isAffiliate;
+  }
+
+  let sortOrder: number | undefined;
+  if (input.sortOrder !== undefined) {
+    if (!isInt(input.sortOrder)) errors.push('sortOrder must be an integer');
+    else sortOrder = input.sortOrder;
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  const value: CreateBeanPurchaseLinkInput = { vendor: vendor as string, url: url as string };
+  if (linkCategory !== undefined) value.linkCategory = linkCategory;
+  if (priceKrw !== undefined) value.priceKrw = priceKrw;
+  if (isAffiliate !== undefined) value.isAffiliate = isAffiliate;
+  if (sortOrder !== undefined) value.sortOrder = sortOrder;
+
+  return { ok: true, value, warnings: [] };
+}
+
+export interface UpdatePreferencesInput {
+  likes: string[];
+  dislikes: string[];
+}
+
+// ROB-654 v2 S1: validate taste preference edits (global singleton write).
+export function validateUpdatePreferencesInput(
+  input: unknown
+): ValidationResult<UpdatePreferencesInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+
+  const allowed = new Set<string>(TASTE_TAGS);
+  const clean = (raw: unknown, field: string): string[] => {
+    if (raw === undefined) return [];
+    if (!isStringArray(raw)) { errors.push(`${field} must be a string array`); return []; }
+    const bad = raw.filter((t) => !allowed.has(t));
+    if (bad.length > 0) errors.push(`${field} contains unknown taste tag(s): ${bad.join(', ')}`);
+    return [...new Set(raw.filter((t) => allowed.has(t)))];
+  };
+  const likes = clean(input.likes, 'likes');
+  const dislikes = clean(input.dislikes, 'dislikes');
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: { likes, dislikes }, warnings: [] };
 }
 
 function validateRatings(

@@ -4,8 +4,12 @@ import { migrateLocalGearOnce } from './lib/data/gear';
 import Beans from './pages/Beans';
 import BeanDetail from './pages/BeanDetail';
 import RecipeDetail from './pages/RecipeDetail';
+import RecipeFeedback from './pages/RecipeFeedback';
+import EditRecipe from './pages/EditRecipe';
+import NewRecipe from './pages/NewRecipe';
 import Saved from './pages/Saved';
 import BottomNav from './components/BottomNav';
+import { asRecipeCode } from './lib/nav';
 
 export default function App() {
   const path = useHashPath();
@@ -15,6 +19,20 @@ export default function App() {
   useEffect(() => {
     void migrateLocalGearOnce();
   }, []);
+
+  if (path === '/new-recipe' || path === '/recipes/new') return <NewRecipe />;
+
+  const feedbackMatch = /^\/recipes\/(COF-[A-Za-z0-9-]+)\/feedback$/.exec(path);
+  if (feedbackMatch) {
+    const code = asRecipeCode(feedbackMatch[1]);
+    if (code) return <RecipeFeedback key={code} code={code} />;
+  }
+
+  const editMatch = /^\/recipes\/(COF-[A-Za-z0-9-]+)\/edit$/.exec(path);
+  if (editMatch) {
+    const code = asRecipeCode(editMatch[1]);
+    if (code) return <EditRecipe key={code} code={code} />;
+  }
 
   const recipeMatch = /^\/recipes\/(COF-[A-Za-z0-9-]+)$/.exec(path);
   if (recipeMatch) return <RecipeDetail key={recipeMatch[1]} code={recipeMatch[1]} />;
