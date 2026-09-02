@@ -1,11 +1,12 @@
 import type { RecipeCode } from './domain';
 
-export type TabKey = 'home' | 'saved';
+export type TabKey = 'pick' | 'beans' | 'saved';
 
 // Routes that show the floating tab bar get a tab key; detail/form/404 → null.
-// ROB-633: '/recipes' is the legacy alias of the bean-centric home.
+// '/recipes' remains the legacy alias of the bean-centric list.
 export function whichTab(path: string): TabKey | null {
-  if (path === '/' || path === '/recipes' || path === '/recipes/') return 'home';
+  if (path === '/') return 'pick';
+  if (path === '/beans' || path === '/recipes' || path === '/recipes/') return 'beans';
   if (path === '/saved') return 'saved';
   return null;
 }

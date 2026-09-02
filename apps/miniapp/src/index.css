@@ -641,3 +641,81 @@ a.card:active {
   font-size: 12px;
 }
 
+/* Today pick — native controls keep the real TDS build and the web shim aligned. */
+.pick-form,
+.pick-result,
+.pick-status {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pick-question {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pick-question h2 {
+  margin: 0;
+}
+.pick-question .filter-row {
+  margin: 0;
+}
+.pick-decaf {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+.pick-decaf input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand-strong);
+}
+.pick-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--brand-strong);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+.pick-primary:active {
+  background: var(--brand);
+}
+.pick-bean-name {
+  font-size: 22px;
+  margin: -8px 0 0;
+}
+.pick-recipe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.pick-recipe .card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pick-actions {
+  padding-top: 4px;
+}
+.pick-text-button {
+  border: 0;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}

@@ -7,6 +7,7 @@ import { beans } from './routes/beans.js'
 import { registries } from './routes/registries.js'
 import { feedback } from './routes/feedback.js'
 import { me } from './routes/me.js'
+import { recommendations } from './routes/recommendations.js'
 import { identityMiddleware } from './middleware/identity.js'
 import { agentAuth } from './middleware/agent-auth.js'
 import { agentRouter } from './routes/agent.js'
@@ -51,6 +52,7 @@ api.route('/', health)
 api.route('/recipes', recipes)
 api.route('/recipes', feedback)
 api.route('/beans', beans)
+api.route('/recommendations', recommendations)
 api.route('/', registries)
 api.route('/me', me)
 
