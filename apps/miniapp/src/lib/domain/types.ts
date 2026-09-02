@@ -25,6 +25,43 @@ export interface BeanSnapshot {
   notes?: string;
 }
 
+// ── ROB-654: bean attribute write fields. Vendored from
+// packages/shared/src/types.ts (source of truth). Re-sync if shared changes.
+export const BEAN_FLAVOR_CATEGORIES = [
+  'fruity',
+  'floral',
+  'citrus',
+  'berry',
+  'stone_fruit',
+  'tropical',
+  'chocolate',
+  'caramel',
+  'nutty',
+  'spicy',
+  'herbal',
+  'roasted',
+  'cereal',
+  'sour_fermented',
+  'green'
+] as const;
+export type BeanFlavorCategory = (typeof BEAN_FLAVOR_CATEGORIES)[number];
+
+export const BEAN_ATTRS_SOURCES = ['roaster_page', 'ai_extracted', 'manual'] as const;
+export type BeanAttrsSource = (typeof BEAN_ATTRS_SOURCES)[number];
+
+export interface BeanAttributes {
+  roastLevelOrd?: number;
+  agtronMin?: number;
+  agtronMax?: number;
+  acidity?: number;
+  body?: number;
+  decaf?: boolean;
+  flavorCategories?: BeanFlavorCategory[];
+  attrsSource?: BeanAttrsSource;
+  sourceUrl?: string;
+  attrsNotes?: string;
+}
+
 // ── ROB-611: grinder-portable grind. params.grind is string (legacy free text)
 // | GrindSpec (structured). Absolute clicks/microns are unreliable across grinders;
 // the robust anchors are brew-method position + target drawdown time.

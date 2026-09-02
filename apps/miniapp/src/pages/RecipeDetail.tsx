@@ -733,6 +733,13 @@ export default function RecipeDetail({ code }: { code: string }) {
 
         {tab === 'feedback' && (
           <section className="stack" role="tabpanel" id="panel-feedback" aria-labelledby="tab-feedback">
+            <button
+              className="t-btn"
+              type="button"
+              onClick={() => location.replace(`#/recipes/${recipe.code}/feedback`)}
+            >
+              피드백 남기기
+            </button>
             {feedback.length === 0 ? (
               <p className="empty">아직 피드백이 없어요.</p>
             ) : (

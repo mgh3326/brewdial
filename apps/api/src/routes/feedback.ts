@@ -11,6 +11,6 @@ feedback.get('/:code/feedback', async (c) => {
   // Visibility gate (ROB-642 C2): private recipes only resolve for their owner.
   const recipe = await getRecipeByCode(db, code, appUserId)
   if (!recipe) return c.json({ error: 'recipe not found' }, 404)
-  const rows = await listFeedbackByRecipe(db, code)
+  const rows = await listFeedbackByRecipe(db, code, appUserId)
   return c.json(rows)
 })

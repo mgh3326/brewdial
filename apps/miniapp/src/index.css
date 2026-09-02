@@ -189,6 +189,10 @@ a.card:active {
   background: var(--brand-soft);
   border-color: var(--brand-soft);
 }
+.btn-save.danger {
+  color: var(--warn);
+  border-color: rgba(192, 57, 43, 0.45);
+}
 .filter-row {
   display: flex;
   gap: 6px;
@@ -594,6 +598,51 @@ a.card:active {
 .web-btn:active {
   background: var(--line-strong);
 }
+.web-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(25, 31, 40, 0.45);
+}
+.web-dialog {
+  width: min(100%, 360px);
+  padding: 22px;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.web-dialog-title {
+  margin: 0;
+  font-size: 18px;
+}
+.web-dialog-description {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.web-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+.web-dialog-button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 700;
+}
+.web-dialog-actions .web-dialog-button:last-child {
+  background: var(--brand);
+  color: #fff;
+}
 
 /* ROB-633 — Toss-style floating bottom tab bar (home + saved only). */
 .screen-tabpage {
@@ -640,4 +689,3 @@ a.card:active {
 .bottom-nav-label {
   font-size: 12px;
 }
-
