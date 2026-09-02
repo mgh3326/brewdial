@@ -1,8 +1,8 @@
 import { useHashPath } from '../lib/useRoute';
 import { whichTab, type TabKey } from '../lib/nav';
 
-// ROB-633 — Toss-style floating bottom tab bar (rounded capsule, elevated),
-// shown only on the home + saved tab pages (App gates mounting).
+// Toss-style floating bottom tab bar (rounded capsule, elevated).
+// App mounts it only on the three primary tab pages.
 interface TabDef {
   key: TabKey;
   href: string;
@@ -10,19 +10,30 @@ interface TabDef {
 }
 
 const TABS: readonly TabDef[] = [
-  { key: 'home', href: '#/', label: '홈' },
+  { key: 'pick', href: '#/', label: '뽑기' },
+  { key: 'beans', href: '#/beans', label: '원두' },
   { key: 'saved', href: '#/saved', label: '저장함' },
 ];
 
-function HomeIcon() {
+function PickIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
-        d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"
+        d="M7 3h10v7.5A5 5 0 0 1 12 15.5a5 5 0 0 1-5-5zM9 20h6M12 15.5V20"
         stroke="currentColor"
         strokeWidth="1.8"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function BeansIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M8 4c-3 2-4 8-1 13 2 3 6 3 8 0 3-5 2-11-1-13-2 1-4 1-6 0Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M9 7c2 3 3 6 3 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
@@ -55,7 +66,7 @@ export default function BottomNav() {
             href={t.href}
             aria-current={isActive ? 'page' : undefined}
           >
-            {t.key === 'home' ? <HomeIcon /> : <SavedIcon />}
+            {t.key === 'pick' ? <PickIcon /> : t.key === 'beans' ? <BeansIcon /> : <SavedIcon />}
             <span className="bottom-nav-label">{t.label}</span>
           </a>
         );

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useHashPath } from './lib/useRoute';
 import { migrateLocalGearOnce } from './lib/data/gear';
 import Beans from './pages/Beans';
+import Pick from './pages/Pick';
 import BeanDetail from './pages/BeanDetail';
 import RecipeDetail from './pages/RecipeDetail';
 import Saved from './pages/Saved';
@@ -22,8 +23,16 @@ export default function App() {
   const beanMatch = /^\/beans\/(.+)$/.exec(path);
   if (beanMatch) return <BeanDetail key={beanMatch[1]} id={decodeURIComponent(beanMatch[1])} />;
 
-  // Home = bean-centric list (ROB-610). '/recipes' kept as an alias.
-  if (path === '/' || path === '/recipes' || path === '/recipes/')
+  if (path === '/')
+    return (
+      <>
+        <Pick />
+        <BottomNav />
+      </>
+    );
+
+  // The old recipe list URL remains a working alias for the bean-centric list.
+  if (path === '/beans' || path === '/recipes' || path === '/recipes/')
     return (
       <>
         <Beans />
