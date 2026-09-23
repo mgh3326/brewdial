@@ -9,23 +9,29 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "files": ["dist"],
   "scripts": {
     "build": "pnpm --filter @brewdial/shared build && tsc",
-    "check": "pnpm --filter @brewdial/shared build && tsc --noEmit",
+    "check": "pnpm --filter @brewdial/shared build && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "migrate": "node-pg-migrate -m migrations -j sql up",
     "migrate:down": "node-pg-migrate -m migrations -j sql down",
     "codegen": "kysely-codegen --url=$DATABASE_URL --out-file src/types.ts",
-    "test": "pnpm --filter @brewdial/shared build && vitest run"
+    "test": "pnpm --filter @brewdial/shared build && vitest run",
+    "load:xbloom-reference": "tsx scripts/load-xbloom-reference.ts"
   },
-  "dependencies": { "@brewdial/shared": "workspace:*", "kysely": "^0.27.0", "pg": "^8.13.0" },
+  "dependencies": { "@brewdial/shared": "workspace:*", "kysely": "^0.27.0", "pg": "^8.13.0", "yaml": "2.9.0" },
   "devDependencies": {
     "node-pg-migrate": "^7.9.0",
     "kysely-codegen": "^0.17.0",
     "@types/pg": "^8.11.0",
     "vitest": "^2.1.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0"
   }
 }
