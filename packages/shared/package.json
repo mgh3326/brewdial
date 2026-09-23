@@ -17,6 +17,9 @@
     "test": "vitest run",
     "lint": "echo '@brewdial/shared: no lint in PR1 (intentional no-op)' && exit 0"
   },
+  "dependencies": {
+    "yaml": "2.9.0"
+  },
   "devDependencies": {
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"

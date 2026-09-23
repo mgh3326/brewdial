@@ -1,0 +1,24 @@
+name: Test Pre-ground Blend
+dose_g: 15
+grind: 0
+ratio: 16.5
+pours:
+  - label: Bloom
+    ml: 40
+    temp_c: 93
+    pattern: spiral
+    pause_s: 0
+    rpm: 90
+    flow_ml_s: 3.0
+    agitation: false
+  - label: Top up
+    ml: 208
+    temp_c: 93
+    pattern: spiral
+    pause_s: 20
+    rpm: 90
+    flow_ml_s: 3.5
+    agitation: false
+kind: custom
+dripper: Omni
+note: 'Pre-ground [medium roast]'
