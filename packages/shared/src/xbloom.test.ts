@@ -390,6 +390,33 @@ pours:
     ).toThrow(/rounds to <1s/);
   });
 
+  it.each([['Pour[2'], ['[Bloom'], ['뜸[1'], ['A['], ['x[y']])(
+    'a bare "[" in label %s keeps its step tag intact (B3′)',
+    (label) => {
+      const y = mkYaml({}, [
+        { label, ml: 50, temp_c: 88, flow_ml_s: 3.0, pattern: 'center', rpm: 60, agitation: true },
+        { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+      ]);
+      const out = rt(y);
+      expect(out).toEqual(parse(y)); // label, pattern, rpm, agitation all survive
+    }
+  );
+
+  it('a "[" inside recipe-level values keeps the recipe tag intact (B3′)', () => {
+    const y = mkYaml({ kind: 'custom[2', dripper: 'Omni[2', time: '[2:45' });
+    expect(rt(y)).toEqual(parse(y));
+  });
+
+  it('a "]" in a label is sanitized but machine params survive (S1 documented)', () => {
+    const y = mkYaml({}, [
+      { label: 'Pour[2]', ml: 50, temp_c: 88, flow_ml_s: 3.0, pattern: 'center', rpm: 60, agitation: true },
+      { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+    ]);
+    const out = rt(y);
+    expect(out.pours[0].label).toBe('Pour[2'); // `]` is stripped (documented)
+    expect(out.pours[0]).toMatchObject({ pattern: 'center', rpm: 60, agitation: true, temp_c: 88 });
+  });
+
   it('lets params.tempC rewrite the first pour and targetTimeSec rewrite time (N5)', () => {
     const doc = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
     doc.params!.tempC = 80;
@@ -470,6 +497,12 @@ describe('toXBloomYaml export validation + guards', () => {
     };
     expect(() => toXBloomYaml(mkDoc({}, { grind: comandante }))).toThrow(/non-xBloom grind/);
     expect(() => toXBloomYaml(mkDoc({}, { grind: 'Comandante 24' }))).toThrow(/non-xBloom grind/);
+    // a target-only GrindSpec is also untranslatable grind info -> reject (S4′)
+    expect(() =>
+      toXBloomYaml(
+        mkDoc({}, { grind: { target: { brewMethodPosition: 'v60 medium-fine' } } })
+      )
+    ).toThrow(/non-xBloom grind/);
     // but the explicit 무분쇄 marker still maps to 0
     const doc = mkDoc({}, { grind: '무분쇄(외부 그라인더)' });
     expect(parse(toXBloomYaml(doc)).grind).toBe(0);

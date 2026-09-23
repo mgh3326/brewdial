@@ -11,8 +11,10 @@
 //   step tag    (in steps[i].note):  [label="Bloom" pattern=spiral agitation=false rpm=100 temp_c=92 pause_s=40]
 //   recipe tag  (in notes):          [xbloom v=1 stage_temps=110,90 time="2:45-3:00" kind=custom water_ml=256 dripper=Omni note=1]
 //
-// Grammar: value = bare `[^\s\]"]+` or `"double-quoted"` (may contain spaces; `"` and
-// `]` are sanitized out on emit). A bracketed segment is a STEP tag only if every
+// Grammar: value = bare `[^\s\]"]+` or `"double-quoted"`. On emit, `"` and `]` are
+// sanitized out (documented loss) and a value containing whitespace or `[` is
+// always quoted — a bare `[` would abort the quote-aware scanner's own span.
+// A bracketed segment is a STEP tag only if every
 // token parses as k=v, every key is in STEP_TAG_KEYS, and `label=` is present. A
 // segment is a RECIPE tag only if its first token is the literal `xbloom` marker
 // and the rest are k=v pairs with keys in RECIPE_TAG_KEYS. Import always emits a
@@ -180,7 +182,9 @@ function parseTagPairs(content: string): Record<string, string> | null {
 
 function tagValue(v: string): string {
   const clean = v.replace(/["\]]/g, '');
-  return /[\s]/.test(clean) || clean === '' ? `"${clean}"` : clean;
+  // `[` also forces quoting: the bracket scanner aborts a span on an unquoted
+  // `[`, so a bare value containing one would break its own tag.
+  return /[\s[]/.test(clean) || clean === '' ? `"${clean}"` : clean;
 }
 
 function allKeysIn(pairs: Record<string, string>, allowed: Set<string>): boolean {
@@ -573,9 +577,11 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     return pour;
   });
 
-  // grind: only xBloom Studio clicks translate. Another grinder's clicks or an
-  // unrelated legacy text must NOT silently become 0 (machine would skip
-  // grinding) — reject instead. No grind info, or the 무분쇄 marker, maps to 0.
+  // grind: only xBloom Studio clicks translate. ANY other grind information —
+  // another grinder's clicks, unrelated legacy text, or a target-only GrindSpec
+  // (e.g. "v60 medium-fine") — must NOT silently become 0 (the machine would
+  // skip grinding); reject instead. Only no grind info at all, or the explicit
+  // 무분쇄 marker, maps to 0.
   const grind = readGrind(params.grind);
   const xbloomClicks = grind.perGrinder?.find((p) => p.grinder === XBLOOM_GRINDER);
   let grindOut: number;
@@ -587,9 +593,14 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
       ]);
     }
     grindOut = clicks;
+  } else if (grind.legacyText === XBLOOM_NO_GRIND_TEXT) {
+    grindOut = 0;
   } else if (
     (grind.perGrinder !== undefined && grind.perGrinder.length > 0) ||
-    (grind.legacyText !== undefined && grind.legacyText !== XBLOOM_NO_GRIND_TEXT)
+    (grind.legacyText !== undefined && grind.legacyText !== '') ||
+    grind.target.brewMethodPosition !== undefined ||
+    grind.target.microns !== undefined ||
+    grind.target.targetDrawdownSec !== undefined
   ) {
     throw new XBloomValidationError([
       'cannot translate a non-xBloom grind into xBloom clicks (add a measured "xBloom Studio" entry or 무분쇄 legacyText)'
