@@ -67,8 +67,8 @@ test('GET /api/me/collections: myRecipes and savedRecipes stay free of reference
     savedRecipes: Array<{ recipe_code: string; snapshot: unknown }>
   }
   for (const code of codes) expect(col.myRecipes).not.toContain(code)
-  const saved = col.savedRecipes.find((r) => r.recipe_code === codes[0])
-  if (saved) expect(saved.snapshot).toBeNull()
+  // saveRecipe skips reference rows, so no saved_recipes row may exist at all.
+  expect(col.savedRecipes.find((r) => r.recipe_code === codes[0])).toBeUndefined()
 })
 
 test('MCP brew.get_recent_context (buildRecentContext over the API) excludes loaded rows', async () => {

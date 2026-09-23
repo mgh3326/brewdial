@@ -60,6 +60,7 @@ function page(opts: {
 <h2 id="xbloom-recipe">xBloom recipe<a class="headerlink" href="#xbloom-recipe">&para;</a></h2>
 <p><a download="h.yaml" href="${opts.hotYaml}">Download this recipe (.yaml)</a></p>
 <p><a href="${opts.hotYaml}?v=2">same file, cache-busted link</a></p>
+<p><a href="http://elsewhere.invalid/r/foreign.yaml">a foreign-origin yaml (must be ignored)</a></p>
 <p><strong>Notes:</strong> ${opts.notes}</p>
 <p>${opts.hotNote}</p>
 ${iced}

@@ -8,6 +8,7 @@ import { parse } from 'yaml'
 import { closeDb, getDb } from './db.js'
 import {
   assertReferenceStatusSupported,
+  describeDatabaseUrl,
   extractRecipePageUrls,
   loadXBloomReferences,
   normalizeSourceUrl,
@@ -103,6 +104,19 @@ describe('normalizeSourceUrl — the idempotency key is deterministic', () => {
   })
 })
 
+describe('describeDatabaseUrl — the CLI local-DB guard', () => {
+  it.each([
+    ['unix socket via ?host=', 'postgres://robin@localhost/db?host=/tmp&port=5433', true],
+    ['localhost', 'postgres://u:p@localhost:5432/db', true],
+    ['127.0.0.1', 'postgres://u:p@127.0.0.1/db', true],
+    ['remote host', 'postgres://u:p@db.example.com:5432/db', false],
+    ['?host= overrides a localhost hostname', 'postgres://localhost/app?host=db.prod.example.com', false],
+    ['?host= socket overrides a remote hostname', 'postgres://db.example.com/app?host=/var/run/postgresql', true],
+  ])('%s', (_l, url, local) => {
+    expect(describeDatabaseUrl(url).local).toBe(local)
+  })
+})
+
 describe('site parsing (mock HTML)', () => {
   it('collects each recipe page once and ignores foreign/other links', async () => {
     const site = await newSite()
@@ -121,7 +135,8 @@ describe('site parsing (mock HTML)', () => {
     expect(page.process).toBe('washed')
     expect(page.roastLevel).toBe('light')
     expect(page.tastingNotes).toBe('blackcurrant · tomato · cane sugar')
-    // `?v=2` duplicate of the hot link collapses to the same key
+    // `?v=2` duplicate of the hot link collapses to the same key; the
+    // foreign-origin /r/foreign.yaml link is ignored
     expect(page.sections).toEqual([
       { yamlUrl: `${site.origin}${site.yamlPaths.hotA}`, heading: 'xBloom recipe', iced: false },
       { yamlUrl: `${site.origin}${site.yamlPaths.icedA}`, heading: 'Iced — over ice', iced: true },

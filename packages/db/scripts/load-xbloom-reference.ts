@@ -23,6 +23,7 @@ import { writeFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import {
   closeDb,
+  describeDatabaseUrl,
   FATAL_EXIT_CODE,
   getDb,
   loadXBloomReferences,
@@ -32,20 +33,11 @@ import {
   XBLOOM_REFERENCE_SITE,
 } from '../src/index.js'
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', ''])
+const LOCAL_SITE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
 function fatal(msg: string): never {
   console.error(`fatal: ${msg}`)
   process.exit(FATAL_EXIT_CODE)
-}
-
-function describeDb(raw: string): { label: string; local: boolean } {
-  const u = new URL(raw)
-  const socket = u.searchParams.get('host')
-  const host = socket ?? u.hostname
-  const local = (socket?.startsWith('/') ?? false) || LOCAL_HOSTS.has(u.hostname)
-  const port = u.searchParams.get('port') ?? u.port ?? ''
-  return { label: `${u.pathname.replace(/^\//, '')} @ ${host}${port ? `:${port}` : ''}`, local }
 }
 
 async function main(): Promise<number> {
@@ -65,13 +57,13 @@ async function main(): Promise<number> {
 
   const dbUrl = process.env.DATABASE_URL
   if (!dbUrl) fatal('DATABASE_URL is not set')
-  const target = describeDb(dbUrl)
+  const target = describeDatabaseUrl(dbUrl)
   if (!target.local && !values['allow-remote-db']) {
     fatal(`refusing non-local DATABASE_URL (${target.label}) without --allow-remote-db`)
   }
 
   const site = new URL(values.site!)
-  const siteIsLocal = LOCAL_HOSTS.has(site.hostname)
+  const siteIsLocal = LOCAL_SITE_HOSTS.has(site.hostname)
   if (site.protocol !== 'https:' && !siteIsLocal) fatal(`--site must be https: ${site.href}`)
   const delayMs = Number(values['delay-ms'])
   if (!Number.isInteger(delayMs) || delayMs < 0) fatal(`--delay-ms must be a non-negative integer`)

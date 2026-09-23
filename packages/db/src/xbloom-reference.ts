@@ -240,6 +240,7 @@ export function parseRecipePage(html: string, pageUrl: string): ReferencePage {
     text: htmlText(m[2]),
   }))
   const seen = new Set<string>()
+  const siteOrigin = new URL(pageUrl).origin
   for (const m of html.matchAll(/<a\b[^>]*\bhref="([^"]+)"[^>]*>/gi)) {
     let url: URL
     try {
@@ -247,7 +248,9 @@ export function parseRecipePage(html: string, pageUrl: string): ReferencePage {
     } catch {
       continue
     }
-    if (!/^\/r\/[^/]+\.ya?ml$/i.test(url.pathname)) continue
+    // Same-origin only: a foreign link would bypass the https/--site rules and
+    // produce a row --verify (which scans by site origin) never sees.
+    if (url.origin !== siteOrigin || !/^\/r\/[^/]+\.ya?ml$/i.test(url.pathname)) continue
     const yamlUrl = normalizeSourceUrl(url.href)
     if (seen.has(yamlUrl)) continue
     seen.add(yamlUrl)
@@ -323,6 +326,21 @@ export function buildReferenceRecord(page: ReferencePage, section: ReferenceSect
 }
 
 // ── DB ──────────────────────────────────────────────────────────────────────
+
+const LOCAL_DB_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', ''])
+
+/**
+ * Where a DATABASE_URL really connects. pg lets `?host=` override the URL
+ * hostname (a leading `/` = unix socket dir), so locality is decided from that
+ * effective host only.
+ */
+export function describeDatabaseUrl(raw: string): { label: string; local: boolean } {
+  const u = new URL(raw)
+  const host = u.searchParams.get('host') ?? u.hostname
+  const local = host.startsWith('/') || LOCAL_DB_HOSTS.has(host)
+  const port = u.searchParams.get('port') ?? u.port
+  return { label: `${u.pathname.replace(/^\//, '')} @ ${host}${port ? `:${port}` : ''}`, local }
+}
 
 /** Fails unless migration 007 (status='reference' in recipes_status_check) is applied. */
 export async function assertReferenceStatusSupported(db: Kysely<DB>): Promise<void> {
