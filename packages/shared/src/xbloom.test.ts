@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
 import { validateCreateRecipeInput } from './validation.js';
-import { fromXBloomYaml, toXBloomYaml, XBloomValidationError } from './xbloom.js';
+import type { RecipeParams, RecipeStep } from './types.js';
+import {
+  fromXBloomYaml,
+  toXBloomYaml,
+  XBloomValidationError,
+  type XBloomExportSource
+} from './xbloom.js';
 
 const FIXTURES = ['three-pour-spiral.yaml', 'five-pour-descend.yaml', 'grind0-no-grind.yaml'];
 const loadFixture = (name: string) =>
@@ -46,7 +52,12 @@ describe('xBloom roundtrip fixtures (deep-equal after parse)', () => {
 });
 
 describe('fromXBloomYaml mapping', () => {
-  const input = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
+  // inside beforeAll, not the describe body: a throw here must be a test
+  // failure, not a suite collection error (keeps mutation REDs valid).
+  let input: ReturnType<typeof fromXBloomYaml>;
+  beforeAll(() => {
+    input = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
+  });
 
   it('maps params per spec', () => {
     expect(input.method).toBe('other');
@@ -99,7 +110,10 @@ describe('fromXBloomYaml mapping', () => {
 });
 
 describe('fromXBloomYaml — water_ml absent + grind=0', () => {
-  const input = fromXBloomYaml(loadFixture('grind0-no-grind.yaml'));
+  let input: ReturnType<typeof fromXBloomYaml>;
+  beforeAll(() => {
+    input = fromXBloomYaml(loadFixture('grind0-no-grind.yaml'));
+  });
 
   it('derives waterG = round(dose*ratio) when water_ml is absent', () => {
     expect(input.params!.waterG).toBe(248); // 15 * 16.5 = 247.5 -> 248
@@ -200,11 +214,13 @@ describe('validation boundaries (hardware ranges)', () => {
 
   it.each([
     ['rpm 0', 0, true],
+    ['rpm 50 (below band, on-step)', 50, false],
     ['rpm 59', 59, false],
     ['rpm 60', 60, true],
     ['rpm 65 off-step', 65, false],
     ['rpm 120', 120, true],
-    ['rpm 121', 121, false]
+    ['rpm 121', 121, false],
+    ['rpm 130 (above band, on-step)', 130, false]
   ])('rpm %s', (_l, rpm, ok) => {
     const run = () => fromXBloomYaml(mkYaml({}, [{ ...basePour, rpm }, { ...basePour, label: 'P2' }]));
     if (ok) expect(run).not.toThrow();
@@ -266,5 +282,196 @@ describe('tag format vs human notes (no collision)', () => {
     );
     // [temp_c=90] lacks label= -> stays human text, lands inside label verbatim
     expect(out.pours[0].label).toBe('noted [temp_c=90]');
+  });
+});
+
+describe('roundtrip robustness (tester-found loss classes)', () => {
+  const rt = (y: string) => parse(toXBloomYaml(fromXBloomYaml(y)));
+
+  it('preserves multi-line / padded / double-spaced notes verbatim (B1)', () => {
+    const y = `name: T
+dose_g: 15
+grind: 60
+ratio: 16
+kind: custom
+note: |
+  Tasting: citrus,  black tea.
+  Tip: swirl after bloom.
+pours:
+  - {label: A, ml: 50, temp_c: 90, flow_ml_s: 3.0}
+  - {label: B, ml: 50, temp_c: 90, flow_ml_s: 3.0}
+`;
+    expect(rt(y)).toEqual(parse(y));
+  });
+
+  it('round-trips an empty note key distinctly from an absent one (B1)', () => {
+    const y = mkYaml({ note: '' });
+    const out = rt(y);
+    expect('note' in out).toBe(true);
+    expect(out.note).toBe('');
+    const noNote = rt(mkYaml());
+    expect('note' in noNote).toBe(false);
+  });
+
+  it('keeps pause_s exact for fractional ml (B2)', () => {
+    // 30.4/3.2 = 9.4999… in floats; double rounding used to yield pause_s 41.
+    const y = mkYaml({}, [
+      { label: 'A', ml: 30.4, temp_c: 90, flow_ml_s: 3.2, pause_s: 40 },
+      { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+    ]);
+    const out = rt(y);
+    expect(out.pours[0].pause_s).toBe(40);
+    expect(out).toEqual(parse(y));
+  });
+
+  it('an unmatched "[" before the recipe tag does not hide it (B3)', () => {
+    const y = mkYaml({
+      note: 'too sour :[ grind finer',
+      stage_temps: [110, 90],
+      time: '2:45-3:00',
+      water_ml: 100,
+      dripper: 'Omni'
+    });
+    const out = rt(y);
+    expect(out).toEqual(parse(y)); // stage_temps/time/water_ml/dripper/note all survive
+  });
+
+  it('a "[" inside a label does not break its step tag (B3)', () => {
+    const y = mkYaml({}, [
+      {
+        label: 'Pour [A',
+        ml: 50,
+        temp_c: 90,
+        flow_ml_s: 3.0,
+        pattern: 'center',
+        rpm: 60,
+        agitation: true
+      },
+      { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+    ]);
+    expect(rt(y)).toEqual(parse(y));
+  });
+
+  it('does not inject kind when the source had none (S2)', () => {
+    const y = stringify({
+      name: 'T',
+      dose_g: 15,
+      grind: 60,
+      ratio: 16,
+      pours: [basePour, { ...basePour, label: 'P2' }]
+    });
+    const out = rt(y);
+    expect('kind' in out).toBe(false);
+    expect(out).toEqual(parse(y));
+  });
+
+  it('preserves unknown file- and pour-level keys via extra= (S3)', () => {
+    const y = mkYaml({ author: 'tester', 'x-custom': { a: [1, 2] } }, [
+      { ...basePour, bypass_ml: 10 },
+      { ...basePour, label: 'P2' }
+    ]);
+    expect(rt(y)).toEqual(parse(y));
+  });
+
+  it('round-trips stage_temps: [] distinctly from absent (N1)', () => {
+    const y = mkYaml({ stage_temps: [] });
+    const out = rt(y);
+    expect(out.stage_temps).toEqual([]);
+  });
+
+  it('rejects a pour that rounds below 1s (unrepresentable, N4)', () => {
+    expect(() =>
+      fromXBloomYaml(
+        mkYaml({}, [
+          { label: 'A', ml: 1, temp_c: 90, flow_ml_s: 3.0 },
+          { ...basePour, label: 'B' }
+        ])
+      )
+    ).toThrow(/rounds to <1s/);
+  });
+
+  it('lets params.tempC rewrite the first pour and targetTimeSec rewrite time (N5)', () => {
+    const doc = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
+    doc.params!.tempC = 80;
+    const out = parse(toXBloomYaml(doc));
+    expect(out.pours[0].temp_c).toBe(80);
+    expect(out.pours[1].temp_c).toBe(92); // tag still governs later pours
+    doc.params!.targetTimeSec = 200;
+    expect(parse(toXBloomYaml(doc)).time).toBe('3:20');
+  });
+});
+
+describe('toXBloomYaml export validation + guards', () => {
+  const mkDoc = (
+    stepOver: Partial<RecipeStep> = {},
+    params: Partial<RecipeParams> = {}
+  ): XBloomExportSource => ({
+    title: 'T',
+    params: { doseG: 15, waterG: 240, ratio: '1:16', tempC: 92, ...params },
+    steps: [
+      { atSec: 0, endSec: 15, waterG: 40, pourRateGPerSec: 3.0, note: 'A', ...stepOver },
+      { atSec: 45, endSec: 90, waterG: 240, pourRateGPerSec: 3.2, note: 'B' }
+    ] as RecipeStep[]
+  });
+
+  it.each([
+    ['flow 4.0 out of band', { pourRateGPerSec: 4.0 }, /flow_ml_s/],
+    ['negative ml delta (waterG decreases)', { waterG: -10 }, /ml/]
+  ])('rejects invalid emission: %s', (_l, over, re) => {
+    expect(() => toXBloomYaml(mkDoc(over))).toThrow(re);
+  });
+
+  it('rejects pause_s beyond 255 carried by a final-pour tag', () => {
+    const doc = mkDoc();
+    doc.steps![1].note = 'B [label=B pause_s=300]';
+    expect(() => toXBloomYaml(doc)).toThrow(/pause_s/);
+  });
+
+  it('rejects temp_c out of band via params.tempC', () => {
+    expect(() => toXBloomYaml(mkDoc({}, { tempC: 97 }))).toThrow(/temp_c/);
+  });
+
+  it('rejects a single step (pours >= 2)', () => {
+    const doc = mkDoc();
+    doc.steps!.pop();
+    expect(() => toXBloomYaml(doc)).toThrow(/at least 2/);
+  });
+
+  it('rejects xBloom clicks outside 1-80', () => {
+    expect(() =>
+      toXBloomYaml(
+        mkDoc({}, {
+          grind: {
+            target: { targetDrawdownSec: 60 },
+            perGrinder: [{ grinder: 'xBloom Studio', clicks: 85, source: 'measured' }]
+          }
+        })
+      )
+    ).toThrow(/grind/);
+  });
+
+  it('rejects overlapping steps instead of emitting a negative pause (N3)', () => {
+    expect(() =>
+      toXBloomYaml({
+        title: 'T',
+        params: { doseG: 15, tempC: 90 },
+        steps: [
+          { atSec: 0, endSec: 50, waterG: 40, pourRateGPerSec: 3.0, note: 'a' },
+          { atSec: 30, endSec: 60, waterG: 80, pourRateGPerSec: 3.0, note: 'b' }
+        ]
+      })
+    ).toThrow(/overlap/);
+  });
+
+  it('refuses to silently emit grind 0 for a non-xBloom grinder (S4)', () => {
+    const comandante = {
+      target: { targetDrawdownSec: 60 },
+      perGrinder: [{ grinder: 'Comandante C40', clicks: 24, source: 'measured' as const }]
+    };
+    expect(() => toXBloomYaml(mkDoc({}, { grind: comandante }))).toThrow(/non-xBloom grind/);
+    expect(() => toXBloomYaml(mkDoc({}, { grind: 'Comandante 24' }))).toThrow(/non-xBloom grind/);
+    // but the explicit 무분쇄 marker still maps to 0
+    const doc = mkDoc({}, { grind: '무분쇄(외부 그라인더)' });
+    expect(parse(toXBloomYaml(doc)).grind).toBe(0);
   });
 });
