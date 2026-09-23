@@ -1,0 +1,51 @@
+name: Test Kenya Nyeri AA
+dose_g: 20
+grind: 70
+ratio: 15
+stage_temps: [115.0, 92.0]
+pours:
+  - label: Bloom
+    ml: 40
+    temp_c: 94
+    pattern: spiral
+    pause_s: 45
+    rpm: 110
+    flow_ml_s: 3.0
+    agitation: false
+  - label: Second
+    ml: 50
+    temp_c: 92
+    pattern: spiral
+    pause_s: 25
+    rpm: 110
+    flow_ml_s: 3.1
+    agitation: after
+  - label: Third
+    ml: 60
+    temp_c: 90
+    pattern: ring
+    pause_s: 25
+    rpm: 100
+    flow_ml_s: 3.2
+    agitation: false
+  - label: Fourth
+    ml: 70
+    temp_c: 88
+    pattern: spiral
+    pause_s: 20
+    rpm: 90
+    flow_ml_s: 3.4
+    agitation: false
+  - label: Final center
+    ml: 80
+    temp_c: 86
+    pattern: center
+    pause_s: 60
+    rpm: 80
+    flow_ml_s: 3.5
+    agitation: true
+kind: custom
+dripper: Omni
+water_ml: 300
+time: 3:10–3:30
+note: 'Descending temp profile [v2]'

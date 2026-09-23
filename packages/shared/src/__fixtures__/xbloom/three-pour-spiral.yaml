@@ -1,0 +1,35 @@
+name: Test Ethiopia Guji
+dose_g: 16
+grind: 64
+ratio: 16
+stage_temps: [110.0, 90.0]
+pours:
+  - label: Bloom
+    ml: 35
+    temp_c: 92
+    pattern: spiral
+    pause_s: 40
+    rpm: 100
+    flow_ml_s: 3.0
+    agitation: false
+  - label: Main pour
+    ml: 120
+    temp_c: 92
+    pattern: spiral
+    pause_s: 30
+    rpm: 100
+    flow_ml_s: 3.2
+    agitation: true
+  - label: Finish
+    ml: 101
+    temp_c: 90
+    pattern: ring
+    pause_s: 45
+    rpm: 0
+    flow_ml_s: 3.5
+    agitation: false
+kind: custom
+dripper: Omni
+water_ml: 256
+time: 2:45–3:00
+note: 'First dial-in [see notebook]'

@@ -142,6 +142,10 @@ importers:
         version: 2.1.9(@types/node@25.6.0)(jsdom@29.1.0)(lightningcss@1.32.0)(terser@5.48.0)
 
   packages/shared:
+    dependencies:
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
     devDependencies:
       typescript:
         specifier: ^5.5.0
