@@ -10,6 +10,7 @@ const createdCodes: string[] = []
 // Seed suffix and pre-seeded test-status recipe code for any-status read test.
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
 const testStatusCode = `T-AGTST-${SEED_SUFFIX}`
+const refStatusCode = `T-AGREF-${SEED_SUFFIX}`
 
 beforeAll(async () => {
   // Set AGENT_TOKEN for all tests (vitest runs in the same process).
@@ -24,12 +25,21 @@ beforeAll(async () => {
     status: 'test',
     owner_id: null,
   }).execute()
+  // Seed a reference-status recipe for the explicit agent lookup test.
+  await db.insertInto('recipes').values({
+    code: refStatusCode,
+    method: 'v60',
+    title: 'Agent Reference Status Recipe',
+    status: 'reference',
+    owner_id: null,
+  }).execute()
 })
 
 afterAll(async () => {
   const db = getDb()
   // Clean up the seeded test-status recipe.
   await db.deleteFrom('recipes').where('code', '=', testStatusCode).execute()
+  await db.deleteFrom('recipes').where('code', '=', refStatusCode).execute()
   // Clean up any rows created during tests.
   if (createdCodes.length > 0) {
     await db.deleteFrom('recipes').where('code', 'in', createdCodes).execute()
@@ -114,6 +124,14 @@ test('GET /api/agent/recipes/:code returns test-status recipe (any-status)', asy
   const row: Record<string, unknown> = await res.json()
   expect(row['code']).toBe(testStatusCode)
   expect(row['status']).toBe('test')
+})
+
+test('GET /api/agent/recipes/:code returns reference recipe (explicit agent lookup)', async () => {
+  const res = await request(agentReq(`/api/agent/recipes/${refStatusCode}`))
+  expect(res.status).toBe(200)
+  const row: Record<string, unknown> = await res.json()
+  expect(row['code']).toBe(refStatusCode)
+  expect(row['status']).toBe('reference')
 })
 
 test('GET /api/agent/recipes/:code returns 404 for unknown code', async () => {

@@ -102,7 +102,7 @@ class ReadRepository(
             queryOne(
                 """
                 select $RECIPE_SELECT from recipes
-                where code = ? and status <> 'test' and owner_id is null
+                where code = ? and status not in ('test', 'reference') and owner_id is null
                 """.trimIndent(),
                 recipeRow,
                 code
@@ -111,7 +111,7 @@ class ReadRepository(
             queryOne(
                 """
                 select $RECIPE_SELECT from recipes
-                where code = ? and status <> 'test'
+                where code = ? and status not in ('test', 'reference')
                   and (owner_id is null or owner_id = ?)
                 """.trimIndent(),
                 recipeRow,

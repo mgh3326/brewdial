@@ -67,8 +67,8 @@ agentRouter.patch('/recipes/:code/status', async (c) => {
   const status = (body as Record<string, unknown> | null)?.status
   if (typeof status !== 'string') return c.json({ error: 'status is required' }, 400)
 
-  const VALID = new Set(['active', 'archived', 'superseded', 'test'])
-  if (!VALID.has(status)) return c.json({ error: 'invalid status', valid: ['active', 'archived', 'superseded', 'test'] }, 400)
+  const VALID = new Set(['active', 'archived', 'superseded', 'test', 'reference'])
+  if (!VALID.has(status)) return c.json({ error: 'invalid status', valid: ['active', 'archived', 'superseded', 'test', 'reference'] }, 400)
 
   try {
     const row = await setRecipeStatus(db, code, status)

@@ -28,7 +28,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-const RECIPE_STATUSES: RecipeStatus[] = ['active', 'superseded', 'archived', 'test'];
+const RECIPE_STATUSES: RecipeStatus[] = ['active', 'superseded', 'archived', 'test', 'reference'];
 
 function jsonResult(obj: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };

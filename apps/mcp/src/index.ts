@@ -202,12 +202,12 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.archive_recipe',
     description:
-      "Soft-delete or re-status a recipe (ROB-605). Default sets status='archived' so it disappears from the mini-app list/deep links without deleting data. status can also be active/test/superseded.",
+      "Soft-delete or re-status a recipe (ROB-605). Default sets status='archived' so it disappears from the mini-app list/deep links without deleting data. status can also be active/test/superseded/reference.",
     inputSchema: {
       type: 'object',
       properties: {
         code: { type: 'string', description: 'Recipe code, format COF-NNNN' },
-        status: { type: 'string', enum: ['active', 'superseded', 'archived', 'test'], description: "Defaults to 'archived'" }
+        status: { type: 'string', enum: ['active', 'superseded', 'archived', 'test', 'reference'], description: "Defaults to 'archived'" }
       },
       required: ['code']
     }

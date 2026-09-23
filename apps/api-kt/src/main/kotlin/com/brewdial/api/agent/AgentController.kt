@@ -173,7 +173,7 @@ class AgentController(
     private fun notFound(): ResponseEntity<Any> = error("not found", HttpStatus.NOT_FOUND)
 
     private companion object {
-        val STATUSES = listOf("active", "archived", "superseded", "test")
+        val STATUSES = listOf("active", "archived", "superseded", "test", "reference")
         val FEEDBACK_SOURCES = listOf("agent", "mcp", "coffee_profile", "api")
     }
 }
