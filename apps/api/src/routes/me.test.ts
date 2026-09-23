@@ -1,6 +1,7 @@
 import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
+import { sql } from 'kysely'
 import { getDb, closeDb } from '@brewdial/db'
 
 
@@ -12,6 +13,9 @@ const IDENTITY_KEY = `toss_anon:metest_${SEED_SUFFIX}_${'0'.repeat(20)}`
 const beanId = randomUUID()
 const activeCode = `T-ME-ACTIVE-${SEED_SUFFIX}`
 const testCode = `T-ME-TEST-${SEED_SUFFIX}`
+const refCode = `T-ME-REF-${SEED_SUFFIX}`
+const ownActiveCode = `T-ME-OWNACT-${SEED_SUFFIX}`
+const ownRefCode = `T-ME-OWNREF-${SEED_SUFFIX}`
 
 beforeAll(async () => {
   const db = getDb()
@@ -35,6 +39,13 @@ beforeAll(async () => {
       status: 'test',
       owner_id: null,
     },
+    {
+      code: refCode,
+      method: 'v60',
+      title: 'Me Test Reference Recipe',
+      status: 'reference',
+      owner_id: null,
+    },
   ]).execute()
 })
 
@@ -42,7 +53,7 @@ afterAll(async () => {
   const db = getDb()
   // Clean up in reverse dependency order. Identity + user cleanup handled by cascade.
   await db.deleteFrom('recipes')
-    .where('code', 'in', [activeCode, testCode])
+    .where('code', 'in', [activeCode, testCode, refCode, ownActiveCode, ownRefCode])
     .execute()
   await db.deleteFrom('beans').where('id', '=', beanId).execute()
   await closeDb()
@@ -103,6 +114,67 @@ test('POST /me/saved-recipes with test-status code does NOT appear in savedRecip
   if (saved) {
     expect(saved['snapshot']).toBeNull()
   }
+})
+
+test('POST /me/saved-recipes with reference-status code does NOT appear in savedRecipes', async () => {
+  const saveRes = await request('/api/me/saved-recipes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BrewDial-Identity': IDENTITY_KEY,
+    },
+    body: JSON.stringify({ code: refCode }),
+  })
+  expect(saveRes.status).toBe(201)
+
+  const colRes = await request('/api/me/collections', {
+    headers: { 'X-BrewDial-Identity': IDENTITY_KEY },
+  })
+  const collections = await colRes.json()
+  const saved = collections.savedRecipes.find(
+    (r: Record<string, unknown>) => r['recipe_code'] === refCode
+  )
+  if (saved) {
+    expect(saved['snapshot']).toBeNull()
+  }
+})
+
+// myRecipes (the /me/recipes equivalent inside /me/collections) must not list
+// reference recipes even when one is somehow owned by the caller.
+test('GET /me/collections myRecipes excludes an owned reference recipe', async () => {
+  // Materialize the app_user for this identity, then look up its id.
+  const probe = await request('/api/me/collections', {
+    headers: { 'X-BrewDial-Identity': IDENTITY_KEY },
+  })
+  expect(probe.status).toBe(200)
+
+  const db = getDb()
+  const externalKey = IDENTITY_KEY.slice(IDENTITY_KEY.indexOf(':') + 1)
+  const identity = await db
+    .selectFrom('user_identities')
+    .select('app_user_id')
+    .where('provider', '=', 'toss_anon')
+    .where('external_key', '=', externalKey)
+    .executeTakeFirst()
+  expect(identity?.app_user_id).toBeTruthy()
+  const appUserId = identity!.app_user_id
+
+  // owner_id is guard-protected (recipes_guard_owner_immutable): direct inserts
+  // get owner_id forced to null unless bd.owner_write_ok is set on the tx.
+  await db.transaction().execute(async (trx) => {
+    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+    await trx.insertInto('recipes').values([
+      { code: ownActiveCode, method: 'v60', title: 'Own Active', status: 'active', owner_id: appUserId },
+      { code: ownRefCode, method: 'v60', title: 'Own Reference', status: 'reference', owner_id: appUserId },
+    ]).execute()
+  })
+
+  const colRes = await request('/api/me/collections', {
+    headers: { 'X-BrewDial-Identity': IDENTITY_KEY },
+  })
+  const collections = await colRes.json()
+  expect(collections.myRecipes).toContain(ownActiveCode)
+  expect(collections.myRecipes).not.toContain(ownRefCode)
 })
 
 test('POST /me/saved-recipes without identity → 401', async () => {

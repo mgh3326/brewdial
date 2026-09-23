@@ -9,7 +9,7 @@ export type RecipeCode = `COF-${string}`;
 
 // ROB-609: lineage + lifecycle status so re-saves vs intended variants are
 // structurally distinguishable (not just free-text).
-export type RecipeStatus = 'active' | 'superseded' | 'archived' | 'test';
+export type RecipeStatus = 'active' | 'superseded' | 'archived' | 'test' | 'reference';
 
 export type RatingValue = 0 | 1 | 2 | 3 | 4;
 

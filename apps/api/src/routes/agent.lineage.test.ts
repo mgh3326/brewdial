@@ -89,6 +89,23 @@ test('PATCH /api/agent/recipes/:code/status {status:archived} → 200, status=ar
   expect(updated['code']).toBe(row.code)
 })
 
+test('PATCH /api/agent/recipes/:code/status {status:reference} → 200, status=reference', async () => {
+  const db = getDb()
+  const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage RefStatus ${SEED_SUFFIX}` })
+  createdCodes.push(row.code)
+
+  const res = await request(
+    agentReq(`/api/agent/recipes/${row.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'reference' }),
+    })
+  )
+  expect(res.status).toBe(200)
+  const updated: Record<string, unknown> = await res.json()
+  expect(updated['status']).toBe('reference')
+  expect(updated['code']).toBe(row.code)
+})
+
 test('PATCH /api/agent/recipes/:code/status with invalid status → 400', async () => {
   const db = getDb()
   const row = await insertAgentRecipe(db, { method: 'v60', title: `Lineage BadStatus ${SEED_SUFFIX}` })

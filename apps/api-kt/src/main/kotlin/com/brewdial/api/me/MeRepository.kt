@@ -24,7 +24,7 @@ class MeRepository(
             """
             insert into saved_recipes (app_user_id, recipe_code, snapshot)
             select cast(? as uuid), r.code, to_jsonb(r)
-              from recipes r where r.code = ? and r.status <> 'test'
+              from recipes r where r.code = ? and r.status not in ('test', 'reference')
             on conflict (app_user_id, recipe_code) do update set snapshot = excluded.snapshot
             """.trimIndent(),
             appUserId,
@@ -81,7 +81,7 @@ class MeRepository(
             appUserId
         ),
         "myRecipes" to jdbcTemplate.queryForList(
-            "select code from recipes where owner_id = cast(? as uuid)",
+            "select code from recipes where owner_id = cast(? as uuid) and status <> 'reference'",
             String::class.java,
             appUserId
         )

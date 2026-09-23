@@ -86,7 +86,7 @@ export function getRecipeByCode(
     .selectFrom('recipes')
     .select(RECIPE_COLS)
     .where('code', '=', code)
-    .where('status', '<>', 'test')
+    .where('status', 'not in', ['test', 'reference'])
   if (callerAppUserId) {
     q = q.where((eb) => eb.or([eb('owner_id', 'is', null), eb('owner_id', '=', callerAppUserId)]))
   } else {
@@ -257,10 +257,10 @@ export async function updateRecipe(
   return row
 }
 
-const VALID_STATUSES = new Set(['active', 'archived', 'superseded', 'test'])
+const VALID_STATUSES = new Set(['active', 'archived', 'superseded', 'test', 'reference'])
 
 /**
- * Set a recipe's status field. Allowed values: active | archived | superseded | test.
+ * Set a recipe's status field. Allowed values: active | archived | superseded | test | reference.
  * Returns the updated RecipeRow, or throws if the code does not exist.
  */
 export async function setRecipeStatus(

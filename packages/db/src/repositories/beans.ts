@@ -220,6 +220,7 @@ export async function resyncBeanIdentity(
     .where('bean_id', '=', id)
     .where('bean_snapshot', 'is not', null)
     .where('owner_id', 'is', null)
+    .where('status', '<>', 'reference')
     .orderBy('updated_at', 'desc')
     .executeTakeFirst()
 

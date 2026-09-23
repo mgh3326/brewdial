@@ -1,13 +1,13 @@
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 
-// Snapshot captured server-side via to_jsonb of the recipe row (excludes test-status).
+// Snapshot captured server-side via to_jsonb of the recipe row (excludes test/reference status).
 // Upserts on (app_user_id, recipe_code) — matches rpc_save_recipe semantics.
 export async function saveRecipe(db: Kysely<DB>, appUserId: string, code: string): Promise<void> {
   await sql`
     insert into saved_recipes (app_user_id, recipe_code, snapshot)
     select ${appUserId}::uuid, r.code, to_jsonb(r)
-      from recipes r where r.code = ${code} and r.status <> 'test'
+      from recipes r where r.code = ${code} and r.status not in ('test', 'reference')
     on conflict (app_user_id, recipe_code) do update set snapshot = excluded.snapshot`.execute(db)
 }
 

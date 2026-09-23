@@ -15,6 +15,8 @@ const activeCode2 = `T-ACTIVE2-${SEED_SUFFIX}`
 const testCode = `T-TEST-${SEED_SUFFIX}`
 const supersededCode = `T-SUPER-${SEED_SUFFIX}`
 const beanRecipeCode = `T-BEAN-${SEED_SUFFIX}`
+const refCode = `T-REF-${SEED_SUFFIX}`
+const refBeanCode = `T-REFBEAN-${SEED_SUFFIX}`
 const feedbackId = randomUUID()
 
 beforeAll(async () => {
@@ -61,6 +63,21 @@ beforeAll(async () => {
       bean_id: beanId,
       owner_id: null,
     },
+    {
+      code: refCode,
+      method: 'v60',
+      title: 'Reference Recipe',
+      status: 'reference',
+      owner_id: null,
+    },
+    {
+      code: refBeanCode,
+      method: 'v60',
+      title: 'Reference Bean Recipe',
+      status: 'reference',
+      bean_id: beanId,
+      owner_id: null,
+    },
   ]).execute()
 
   // Seed feedback for activeCode1. `source` defaults to 'web' (check: web|coffee_profile|api|agent|mcp).
@@ -75,7 +92,7 @@ afterAll(async () => {
   const db = getDb()
   await db.deleteFrom('feedback').where('id', '=', feedbackId).execute()
   await db.deleteFrom('recipes')
-    .where('code', 'in', [activeCode1, activeCode2, testCode, supersededCode, beanRecipeCode])
+    .where('code', 'in', [activeCode1, activeCode2, testCode, supersededCode, beanRecipeCode, refCode, refBeanCode])
     .execute()
   await db.deleteFrom('beans').where('id', '=', beanId).execute()
   await closeDb()
@@ -97,6 +114,8 @@ test('GET /api/recipes returns only active recipes', async () => {
   // Non-active seeds must NOT appear.
   expect(codes).not.toContain(testCode)
   expect(codes).not.toContain(supersededCode)
+  // reference recipes are held for agent lookup only — never in the public list.
+  expect(codes).not.toContain(refCode)
 })
 
 test('GET /api/recipes returns rows newest-first', async () => {
@@ -149,6 +168,7 @@ test('GET /api/recipes?beanId= filters by bean + active only', async () => {
   }
   const codes = rows.map((r) => r['code'])
   expect(codes).toContain(beanRecipeCode)
+  expect(codes).not.toContain(refBeanCode)
 })
 
 test('GET /api/recipes?beanId= returns empty array for unknown bean', async () => {
@@ -170,6 +190,11 @@ test('GET /api/recipes/:code returns the recipe row', async () => {
 
 test('GET /api/recipes/:code 404 for test-status recipe', async () => {
   const res = await request(`/api/recipes/${testCode}`)
+  expect(res.status).toBe(404)
+})
+
+test('GET /api/recipes/:code 404 for reference recipe (explicit lookup is agent-only)', async () => {
+  const res = await request(`/api/recipes/${refCode}`)
   expect(res.status).toBe(404)
 })
 

@@ -29,6 +29,7 @@ async function insertRecipe(opts: {
   code: string
   snapshot: Record<string, unknown> | null
   ownerId?: string | null
+  status?: string
 }) {
   const db = getDb()
   // Direct insert: bean_id is set explicitly so recipes_link_bean is a no-op and
@@ -44,6 +45,7 @@ async function insertRecipe(opts: {
     bean_id: beanId,
     bean_snapshot: opts.snapshot === null ? null : JSON.stringify(opts.snapshot),
     owner_id: opts.ownerId ?? null,
+    status: opts.status ?? 'active',
   }
   await db.transaction().execute(async (trx) => {
     if (opts.ownerId) {
@@ -181,6 +183,22 @@ test('a PRIVATE recipe snapshot is never a resync source', async () => {
   const body: Record<string, unknown> = await res.json()
   // Newest PUBLIC snapshot is still RSY2, so nothing changes and the private text
   // never reaches the shared bean card.
+  expect(body['sourceRecipeCode']).toBe(`COF-RSY2-${SEED}`)
+  expect((body['bean'] as Record<string, unknown>)['origin']).toBe('Kurly x Intelligentsia blend')
+})
+
+test('a REFERENCE recipe snapshot is never a resync source (#588)', async () => {
+  await insertRecipe({
+    code: `COF-RSY4-${SEED}`,
+    snapshot: { name: 'x', origin: 'LEAKED REFERENCE ORIGIN' },
+    status: 'reference',
+  })
+
+  const res = await request(agentReq(`/api/agent/beans/${beanId}/resync`, { method: 'POST' }))
+  expect(res.status).toBe(200)
+  const body: Record<string, unknown> = await res.json()
+  // Newest non-reference public snapshot is still RSY2, so nothing changes and
+  // the reference text never reaches the shared bean card.
   expect(body['sourceRecipeCode']).toBe(`COF-RSY2-${SEED}`)
   expect((body['bean'] as Record<string, unknown>)['origin']).toBe('Kurly x Intelligentsia blend')
 })
