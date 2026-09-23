@@ -1,0 +1,39 @@
+# Self-authored (#589): real xbloom-ble files label only the first pour.
+name: Test Unlabeled Kenya
+dose_g: 15
+grind: 60
+stage_temps:
+- 110.0
+- 93.0
+pours:
+- label: Bloom
+  ml: 40
+  temp_c: 93
+  pattern: spiral
+  pause_s: 45
+  rpm: 100
+  flow_ml_s: 3.0
+  agitation: false
+- ml: 100
+  temp_c: 93
+  pattern: spiral
+  pause_s: 5
+  rpm: 100
+  flow_ml_s: 3.0
+  agitation: false
+- ml: 100
+  temp_c: 93
+  pattern: ring
+  pause_s: 5
+  rpm: 100
+  flow_ml_s: 3.0
+  agitation: after
+ratio: 16
+kind: custom
+dripper: Omni
+water_ml: 240
+time: 2:30–3:00
+note: 'Self-authored dial-in note: 62 = sour → 58 = clean.
+
+
+  **Off?** finer if thin.'

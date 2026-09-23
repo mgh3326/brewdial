@@ -10,7 +10,12 @@ import {
   type XBloomExportSource
 } from './xbloom.js';
 
-const FIXTURES = ['three-pour-spiral.yaml', 'five-pour-descend.yaml', 'grind0-no-grind.yaml'];
+const FIXTURES = [
+  'three-pour-spiral.yaml',
+  'five-pour-descend.yaml',
+  'grind0-no-grind.yaml',
+  'unlabeled-pours.yaml'
+];
 const loadFixture = (name: string) =>
   readFileSync(new URL(`./__fixtures__/xbloom/${name}`, import.meta.url), 'utf8');
 
@@ -506,5 +511,45 @@ describe('toXBloomYaml export validation + guards', () => {
     // but the explicit 무분쇄 marker still maps to 0
     const doc = mkDoc({}, { grind: '무분쇄(외부 그라인더)' });
     expect(parse(toXBloomYaml(doc)).grind).toBe(0);
+  });
+});
+
+// #589: real xbloom-ble files carry `label` on the first pour only.
+describe('optional pour label (#589)', () => {
+  it('imports an unlabeled pour with a `Pour N` prose note and a label="" tag', () => {
+    const input = fromXBloomYaml(loadFixture('unlabeled-pours.yaml'));
+    expect(input.steps![1].note).toMatch(/^Pour 2: /);
+    expect(input.steps![1].note).toContain('[label=""');
+    expect(input.steps![0].note).toContain('[label=Bloom');
+  });
+
+  it('exports no label key for a pour that had none (roundtrip keeps it absent)', () => {
+    const out = parse(toXBloomYaml(fromXBloomYaml(loadFixture('unlabeled-pours.yaml'))));
+    expect(out.pours[0].label).toBe('Bloom');
+    expect('label' in out.pours[1]).toBe(false);
+    expect('label' in out.pours[2]).toBe(false);
+  });
+
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '   '],
+    ['non-string', 7]
+  ])('still rejects a present-but-invalid label (%s)', (_l, label) => {
+    expect(() => fromXBloomYaml(mkYaml({}, [{ ...basePour, label }, basePour]))).toThrow(
+      XBloomValidationError
+    );
+  });
+
+  it('authored recipes (no step tag) still export a `Pour N` label', () => {
+    const src: XBloomExportSource = {
+      title: 'Authored',
+      params: { doseG: 15, ratio: '1:16', tempC: 92, grind: { target: {}, legacyText: '무분쇄(외부 그라인더)' } },
+      steps: [
+        { atSec: 0, endSec: 10, waterG: 30, pourRateGPerSec: 3, note: '' },
+        { atSec: 40, endSec: 60, waterG: 90, pourRateGPerSec: 3, note: '' }
+      ]
+    };
+    const out = parse(toXBloomYaml(src));
+    expect(out.pours.map((p: { label: string }) => p.label)).toEqual(['Pour 1', 'Pour 2']);
   });
 });

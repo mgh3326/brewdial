@@ -40,6 +40,12 @@
 // its step tag (`pause_s=`); tag pause_s also marks presence so an explicit
 // `pause_s: 0` round-trips vs. an absent key.
 //
+// Pour `label` is OPTIONAL (#589: real xbloom-ble files label only the first
+// pour). An absent label is recorded in the step tag as `label=""` — an empty
+// label is otherwise invalid (validation rejects `label: ''`), so the empty tag
+// value unambiguously means "no label key" and export omits it again. The
+// step tag still always carries `label=`, so tag recognition is unchanged.
+//
 // Hardware validity is enforced in BOTH directions: grind 1-80 (0 = 무분쇄),
 // temp_c 40-95, flow_ml_s 3.0-3.5 in 0.1 steps, rpm 0 or 60-120 in steps of 10,
 // pause_s 0-255, pours >= 2.
@@ -106,7 +112,7 @@ const KNOWN_POUR_KEYS = new Set([
 ]);
 
 interface XBloomPour {
-  label: string;
+  label?: string;
   ml: number;
   temp_c?: number;
   pattern?: string;
@@ -305,7 +311,7 @@ function decodeExtras(s: string): Record<string, unknown> | null {
 }
 
 function buildStepTag(p: XBloomPour): string {
-  const parts = [`label=${tagValue(p.label)}`];
+  const parts = [`label=${tagValue(p.label ?? '')}`]; // `label=""` = no label key
   if (p.pattern !== undefined) parts.push(`pattern=${tagValue(p.pattern)}`);
   if (p.agitation !== undefined) parts.push(`agitation=${tagValue(String(p.agitation))}`);
   if (p.rpm !== undefined) parts.push(`rpm=${tagValue(String(p.rpm))}`);
@@ -333,13 +339,13 @@ function buildRecipeTag(f: XBloomFile): string {
   return `[${parts.join(' ')}]`;
 }
 
-function stepProseNote(p: XBloomPour): string {
+function stepProseNote(p: XBloomPour, i: number): string {
   const bits = [p.pattern ? `${p.pattern} pour` : 'pour'];
   if (p.agitation === false) bits.push('no agitation');
   else if (p.agitation === true) bits.push('agitation');
   else if (typeof p.agitation === 'string') bits.push(`agitation ${p.agitation}`);
   bits.push(`pause ${p.pause_s ?? 0}s`);
-  return `${p.label}: ${bits.join(' · ')}`;
+  return `${p.label ?? `Pour ${i + 1}`}: ${bits.join(' · ')}`;
 }
 
 // ── validation ──────────────────────────────────────────────────────────────
@@ -350,8 +356,8 @@ function validatePour(p: unknown, i: number, errors: string[]): void {
     errors.push(`${path} must be an object`);
     return;
   }
-  if (typeof p.label !== 'string' || p.label.trim() === '') {
-    errors.push(`${path}.label is required and must be a non-empty string`);
+  if (p.label !== undefined && (typeof p.label !== 'string' || p.label.trim() === '')) {
+    errors.push(`${path}.label must be a non-empty string when present`);
   }
   if (typeof p.ml !== 'number' || !Number.isFinite(p.ml) || p.ml <= 0) {
     errors.push(`${path}.ml must be a positive number`);
@@ -491,7 +497,7 @@ export function fromXBloomYaml(yamlText: string): CreateRecipeInput {
       endSec,
       waterG: cumMl,
       pourRateGPerSec: p.flow_ml_s,
-      note: `${stepProseNote(p)} ${buildStepTag(p)}`
+      note: `${stepProseNote(p, i)} ${buildStepTag(p)}`
     };
     // Next pour starts at endSec + pause — pure integer arithmetic, so fractional
     // ml (e.g. 30.4/3.2 = 9.4999…) cannot shift pause through double rounding.
@@ -525,10 +531,11 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
   const pours = steps.map((s, i) => {
     const { tag, text } = extractStepTag(s.note ?? '');
     const prevWater = i === 0 ? 0 : (steps[i - 1].waterG ?? 0);
-    const pour: Record<string, unknown> = {
-      label: tag?.label ?? (text || `Pour ${i + 1}`),
-      ml: round3((s.waterG ?? 0) - prevWater)
-    };
+    const pour: Record<string, unknown> = {};
+    // tag label "" = the source pour had no label key; keep it absent.
+    const label = tag ? tag.label : text || `Pour ${i + 1}`;
+    if (label !== '') pour.label = label;
+    pour.ml = round3((s.waterG ?? 0) - prevWater);
     // temp: for the FIRST pour params.tempC is the spec'd mapping and wins, so a
     // user edit in BrewDial propagates; later pours rely on their tags (or the
     // params.tempC fallback for authored recipes).
