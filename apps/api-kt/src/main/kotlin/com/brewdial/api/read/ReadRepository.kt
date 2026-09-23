@@ -149,6 +149,7 @@ class ReadRepository(
         select code, bean_snapshot
         from recipes
         where bean_id = ? and bean_snapshot is not null and owner_id is null
+          and status <> 'reference'
         order by updated_at desc
         limit 1
         """.trimIndent(),
