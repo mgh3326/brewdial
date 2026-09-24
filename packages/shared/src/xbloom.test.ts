@@ -587,6 +587,7 @@ describe('#602 edge fixes', () => {
   });
 
   it('CR:263: a newline inside a quoted recipe-tag value does not hide the tag', () => {
+    // through the emitter the newline is escaped (\n), so the tag stays one line
     const y = mkYaml({
       kind: 'a\nb',
       time: '2:45-3:00',
@@ -597,6 +598,16 @@ describe('#602 edge fixes', () => {
     const out = rt(y);
     expect(out.kind).toBe('a\nb');
     expect(out).toEqual(parse(y));
+  });
+
+  it('CR:263: a legacy/hand-written tag with a literal newline still parses', () => {
+    const doc = fromXBloomYaml(mkYaml({ kind: 'custom', time: '2:45-3:00', water_ml: 100 }));
+    // pre-#602 tags (or hand-written ones) can carry a literal newline
+    doc.notes = doc.notes!.replace('kind=custom', 'kind="a\nb"');
+    const out = parse(toXBloomYaml(doc));
+    expect(out.kind).toBe('a\nb');
+    expect(out.time).toBe('2:45-3:00');
+    expect(out.water_ml).toBe(100);
   });
 
   describe('CR:632: a user edit to params.brewer overrides the imported dripper tag', () => {
