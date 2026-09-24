@@ -11,10 +11,21 @@
 //   step tag    (in steps[i].note):  [label="Bloom" pattern=spiral agitation=false rpm=100 temp_c=92 pause_s=40]
 //   recipe tag  (in notes):          [xbloom v=1 stage_temps=110,90 time="2:45-3:00" kind=custom water_ml=256 dripper=Omni note=1]
 //
-// Grammar: value = bare `[^\s\]"]+` or `"double-quoted"`. On emit, `"` and `]` are
-// sanitized out (documented loss) and a value containing whitespace or `[` is
-// always quoted — a bare `[` would abort the quote-aware scanner's own span.
-// A bracketed segment is a STEP tag only if every
+// Grammar: value = bare `[^\s\]"]+` or `"double-quoted"`. Quoted values support
+// backslash escapes, and the escapes are DELIMITER-FREE: `"` → `\q`, `]` → `\c`,
+// `\` → `\\`, newline → `\n`. An escaped value therefore contains no literal `"`
+// or `]`, which preserves the bracket scanner's quote parity even when an
+// unmatched human `[` puts it in the wrong phase (v602-tester B1: `\q`-style
+// escapes replaced the naive `\"`/`\]` ones, which flipped parity and let a
+// stray `"` swallow a whole machine tag). An unknown `\x` keeps both chars.
+// On emit, a value containing whitespace, `[`, `]`, `"` or `\` is always quoted
+// (whitespace and `[` are only quoted, never escaped) — nothing is stripped. A
+// bare `[` would abort the quote-aware scanner's own span, which is why `[`
+// forces quoting. Legacy caveat (accepted): tags written before #602 never
+// escaped `\`, so a stored quoted value containing a literal `\n`/`\q`/`\c`/`\\`
+// sequence is reinterpreted on re-export — a trailing `\` still parses fine
+// (the closing quote is not consumed by unknown escapes). A
+// bracketed segment is a STEP tag only if every
 // token parses as k=v, every key is in STEP_TAG_KEYS, and `label=` is present. A
 // segment is a RECIPE tag only if its first token is the literal `xbloom` marker
 // and the rest are k=v pairs with keys in RECIPE_TAG_KEYS. Import always emits a
@@ -26,6 +37,10 @@
 // untouched. Residual collision (documented, accepted): a human-written bracket
 // that is entirely whitelisted k=v pairs and contains `label=` is
 // indistinguishable from a machine tag (same for a well-formed `[xbloom …]`).
+//
+// agitation typing (N2): a boolean emits bare (`agitation=true`); a string that
+// equals a boolean literal emits force-quoted (`agitation="true"`). On parse, a
+// quoted value is always a string, a bare `true`/`false` a boolean.
 //
 // Human `note` text is preserved VERBATIM (newlines, double spaces, padding) —
 // only the tag segment itself and the single `\n` separator that import inserts
@@ -158,9 +173,27 @@ function round3(v: number): number {
 
 // ── tag tokenizer ───────────────────────────────────────────────────────────
 
+interface TagPairs {
+  pairs: Record<string, string>;
+  /** keys whose value arrived double-quoted (agitation typing depends on it) */
+  quoted: Set<string>;
+}
+
+// Known escapes collapse (`\q`→" `\c`→] `\n`→newline `\\`→\); an unknown `\x`
+// returns null so the caller keeps the `\` and re-examines `x` — that keeps
+// legacy values like `"a b\"` (trailing backslash, pre-#602) closed correctly.
+function unescapeTagChar(next: string): string | null {
+  if (next === 'q') return '"';
+  if (next === 'c') return ']';
+  if (next === 'n') return '\n';
+  if (next === '\\') return '\\';
+  return null;
+}
+
 // Returns k=v pairs if `content` is entirely whitespace-separated pairs, else null.
-function parseTagPairs(content: string): Record<string, string> | null {
-  const out: Record<string, string> = {};
+function parseTagPairs(content: string): TagPairs | null {
+  const pairs: Record<string, string> = {};
+  const quoted = new Set<string>();
   let i = 0;
   const n = content.length;
   while (i < n) {
@@ -171,26 +204,51 @@ function parseTagPairs(content: string): Record<string, string> | null {
     const key = km[0].slice(0, -1);
     i += km[0].length;
     if (content[i] === '"') {
-      const end = content.indexOf('"', i + 1);
+      quoted.add(key);
+      let val = '';
+      let end = -1;
+      for (let j = i + 1; j < n; j += 1) {
+        const c = content[j];
+        if (c === '\\' && j + 1 < n) {
+          const u = unescapeTagChar(content[j + 1]);
+          if (u !== null) {
+            val += u;
+            j += 1;
+          } else {
+            val += c; // unknown escape: keep the `\`, re-examine the next char
+          }
+        } else if (c === '"') {
+          end = j;
+          break;
+        } else {
+          val += c;
+        }
+      }
       if (end < 0) return null;
-      out[key] = content.slice(i + 1, end);
+      pairs[key] = val;
       i = end + 1;
       if (i < n && content[i] !== ' ' && content[i] !== '\t') return null;
     } else {
       const vm = /^[^\s\]"]+/.exec(content.slice(i));
       if (!vm) return null;
-      out[key] = vm[0];
+      pairs[key] = vm[0];
+      quoted.delete(key); // a later bare occurrence overrides a quoted one
       i += vm[0].length;
     }
   }
-  return Object.keys(out).length > 0 ? out : null;
+  return Object.keys(pairs).length > 0 ? { pairs, quoted } : null;
 }
 
-function tagValue(v: string): string {
-  const clean = v.replace(/["\]]/g, '');
+function escapeTagValue(v: string): string {
+  // delimiter-free: an escaped value contains no literal `"` or `]` (B1)
+  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\q').replace(/\]/g, '\\c').replace(/\n/g, '\\n');
+}
+
+function tagValue(v: string, forceQuote = false): string {
   // `[` also forces quoting: the bracket scanner aborts a span on an unquoted
-  // `[`, so a bare value containing one would break its own tag.
-  return /[\s[]/.test(clean) || clean === '' ? `"${clean}"` : clean;
+  // `[`, so a bare value containing one would break its own tag. `\` forces
+  // quoting too — escapes only exist inside quoted values.
+  return forceQuote || /[\s[\]"\\]/.test(v) || v === '' ? `"${escapeTagValue(v)}"` : v;
 }
 
 function allKeysIn(pairs: Record<string, string>, allowed: Set<string>): boolean {
@@ -203,10 +261,14 @@ interface BracketSpan {
   content: string;
 }
 
-// Quote-aware bracket scanner. A `[` aborts the current span (so an unmatched
-// human `[` can never swallow a later machine tag), and a `"` inside a span
-// skips ahead to its pair (so a `[` or `]` inside a quoted value is inert).
-// No escape sequences exist in this grammar; emit-side sanitizes `"`/`]` away.
+// Quote-aware bracket scanner. A `[` aborts the current span, and a `"` inside
+// a span skips ahead to its pair. Because emitted quoted values are
+// delimiter-free (no literal `"`/`]` inside — see the grammar note above), an
+// unmatched human `[` can never swallow a later machine tag: even if a stray
+// `"` puts the scanner in the wrong phase, the tag's own `]` or `[` still
+// terminates the bad span and the scanner resynchronizes. `\` is NOT special
+// here on purpose — escapes only exist between a value's quote pair, which the
+// phase-inverted scan must be free to misread without losing the tag.
 function* bracketSpans(s: string): Generator<BracketSpan> {
   let i = 0;
   while (i < s.length) {
@@ -241,22 +303,28 @@ function* bracketSpans(s: string): Generator<BracketSpan> {
   }
 }
 
-/** Extract the step tag from a note; returns { tag, text } with all tag segments stripped. */
-function extractStepTag(note: string): { tag: Record<string, string> | null; text: string } {
+/** Extract the step tag from a note; returns { tag, quoted, text } with all tag segments stripped. */
+function extractStepTag(note: string): {
+  tag: Record<string, string> | null;
+  quoted: Set<string>;
+  text: string;
+} {
   let tag: Record<string, string> | null = null;
+  let quoted = new Set<string>();
   let out = '';
   let cursor = 0;
   for (const span of bracketSpans(note)) {
-    const pairs = parseTagPairs(span.content);
-    if (pairs && allKeysIn(pairs, STEP_TAG_KEYS) && 'label' in pairs) {
-      tag = pairs; // last matching segment wins
+    const parsed = parseTagPairs(span.content);
+    if (parsed && allKeysIn(parsed.pairs, STEP_TAG_KEYS) && 'label' in parsed.pairs) {
+      tag = parsed.pairs; // last matching segment wins
+      quoted = parsed.quoted;
       out += note.slice(cursor, span.start);
       cursor = span.end;
     }
   }
-  if (!tag) return { tag: null, text: note };
+  if (!tag) return { tag: null, quoted: new Set(), text: note };
   out += note.slice(cursor);
-  return { tag, text: out.trim() };
+  return { tag, quoted, text: out.trim() };
 }
 
 /** Extract the `[xbloom ...]` recipe tag from notes; human text is kept verbatim. */
@@ -266,11 +334,12 @@ function extractRecipeTag(notes: string): { tag: Record<string, string> | null; 
   let cursor = 0;
   let lastStart = -1;
   for (const span of bracketSpans(notes)) {
-    const m = /^xbloom[ \t]+(.*)$/.exec(span.content);
+    // dotAll: a quoted value may carry a literal newline (CR:263)
+    const m = /^xbloom[ \t]+(.*)$/s.exec(span.content);
     if (!m) continue;
-    const pairs = parseTagPairs(m[1]);
-    if (!pairs || !allKeysIn(pairs, RECIPE_TAG_KEYS)) continue;
-    tag = pairs;
+    const parsed = parseTagPairs(m[1]);
+    if (!parsed || !allKeysIn(parsed.pairs, RECIPE_TAG_KEYS)) continue;
+    tag = parsed.pairs;
     out += notes.slice(cursor, span.start);
     cursor = span.end;
     lastStart = span.start;
@@ -313,7 +382,17 @@ function decodeExtras(s: string): Record<string, unknown> | null {
 function buildStepTag(p: XBloomPour): string {
   const parts = [`label=${tagValue(p.label ?? '')}`]; // `label=""` = no label key
   if (p.pattern !== undefined) parts.push(`pattern=${tagValue(p.pattern)}`);
-  if (p.agitation !== undefined) parts.push(`agitation=${tagValue(String(p.agitation))}`);
+  // A string that reads as a boolean literal is force-quoted so the type
+  // survives the tag (N2); other strings only quote when tagValue requires it.
+  if (p.agitation !== undefined) {
+    parts.push(
+      `agitation=${
+        typeof p.agitation === 'string'
+          ? tagValue(p.agitation, p.agitation === 'true' || p.agitation === 'false')
+          : String(p.agitation)
+      }`
+    );
+  }
   if (p.rpm !== undefined) parts.push(`rpm=${tagValue(String(p.rpm))}`);
   if (p.temp_c !== undefined) parts.push(`temp_c=${tagValue(String(p.temp_c))}`);
   if (p.pause_s !== undefined) parts.push(`pause_s=${tagValue(String(p.pause_s))}`);
@@ -327,7 +406,7 @@ function buildStepTag(p: XBloomPour): string {
 function buildRecipeTag(f: XBloomFile): string {
   const parts: string[] = ['xbloom', 'v=1'];
   if (f.stage_temps !== undefined) {
-    parts.push(`stage_temps=${f.stage_temps.length > 0 ? f.stage_temps.join(',') : '""'}`);
+    parts.push(`stage_temps=${tagValue(f.stage_temps.join(','))}`); // "" = empty array
   }
   if (f.time !== undefined) parts.push(`time=${tagValue(f.time)}`);
   if (f.kind !== undefined) parts.push(`kind=${tagValue(f.kind)}`);
@@ -529,7 +608,7 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
 
   const steps = recipe.steps ?? [];
   const pours = steps.map((s, i) => {
-    const { tag, text } = extractStepTag(s.note ?? '');
+    const { tag, quoted, text } = extractStepTag(s.note ?? '');
     const prevWater = i === 0 ? 0 : (steps[i - 1].waterG ?? 0);
     const pour: Record<string, unknown> = {};
     // tag label "" = the source pour had no label key; keep it absent.
@@ -549,8 +628,11 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     if (tag?.pattern !== undefined) pour.pattern = tag.pattern;
     else if (!tag) pour.pattern = 'spiral'; // authored recipes get the format default
     if (tag?.agitation !== undefined) {
+      // quoted value = string (even "true"/"false"); bare true/false = boolean
       pour.agitation =
-        tag.agitation === 'true' ? true : tag.agitation === 'false' ? false : tag.agitation;
+        quoted.has('agitation') || (tag.agitation !== 'true' && tag.agitation !== 'false')
+          ? tag.agitation
+          : tag.agitation === 'true';
     }
     if (tag?.rpm !== undefined) pour.rpm = Number(tag.rpm);
     if (s.pourRateGPerSec !== undefined) pour.flow_ml_s = s.pourRateGPerSec;
@@ -633,9 +715,15 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
   // source had no kind); authored recipes get the format default.
   if (recipeTag === null) file.kind = 'custom';
   else if (recipeTag.kind !== undefined) file.kind = recipeTag.kind;
+  // dripper: same rule as `time` — the tag value holds only while params.brewer
+  // is absent or still equals the brewer the tag maps to; a user edit wins (CR:632).
+  const tagDripper = recipeTag?.dripper;
+  const tagBrewer =
+    tagDripper !== undefined ? (DRIPPER_TO_BREWER[tagDripper] ?? tagDripper) : undefined;
   const dripper =
-    recipeTag?.dripper ??
-    (params.brewer !== undefined ? (BREWER_TO_DRIPPER[params.brewer] ?? params.brewer) : undefined);
+    params.brewer === undefined || params.brewer === tagBrewer
+      ? tagDripper
+      : (BREWER_TO_DRIPPER[params.brewer] ?? params.brewer);
   if (dripper !== undefined) file.dripper = dripper;
   if (recipeTag?.water_ml !== undefined) file.water_ml = params.waterG ?? Number(recipeTag.water_ml);
   // time: the tag preserves the original range string, but only while

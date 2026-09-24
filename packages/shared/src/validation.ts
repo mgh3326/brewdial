@@ -74,7 +74,8 @@ function pickString(
   source: Record<string, unknown>,
   key: string,
   errors: string[],
-  path: string
+  path: string,
+  opts?: { trim?: boolean }
 ): string | undefined {
   const v = source[key];
   if (v === undefined) return undefined;
@@ -82,7 +83,10 @@ function pickString(
     errors.push(`${path}.${key} must be a string`);
     return undefined;
   }
-  return v.trim();
+  // #602/N8: recipe notes are a free-text payload (the xBloom machine tag rides
+  // in them), so their whitespace is data and is preserved; every other field
+  // keeps the historical trim.
+  return opts?.trim === false ? v : v.trim();
 }
 
 function validateBeanSnapshot(
@@ -552,7 +556,7 @@ export function validateCreateRecipeInput(
     else intent = input.intent;
   }
 
-  const notes = pickString(input, 'notes', errors, 'input');
+  const notes = pickString(input, 'notes', errors, 'input', { trim: false });
 
   const adjustmentFromPrevious = pickString(
     input,
@@ -620,7 +624,7 @@ export function validateUpdateRecipeInput(
     if (s !== undefined) value.steps = s;
   }
   if (input.notes !== undefined) {
-    const n = pickString(input, 'notes', errors, 'input');
+    const n = pickString(input, 'notes', errors, 'input', { trim: false });
     if (n !== undefined) value.notes = n;
   }
   if (input.intent !== undefined) {
