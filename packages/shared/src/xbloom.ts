@@ -12,10 +12,19 @@
 //   recipe tag  (in notes):          [xbloom v=1 stage_temps=110,90 time="2:45-3:00" kind=custom water_ml=256 dripper=Omni note=1]
 //
 // Grammar: value = bare `[^\s\]"]+` or `"double-quoted"`. Quoted values support
-// backslash escapes: `\\` `\"` `\]` `\n` (an unknown `\x` keeps both chars). On
-// emit, a value containing whitespace, `[`, `]`, `"` or `\` is always quoted
-// with those characters escaped — nothing is stripped. A bare `[` would abort
-// the quote-aware scanner's own span, which is why `[` forces quoting. A
+// backslash escapes, and the escapes are DELIMITER-FREE: `"` → `\q`, `]` → `\c`,
+// `\` → `\\`, newline → `\n`. An escaped value therefore contains no literal `"`
+// or `]`, which preserves the bracket scanner's quote parity even when an
+// unmatched human `[` puts it in the wrong phase (v602-tester B1: `\q`-style
+// escapes replaced the naive `\"`/`\]` ones, which flipped parity and let a
+// stray `"` swallow a whole machine tag). An unknown `\x` keeps both chars.
+// On emit, a value containing whitespace, `[`, `]`, `"` or `\` is always quoted
+// (whitespace and `[` are only quoted, never escaped) — nothing is stripped. A
+// bare `[` would abort the quote-aware scanner's own span, which is why `[`
+// forces quoting. Legacy caveat (accepted): tags written before #602 never
+// escaped `\`, so a stored quoted value containing a literal `\n`/`\q`/`\c`/`\\`
+// sequence is reinterpreted on re-export — a trailing `\` still parses fine
+// (the closing quote is not consumed by unknown escapes). A
 // bracketed segment is a STEP tag only if every
 // token parses as k=v, every key is in STEP_TAG_KEYS, and `label=` is present. A
 // segment is a RECIPE tag only if its first token is the literal `xbloom` marker
@@ -170,11 +179,15 @@ interface TagPairs {
   quoted: Set<string>;
 }
 
-// `\n` `\"` `\]` `\\` collapse; an unknown `\x` keeps both chars verbatim.
-function unescapeTagChar(c: string, next: string): string {
+// Known escapes collapse (`\q`→" `\c`→] `\n`→newline `\\`→\); an unknown `\x`
+// returns null so the caller keeps the `\` and re-examines `x` — that keeps
+// legacy values like `"a b\"` (trailing backslash, pre-#602) closed correctly.
+function unescapeTagChar(next: string): string | null {
+  if (next === 'q') return '"';
+  if (next === 'c') return ']';
   if (next === 'n') return '\n';
-  if (next === '"' || next === ']' || next === '\\') return next;
-  return c + next;
+  if (next === '\\') return '\\';
+  return null;
 }
 
 // Returns k=v pairs if `content` is entirely whitespace-separated pairs, else null.
@@ -197,8 +210,13 @@ function parseTagPairs(content: string): TagPairs | null {
       for (let j = i + 1; j < n; j += 1) {
         const c = content[j];
         if (c === '\\' && j + 1 < n) {
-          val += unescapeTagChar(c, content[j + 1]);
-          j += 1;
+          const u = unescapeTagChar(content[j + 1]);
+          if (u !== null) {
+            val += u;
+            j += 1;
+          } else {
+            val += c; // unknown escape: keep the `\`, re-examine the next char
+          }
         } else if (c === '"') {
           end = j;
           break;
@@ -222,7 +240,8 @@ function parseTagPairs(content: string): TagPairs | null {
 }
 
 function escapeTagValue(v: string): string {
-  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\]/g, '\\]').replace(/\n/g, '\\n');
+  // delimiter-free: an escaped value contains no literal `"` or `]` (B1)
+  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\q').replace(/\]/g, '\\c').replace(/\n/g, '\\n');
 }
 
 function tagValue(v: string, forceQuote = false): string {
@@ -242,10 +261,14 @@ interface BracketSpan {
   content: string;
 }
 
-// Quote-aware bracket scanner. A `[` aborts the current span (so an unmatched
-// human `[` can never swallow a later machine tag), and a `"` inside a span
-// skips ahead to its pair (so a `[` or `]` inside a quoted value is inert).
-// Inside quotes, `\` escapes the next char, so `\"` does not close the quote.
+// Quote-aware bracket scanner. A `[` aborts the current span, and a `"` inside
+// a span skips ahead to its pair. Because emitted quoted values are
+// delimiter-free (no literal `"`/`]` inside — see the grammar note above), an
+// unmatched human `[` can never swallow a later machine tag: even if a stray
+// `"` puts the scanner in the wrong phase, the tag's own `]` or `[` still
+// terminates the bad span and the scanner resynchronizes. `\` is NOT special
+// here on purpose — escapes only exist between a value's quote pair, which the
+// phase-inverted scan must be free to misread without losing the tag.
 function* bracketSpans(s: string): Generator<BracketSpan> {
   let i = 0;
   while (i < s.length) {
@@ -260,8 +283,7 @@ function* bracketSpans(s: string): Generator<BracketSpan> {
     while (j < s.length) {
       const c = s[j];
       if (inQuote) {
-        if (c === '\\') j += 1;
-        else if (c === '"') inQuote = false;
+        if (c === '"') inQuote = false;
       } else if (c === '"') {
         inQuote = true;
       } else if (c === '[') {

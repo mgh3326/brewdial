@@ -559,6 +559,66 @@ describe('#602 edge fixes', () => {
       const y = mkYaml({ note: 'Say "hi" [see] ]x\\' });
       expect(rt(y)).toEqual(parse(y));
     });
+
+    // v602-tester B1: an unmatched human `[` plus an odd number of `"` before a
+    // machine tag must not let the scanner swallow the tag. Escaped values are
+    // delimiter-free (\q \c) so quote parity is preserved in both scan phases.
+    it.each([['"[a"'], [']] ["'], [']x["n']])(
+      'B1: label %j with an unbalanced "[" in the prose keeps its step tag and machine params',
+      (label) => {
+        const y = mkYaml({}, [
+          { label, ml: 50, temp_c: 90, pattern: 'spiral', pause_s: 10, rpm: 100, flow_ml_s: 3.0, agitation: false },
+          { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+        ]);
+        const out = rt(y);
+        expect(out.pours[0]).toMatchObject({ label, rpm: 100, agitation: false, pattern: 'spiral' });
+        expect(out).toEqual(parse(y));
+      }
+    );
+
+    it('B1: a stray `"` in the human note does not hide the recipe tag', () => {
+      const y = mkYaml({
+        note: '[see "x',
+        dripper: 'O]mni',
+        stage_temps: [110, 90],
+        water_ml: 240
+      });
+      const out = rt(y);
+      expect(out).toEqual(parse(y)); // stage_temps, water_ml, dripper, note all survive
+    });
+
+    it('B1: an inch mark in the human note plus a quoted time keeps the recipe tag', () => {
+      const y = mkYaml({
+        note: 'Use [12" filter',
+        time: '2:45 "x"',
+        stage_temps: [110, 90],
+        water_ml: 240
+      });
+      expect(rt(y)).toEqual(parse(y));
+    });
+
+    it('B1: a single-field agitation value with "[" and quote keeps its step tag', () => {
+      const y = mkYaml({}, [
+        { label: 'A', ml: 50, temp_c: 90, flow_ml_s: 3.0, agitation: '"[x"' },
+        { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+      ]);
+      const out = rt(y);
+      expect(out.pours[0].agitation).toBe('"[x"');
+      expect(out).toEqual(parse(y));
+    });
+
+    it('emitted escapes are delimiter-free: no literal " or ] inside a quoted tag value', () => {
+      const input = fromXBloomYaml(
+        mkYaml({}, [
+          { label: 'Say "hi" ]x\\', ml: 50, temp_c: 90, flow_ml_s: 3.0, agitation: 'true' },
+          { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+        ])
+      );
+      const tag = input.steps![0].note!.match(/\[label=.*\]/)![0];
+      // exact emit shape: `\q` for `"`, `\c` for `]`, `\\` for `\` — a quoted
+      // value never contains a literal `"` or `]` (B1 parity invariant)
+      expect(tag).toBe('[label="Say \\qhi\\q \\cx\\\\" agitation="true" temp_c=90]');
+    });
   });
 
   describe('N2: agitation string keeps its type', () => {
@@ -629,6 +689,13 @@ describe('#602 edge fixes', () => {
       doc.params!.brewer = 'Omni Dripper 2';
       expect(parse(toXBloomYaml(doc)).dripper).toBe('Omni');
     });
+
+    // S-2 (v602 tester): discriminating pin for the byte-exact path — an
+    // unmapped dripper string that equals a brewer name must not be re-mapped.
+    it('an unmapped dripper that equals a brewer name stays byte-exact', () => {
+      const out = rt(mkYaml({ dripper: 'Omni Dripper 2' }));
+      expect(out.dripper).toBe('Omni Dripper 2');
+    });
   });
 
   describe('N8: registration validation preserves note whitespace', () => {
@@ -658,6 +725,8 @@ describe('#602 edge fixes', () => {
     });
   });
 });
+
+// #589: real xbloom-ble files carry `label` on the first pour only.
 describe('optional pour label (#589)', () => {
   it('imports an unlabeled pour with a `Pour N` prose note and a label="" tag', () => {
     const input = fromXBloomYaml(loadFixture('unlabeled-pours.yaml'));
