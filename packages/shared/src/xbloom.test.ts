@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
-import { validateCreateRecipeInput } from './validation.js';
+import { validateCreateRecipeInput, validateUpdateRecipeInput } from './validation.js';
 import type { RecipeParams, RecipeStep } from './types.js';
 import {
   fromXBloomYaml,
@@ -412,14 +412,15 @@ pours:
     expect(rt(y)).toEqual(parse(y));
   });
 
-  it('a "]" in a label is sanitized but machine params survive (S1 documented)', () => {
+  it('a "]" in a label is escaped, not stripped, and machine params survive (#602 S1)', () => {
     const y = mkYaml({}, [
       { label: 'Pour[2]', ml: 50, temp_c: 88, flow_ml_s: 3.0, pattern: 'center', rpm: 60, agitation: true },
       { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
     ]);
     const out = rt(y);
-    expect(out.pours[0].label).toBe('Pour[2'); // `]` is stripped (documented)
+    expect(out.pours[0].label).toBe('Pour[2]'); // escaped in the tag, value intact
     expect(out.pours[0]).toMatchObject({ pattern: 'center', rpm: 60, agitation: true, temp_c: 88 });
+    expect(out).toEqual(parse(y));
   });
 
   it('lets params.tempC rewrite the first pour and targetTimeSec rewrite time (N5)', () => {
@@ -508,13 +509,144 @@ describe('toXBloomYaml export validation + guards', () => {
         mkDoc({}, { grind: { target: { brewMethodPosition: 'v60 medium-fine' } } })
       )
     ).toThrow(/non-xBloom grind/);
+    // S5′: microns-only and targetDrawdownSec-only anchors are likewise grind
+    // information that must not silently become grind 0
+    expect(() =>
+      toXBloomYaml(mkDoc({}, { grind: { target: { microns: 800 } } }))
+    ).toThrow(/non-xBloom grind/);
+    expect(() =>
+      toXBloomYaml(mkDoc({}, { grind: { target: { targetDrawdownSec: 60 } } }))
+    ).toThrow(/non-xBloom grind/);
     // but the explicit 무분쇄 marker still maps to 0
     const doc = mkDoc({}, { grind: '무분쇄(외부 그라인더)' });
     expect(parse(toXBloomYaml(doc)).grind).toBe(0);
   });
 });
 
-// #589: real xbloom-ble files carry `label` on the first pour only.
+// #602: edge fixes — S1 escapes, N2 type drift, N8 note whitespace,
+// CR:263 newline-in-tag, CR:632 brewer edit, S5′ rejection pins.
+describe('#602 edge fixes', () => {
+  const rt = (y: string) => parse(toXBloomYaml(fromXBloomYaml(y)));
+
+  describe('S1: tag values escape " and ] instead of stripping them', () => {
+    it.each([['Pour[2]'], ['Say "hi"'], ['a]b'], ['x"y]z'], ['back\\slash'], ['multi\nline'], [' [pad] ']])(
+      'label %j round-trips byte-exact',
+      (label) => {
+        const y = mkYaml({}, [
+          { label, ml: 50, temp_c: 88, flow_ml_s: 3.0, pattern: 'center', rpm: 60, agitation: true },
+          { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+        ]);
+        const out = rt(y);
+        expect(out.pours[0].label).toBe(label);
+        expect(out).toEqual(parse(y));
+      }
+    );
+
+    it.each([
+      ['kind', 'a"b'],
+      ['kind', 'c]d'],
+      ['dripper', 'Om"ni'],
+      ['dripper', 'O]mni'],
+      ['time', '2:45]"']
+    ])('%s %j round-trips byte-exact', (key, value) => {
+      const y = mkYaml({ [key]: value });
+      const out = rt(y);
+      expect(out[key]).toBe(value);
+      expect(out).toEqual(parse(y));
+    });
+
+    it('escapes live only inside the tag; human note text stays verbatim', () => {
+      const y = mkYaml({ note: 'Say "hi" [see] ]x\\' });
+      expect(rt(y)).toEqual(parse(y));
+    });
+  });
+
+  describe('N2: agitation string keeps its type', () => {
+    it.each([['true'], ['false']])('string agitation %j does not become a boolean', (ag) => {
+      const y = mkYaml({}, [{ ...basePour, agitation: ag }, { ...basePour, label: 'B' }]);
+      const out = rt(y);
+      expect(out.pours[0].agitation).toBe(ag);
+      expect(typeof out.pours[0].agitation).toBe('string');
+      expect(out).toEqual(parse(y));
+    });
+
+    it.each([[true], [false]])('boolean agitation %s stays a boolean', (ag) => {
+      const y = mkYaml({}, [{ ...basePour, agitation: ag }, { ...basePour, label: 'B' }]);
+      const out = rt(y);
+      expect(out.pours[0].agitation).toBe(ag);
+      expect(typeof out.pours[0].agitation).toBe('boolean');
+      expect(out).toEqual(parse(y));
+    });
+
+    it('a non-boolean string agitation round-trips as a string', () => {
+      const y = mkYaml({}, [{ ...basePour, agitation: 'swirl' }, { ...basePour, label: 'B' }]);
+      const out = rt(y);
+      expect(out.pours[0].agitation).toBe('swirl');
+      expect(out).toEqual(parse(y));
+    });
+  });
+
+  it('CR:263: a newline inside a quoted recipe-tag value does not hide the tag', () => {
+    const y = mkYaml({
+      kind: 'a\nb',
+      time: '2:45-3:00',
+      water_ml: 100,
+      dripper: 'Omni',
+      stage_temps: [110, 90]
+    });
+    const out = rt(y);
+    expect(out.kind).toBe('a\nb');
+    expect(out).toEqual(parse(y));
+  });
+
+  describe('CR:632: a user edit to params.brewer overrides the imported dripper tag', () => {
+    it('propagates an edit and maps known brewers back to dripper names', () => {
+      const doc = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
+      expect(doc.params!.brewer).toBe('Omni Dripper 2');
+      doc.params!.brewer = 'V60';
+      expect(parse(toXBloomYaml(doc)).dripper).toBe('V60');
+    });
+
+    it('an untouched brewer keeps the original dripper string byte-exact', () => {
+      const out = rt(loadFixture('three-pour-spiral.yaml'));
+      expect(out.dripper).toBe('Omni');
+    });
+
+    it('an edit back to a mapped brewer name emits the short dripper form', () => {
+      const doc = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
+      doc.params!.brewer = 'V60';
+      doc.params!.brewer = 'Omni Dripper 2';
+      expect(parse(toXBloomYaml(doc)).dripper).toBe('Omni');
+    });
+  });
+
+  describe('N8: registration validation preserves note whitespace', () => {
+    it('keeps an imported recipe note with leading whitespace verbatim', () => {
+      const y = mkYaml({ note: '  indented note' });
+      const input = fromXBloomYaml(y);
+      const r = validateCreateRecipeInput(input);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value.notes).toBe(input.notes);
+    });
+
+    it('keeps whitespace-only and padded notes verbatim on create and update', () => {
+      const base = fromXBloomYaml(mkYaml());
+      const create = validateCreateRecipeInput({ ...base, notes: '   ' });
+      expect(create.ok).toBe(true);
+      if (create.ok) expect(create.value.notes).toBe('   ');
+      const update = validateUpdateRecipeInput({ notes: '  padded  ' });
+      expect(update.ok).toBe(true);
+      if (update.ok) expect(update.value.notes).toBe('  padded  ');
+    });
+
+    it('still trims title padding (decision: title is a display identifier)', () => {
+      const input = fromXBloomYaml(mkYaml());
+      const r = validateCreateRecipeInput({ ...input, title: '  Padded Title  ' });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value.title).toBe('Padded Title');
+    });
+  });
+});
 describe('optional pour label (#589)', () => {
   it('imports an unlabeled pour with a `Pour N` prose note and a label="" tag', () => {
     const input = fromXBloomYaml(loadFixture('unlabeled-pours.yaml'));
