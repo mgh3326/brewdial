@@ -765,3 +765,193 @@ describe('optional pour label (#589)', () => {
     expect(out.pours.map((p: { label: string }) => p.label)).toEqual(['Pour 1', 'Pour 2']);
   });
 });
+
+// #674 (#77 follow-up, v602 tester R2-S1): pin the trailing-backslash handling.
+// Pre-#602 emitters never escaped `\`, so stored notes can hold a quoted tag
+// value that ends in a literal `\` right before the closing quote, e.g.
+// `label="Bloom A\"`. parseTagPairs keeps an unknown `\x` as a literal `\` and
+// re-examines `x`, so that closing quote is NOT consumed and the tag still
+// parses; a scheme where `\` always eats the next char (the round-1 `\"`-style
+// escapes) swallows the quote and the whole tag is dropped.
+// Affected fields = every value that passes through a quoted tag: step-tag
+// `label` and string `agitation`, recipe-tag `kind`/`dripper`/`time`, plus the
+// verbatim human `note` text and authored step-note prose (label fallback).
+// Numeric/`extra=` values cannot contain a raw `\` and are out of scope.
+// Mutant: make the unknown-escape branch consume the next char -> every
+// legacy-form test below goes RED (the tag is dropped, so its fields fall
+// back to prose/defaults).
+describe('#77 trailing backslash in tag values', () => {
+  const rt = (y: string) => parse(toXBloomYaml(fromXBloomYaml(y)));
+
+  describe('current escaped form (`\\` inside a quoted value)', () => {
+    it.each([['Bloom\\'], ['trail \\'], ['\\'], ['a [b\\'], ['two \\\\']])(
+      'pour label %j round-trips byte-exact (YAML -> doc -> YAML)',
+      (label) => {
+        const y = mkYaml({}, [
+          { label, ml: 50, temp_c: 88, flow_ml_s: 3.0, pattern: 'center', rpm: 60, agitation: true },
+          { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+        ]);
+        const out = rt(y);
+        expect(out.pours[0].label).toBe(label);
+        expect(out).toEqual(parse(y));
+      }
+    );
+
+    it('emits `\\` for a literal backslash inside the step tag', () => {
+      const input = fromXBloomYaml(
+        mkYaml({}, [
+          { label: 'Bloom A\\', ml: 50, temp_c: 90, flow_ml_s: 3.0 },
+          { label: 'B', ml: 50, temp_c: 90, flow_ml_s: 3.0 }
+        ])
+      );
+      // the stored tag carries the escaped form `label="Bloom A\\"`
+      expect(input.steps![0].note).toContain('label="Bloom A\\\\"');
+      expect(validateCreateRecipeInput(input).ok).toBe(true);
+    });
+
+    it.each([
+      ['kind', 'custom\\'],
+      ['dripper', 'Omni X\\'],
+      ['time', '2:45\\']
+    ])('recipe field %s %j round-trips byte-exact', (key, value) => {
+      const y = mkYaml({ [key]: value });
+      const out = rt(y);
+      expect(out[key]).toBe(value);
+      expect(out).toEqual(parse(y));
+    });
+
+    it('string agitation ending in a backslash keeps its type and value', () => {
+      const y = mkYaml({}, [
+        { ...basePour, agitation: 'swirl\\' },
+        { ...basePour, label: 'P2' }
+      ]);
+      const out = rt(y);
+      expect(out.pours[0].agitation).toBe('swirl\\');
+      expect(typeof out.pours[0].agitation).toBe('string');
+      expect(out).toEqual(parse(y));
+    });
+
+    it.each([['ends here\\'], ['multi\nline\\\n']])(
+      'human note %j ending in a backslash round-trips verbatim',
+      (note) => {
+        const y = mkYaml({ note });
+        const out = rt(y);
+        expect(out.note).toBe(note);
+        expect(out).toEqual(parse(y));
+      }
+    );
+  });
+
+  describe('legacy stored form (unescaped `\"` terminator, pre-#602)', () => {
+    // pre-#602 tagValue only quoted for whitespace/`[`/empty and never escaped
+    // `\`, so a stored step note can literally contain `label="a b\"`.
+    it.each([['Bloom A\\'], ['a [b\\']])(
+      'a stored step tag label=%j still parses (doc -> YAML)',
+      (stored) => {
+        const doc = fromXBloomYaml(
+          mkYaml({}, [
+            { ...basePour, label: 'Bloom A' },
+            { ...basePour, label: 'P2' }
+          ])
+        );
+        doc.steps![0].note = doc.steps![0].note!.replace(
+          'label="Bloom A"',
+          `label="${stored}"`
+        );
+        const out = parse(toXBloomYaml(doc));
+        expect(out.pours[0].label).toBe(stored);
+        // machine params in the same tag survive too
+        expect(out.pours[0]).toMatchObject({ pattern: 'spiral', rpm: 100, agitation: false });
+        // re-export upgrades the value to the escaped `\\` form
+        const reimported = fromXBloomYaml(toXBloomYaml(doc));
+        expect(reimported.steps![0].note).toContain(
+          `label="${stored.replace(/\\/g, '\\\\')}"`
+        );
+      }
+    );
+
+    it('a stored step tag agitation ending in `\\"` stays a string', () => {
+      const doc = fromXBloomYaml(
+        mkYaml({}, [
+          { ...basePour, agitation: 'swirl' },
+          { ...basePour, label: 'P2' }
+        ])
+      );
+      doc.steps![0].note = doc.steps![0].note!.replace(
+        'agitation=swirl',
+        'agitation="swirl\\"'
+      );
+      const out = parse(toXBloomYaml(doc));
+      expect(out.pours[0].agitation).toBe('swirl\\');
+      expect(typeof out.pours[0].agitation).toBe('string');
+    });
+
+    it('stored recipe-tag values ending in `\\"` still close: kind, time, dripper', () => {
+      const doc = fromXBloomYaml(
+        mkYaml({ kind: 'my kind', time: '2:45 PM', dripper: 'Omni X', water_ml: 240, note: 'n' })
+      );
+      doc.notes = doc.notes!
+        .replace('kind="my kind"', 'kind="my kind\\"')
+        .replace('time="2:45 PM"', 'time="2:45 PM\\"')
+        .replace('dripper="Omni X"', 'dripper="Omni X\\"');
+      // CR:632: dripper only holds while params.brewer still equals the brewer
+      // the tag maps to — keep them equal so the tag value is what exports.
+      doc.params!.brewer = 'Omni X\\';
+      const out = parse(toXBloomYaml(doc));
+      expect(out.kind).toBe('my kind\\');
+      expect(out.time).toBe('2:45 PM\\');
+      expect(out.dripper).toBe('Omni X\\');
+      expect(out.note).toBe('n'); // tag extracted, not leaked into the note
+      expect(out.water_ml).toBe(240);
+    });
+
+    it('a human note ending in `\\` right before a legacy tag loads verbatim', () => {
+      const doc = fromXBloomYaml(mkYaml({ note: 'done\\', kind: 'kind x' }));
+      // stored: 'done\' + '\n' + '[xbloom v=1 kind="kind x" note=1]' — make the
+      // tag value also carry the legacy trailing `\`.
+      doc.notes = doc.notes!.replace('kind="kind x"', 'kind="kind x\\"');
+      const out = parse(toXBloomYaml(doc));
+      expect(out.note).toBe('done\\');
+      expect(out.kind).toBe('kind x\\');
+    });
+
+    it('a multi-line stored note whose tag value ends in `\\"` still parses', () => {
+      const doc = fromXBloomYaml(mkYaml({ note: 'line one\nline two\\', kind: 'kind x' }));
+      doc.notes = doc.notes!.replace('kind="kind x"', 'kind="kind x\\"');
+      const out = parse(toXBloomYaml(doc));
+      expect(out.note).toBe('line one\nline two\\');
+      expect(out.kind).toBe('kind x\\');
+    });
+  });
+
+  describe('verbatim fields (no tag involved)', () => {
+    it('an authored step note ending in a backslash becomes the pour label', () => {
+      const out = parse(
+        toXBloomYaml({
+          title: 'T',
+          params: { doseG: 15, ratio: '1:16', tempC: 90 },
+          steps: [
+            { atSec: 0, endSec: 15, waterG: 40, pourRateGPerSec: 3.0, note: 'swirl carefully\\' },
+            { atSec: 45, endSec: 90, waterG: 240, pourRateGPerSec: 3.2, note: 'b' }
+          ]
+        })
+      );
+      expect(out.pours[0].label).toBe('swirl carefully\\');
+    });
+
+    it('authored doc notes ending in a backslash export verbatim', () => {
+      const out = parse(
+        toXBloomYaml({
+          title: 'T',
+          params: { doseG: 15, ratio: '1:16', tempC: 90 },
+          steps: [
+            { atSec: 0, endSec: 15, waterG: 40, pourRateGPerSec: 3.0, note: 'a' },
+            { atSec: 45, endSec: 90, waterG: 240, pourRateGPerSec: 3.2, note: 'b' }
+          ],
+          notes: 'ends with a\\'
+        })
+      );
+      expect(out.note).toBe('ends with a\\');
+    });
+  });
+});
