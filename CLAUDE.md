@@ -5,11 +5,12 @@ Agent-friendly coffee recipe and dial-in system. pnpm workspace, Node >= 22.
 ## Layout
 
 - `apps/api` — backend API
+- `apps/api-kt` — Kotlin/Spring Boot port of `apps/api` (Gradle; run/test commands in its README)
 - `apps/mcp` — MCP server (stdio)
 - `apps/miniapp` — 앱인토스 미니앱 (Vite SPA, `web:build` → `.ait`)
-- `apps/web` — Cloudflare Worker
 - `packages/db` — schema, migrations (`db:migrate`), codegen
 - `packages/shared` — 공용 타입/로직
+- `wrangler.jsonc` — Cloudflare Worker (Static Assets): `apps/miniapp/dist`를 SPA로 서빙
 
 ## Commands
 

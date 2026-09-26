@@ -95,7 +95,7 @@ const PARAMS_SCHEMA = {
 const DRIPPER_PORTABILITY_SCHEMA = {
   type: 'object',
   description:
-    'ROB-612 dripper-portable layer: fixed anchors (ratio/temp/time) + per-dripper class, size match, and grind/pour adjustment DIRECTIONS (not absolute values).',
+    'Dripper-portable layer: fixed anchors (ratio/temp/time) plus per-dripper class, size match, and grind/pour adjustment directions (not absolute values).',
   required: ['origin'],
   properties: {
     origin: {
@@ -161,7 +161,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.create_recipe',
     description:
-      'Persist a newly generated coffee recipe to BrewDial. It appears in the App-in-Toss mini-app immediately, grouped under its bean. Returns the COF-NNNN code. To map onto an EXISTING bean (avoid duplicate beans), first call brew.find_bean and reuse the matched bean’s exact name+roaster in beanSnapshot (or pass beanId). If a near-identical recipe exists it is STILL created and the response includes possibleDuplicateOf as a soft warning (link variants with supersede_recipe). Steps may include atSec/endSec/waterG/pourRateGPerSec; legacy {atSec,waterG,note} steps remain valid. GRIND (ROB-611): prefer a STRUCTURED params.grind object over free text — { target: { brewMethodPosition e.g. "v60 medium-fine", targetDrawdownSec }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }. target MUST carry brewMethodPosition OR targetDrawdownSec (microns is advisory only). Put the operator’s MEASURED grinder+clicks in perGrinder; first call brew.list_grinders and use the EXACT registry name so the app can convert clicks to other grinders at read time. Keep the original wording in legacyText. A plain string grind is still accepted for legacy/quick entry. DRIPPER (ROB-612): for portability across drippers, set top-level dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } } — the app derives per-dripper size match + grind/pour DIRECTION + the 40g bed-overflow warning at read time. Call brew.list_drippers and use the EXACT registry name in origin.dripper. params.doseG drives the bed check, so set it (especially for 40g+ large doses).',
+      'Persist a newly generated coffee recipe to BrewDial. It appears in the App-in-Toss mini-app immediately, grouped under its bean, and the response returns its COF-NNNN code. To attach the recipe to a bean that already exists, look it up with brew.find_bean and reuse that bean’s exact name+roaster in beanSnapshot (or pass beanId); otherwise a new bean is created. A near-identical recipe does not block creation: the response lists it in possibleDuplicateOf as a soft warning, and variants can be linked with brew.supersede_recipe. Each step takes atSec, waterG, and note, plus optional endSec and pourRateGPerSec. params.grind is either a plain string or a structured object { target: { brewMethodPosition (e.g. "v60 medium-fine"), targetDrawdownSec, microns }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }; prefer the structured form. target needs brewMethodPosition or targetDrawdownSec (microns is advisory only). Put the operator’s measured grinder and clicks in perGrinder, with the grinder name spelled exactly as brew.list_grinders returns it, because the app converts clicks to other grinders only when the name matches the registry; keep the original wording in legacyText. For portability across drippers, set top-level dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } }, with origin.dripper spelled exactly as brew.list_drippers returns it; the app derives per-dripper size match, grind/pour direction, and the 40g bed-overflow warning at read time. params.doseG drives that bed check, so set it, especially for doses of 40g or more.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -182,7 +182,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.update_recipe',
     description:
-      'Edit an existing recipe in place (ROB-605). Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params.grind may be upgraded from a legacy string to a structured GrindSpec (see create_recipe / ROB-611).',
+      'Edit an existing recipe in place. Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params.grind can be replaced with the structured form described in brew.create_recipe.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -202,7 +202,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.archive_recipe',
     description:
-      "Soft-delete or re-status a recipe (ROB-605). Default sets status='archived' so it disappears from the mini-app list/deep links without deleting data. status can also be active/test/superseded/reference.",
+      "Soft-delete or re-status a recipe. Default sets status='archived' so it disappears from the mini-app list/deep links without deleting data. status can also be active/test/superseded/reference.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -215,7 +215,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.supersede_recipe',
     description:
-      'Mark an old recipe as superseded by a newer one (ROB-609 lineage). Sets old.status=superseded + old.supersededBy=newCode and new.supersedes=oldCode. The old one drops out of the active list while staying reachable via its code.',
+      'Mark an old recipe as superseded by a newer one. Sets old.status=superseded + old.supersededBy=newCode and new.supersedes=oldCode. The old one drops out of the active list while staying reachable via its code.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -228,7 +228,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.find_bean',
     description:
-      'Search existing beans by name/roaster substring. Call this BEFORE create_recipe to map a new recipe onto an existing bean instead of creating a duplicate. Returns id/name/roaster/origin/process/roastLevel + recipeCount (most recipes first).',
+      'Search existing beans by name/roaster substring. Use it before brew.create_recipe to attach a new recipe onto an existing bean instead of creating a duplicate. Returns id/name/roaster/origin/process/roastLevel + recipeCount (most recipes first).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,7 +249,7 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.update_bean_attributes',
     description:
-      'Set structured tasting attributes on an EXISTING bean (ROB-654) so future "what should I buy next?" recommendations can score it by axis. Get beanId from brew.find_bean / brew.list_beans FIRST. Only normalized attribute columns are written here — name/roaster/origin are owned by recipes. The 1..5 scales (roastLevelOrd, acidity, body) are YOUR single-rubric judgment (roaster self-reported numbers use inconsistent scales); preserve the roaster’s original wording/numbers verbatim in attrsNotes as evidence, and anchor roastLevelOrd to Agtron when known. Provide at least one attribute.',
+      'Set structured tasting attributes on an existing bean so future "what should I buy next?" recommendations can score it by axis. Get beanId from brew.find_bean or brew.list_beans. Only normalized attribute columns are written here — name/roaster/origin are owned by recipes. The 1..5 scales (roastLevelOrd, acidity, body) are your own single-rubric judgment, because roaster self-reported numbers use inconsistent scales; preserve the roaster’s original wording/numbers verbatim in attrsNotes as evidence, and anchor roastLevelOrd to Agtron when known. Provide at least one attribute.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -275,18 +275,19 @@ const TOOLS: Tool[] = [
   {
     name: 'brew.list_grinders',
     description:
-      'List the grinder registry (ROB-611): canonical name, per-method click band (brewMethodRanges, e.g. v60: {from,to}), advisory um/click, and stepless flag. Call this BEFORE create_recipe so params.grind.perGrinder uses the EXACT registry name (e.g. "KINGrinder K6", "Comandante C40") — the mini-app only converts clicks to other grinders at read time when names match the registry.',
+      'List the grinder registry: canonical name, per-method click band (brewMethodRanges, e.g. v60: {from,to}), advisory um/click, and stepless flag. Use it before brew.create_recipe so params.grind.perGrinder spells the grinder exactly as the registry does (e.g. "KINGrinder K6", "Comandante C40") — the mini-app converts clicks to other grinders at read time only when names match the registry.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'brew.list_drippers',
     description:
-      'List the dripper registry (ROB-612): canonical name, class (bed_restricted/dripper_restricted/hybrid/immersion), flow-restriction continuum (0 fast/bed-controlled .. 1 slow/dripper-controlled), recommendedDoseRange, and sizeModels (maxDoseG). Call this BEFORE create_recipe so dripperPortability.origin.dripper uses the EXACT registry name — the mini-app derives per-dripper size match + grind/pour direction + the 40g bed-overflow warning at read time from these values.',
+      'List the dripper registry: canonical name, class (bed_restricted/dripper_restricted/hybrid/immersion), flow-restriction continuum (0 fast/bed-controlled .. 1 slow/dripper-controlled), recommendedDoseRange, and sizeModels (maxDoseG). Use it before brew.create_recipe so dripperPortability.origin.dripper spells the dripper exactly as the registry does — the mini-app derives per-dripper size match + grind/pour direction + the 40g bed-overflow warning at read time from these values.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'brew.get_recent_context',
-    description: 'Get recent BrewDial context including recipes, feedback, and guidance',
+    description:
+      'Get recent BrewDial state in one read-only call: the newest recipes (limit, default 5, clamped to 1-20), each with its full feedback list and a feedbackSummary (count, averageOverall, commonDesiredDirections, latest comment/tags/source), plus global taste preferences, totals, and guidance — a short list of plain-text hints such as "no feedback yet" or "average overall below 3". Use brew.get_recipe_context to look at one recipe by code.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -296,7 +297,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'brew.get_recipe_context',
-    description: 'Get detailed context for a specific recipe by code',
+    description:
+      'Get one recipe by COF-NNNN code with what is needed to dial it in, read-only: the full recipe, all its feedback, a feedbackSummary, global taste preferences, and a guidance list of plain-text hints. An unknown code returns { found: false, code } rather than an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -333,7 +335,7 @@ const TOOLS: Tool[] = [
             clarity: { type: 'integer', minimum: 0, maximum: 4 }
           }
         },
-        source: { type: 'string', enum: ['web', 'coffee_profile', 'api', 'agent', 'mcp'], description: 'Defaults to coffee_profile for this tool.' },
+        source: { type: 'string', enum: ['coffee_profile', 'agent', 'mcp', 'api'], description: 'Defaults to coffee_profile for this tool.' },
         desiredDirection: { type: 'array', items: { type: 'string' } },
         nextHint: { type: 'array', items: { type: 'string' } }
       },
