@@ -30,6 +30,7 @@ CUTOVER_MARKER="$FREEZE_FILE.cutover-verified"
 BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
 DRAIN_SECONDS="${PHASE4_DRAIN_SECONDS:-5}"
+DRAIN_TIMEOUT="${PHASE4_DRAIN_TIMEOUT:-120}"
 NODE_PORT=8020
 KT_PORT=8021
 NODE_URL="http://127.0.0.1:$NODE_PORT"
@@ -118,7 +119,7 @@ check_cloudflared_on_node() {
 
   active="$(sed -E 's/(^|[[:space:]])#.*$//' "$CLOUDFLARED_CONFIG")"
   # Also covers a rule limited by path, which resolving a URL could miss.
-  if grep -qE "service:.*:$KT_PORT([/[:space:]\"']|\$)" <<<"$active"; then
+  if grep -qE "service:.*:$KT_PORT"'([^0-9]|$)' <<<"$active"; then
     fail "an active cloudflared rule points at api-kt (:$KT_PORT); point it at $NODE_URL first"
   fi
   for host in $(sed -nE "s/^[[:space:]-]*hostname:[[:space:]]*[\"']?([^\"'[:space:]]+).*/\\1/p" <<<"$active") phase4-no-such-host.invalid; do
@@ -154,6 +155,20 @@ check_digest() {
 }
 
 freeze_probe() { http_code -X POST "$NODE_URL$PROBE_PATH"; }
+
+# Writes the Node API admitted before the freeze must finish before the copy reads.
+wait_for_admitted_writes() {
+  local deadline=$((SECONDS + DRAIN_TIMEOUT)) count
+  while :; do
+    count="$(curl -s -m 10 -o /dev/null -D - -X POST "$NODE_URL$PROBE_PATH" \
+      | tr -d '\r' | sed -n 's/^[Xx]-[Ww]rites-[Ii]n-[Ff]light:[[:space:]]*//p' || true)"
+    [[ "$count" =~ ^[0-9]+$ ]] || fail "the Node API reports no in-flight writes; it needs an image with the current switch (runbook 4.1)"
+    [ "$count" = 0 ] && return 0
+    [ "$SECONDS" -lt "$deadline" ] || fail "$count admitted write(s) still running after ${DRAIN_TIMEOUT}s; writes stay frozen, so investigate and run this again"
+    log "waiting for $count admitted write(s)"
+    sleep 1
+  done
+}
 
 # Shows the report lines of a copy run and requires its success line.
 run_copy_tool() {
@@ -278,7 +293,7 @@ cutover() {
   rm -f "$CUTOVER_MARKER"
   touch "$FREEZE_FILE"
   [ "$(freeze_probe)" = 503 ] || fail "the Node API does not honour $FREEZE_FILE (probe did not answer 503)"
-  sleep "$DRAIN_SECONDS"
+  wait_for_admitted_writes
 
   step copy "PostgreSQL to MySQL, then counts, checksums and sequence"
   run_copy_tool copy "$COPY_ENV" "$COPY_MODE"

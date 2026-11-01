@@ -1,6 +1,6 @@
 import type { Context, Next } from 'hono'
 import { findAppUser, getDb, resolveAppUser } from '@brewdial/db'
-import { writesFrozen } from './write-freeze.js'
+import { trackWrite, writesFrozen } from './write-freeze.js'
 
 const VALID = new Set(['toss_anon', 'web_local'])
 
@@ -17,7 +17,7 @@ export async function identityMiddleware(c: Context, next: Next) {
         // resolveAppUser creates a first-touch user even on a GET, so a freeze only looks up.
         const appUserId = writesFrozen()
           ? await findAppUser(getDb(), provider, externalKey)
-          : await resolveAppUser(getDb(), provider, externalKey)
+          : await trackWrite(() => resolveAppUser(getDb(), provider, externalKey))
         if (appUserId) c.set('appUserId', appUserId)
       } catch {
         return c.json({ ok: false, error: 'identity temporarily unavailable' }, 503)

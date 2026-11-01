@@ -292,7 +292,7 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 | Step | What it does | Passes when |
 |---|---|---|
 | `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared routes to `:8020` and nothing to `:8021`, api-kt is on blue with this digest, and the freeze probe answers |
-| `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze` | `POST /api/write-freeze-probe` on `:8020` answers 503 |
+| `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze`, then waits up to 120 s for writes admitted before it to finish | `POST /api/write-freeze-probe` on `:8020` answers 503, and its `X-Writes-In-Flight` header reads 0 |
 | `copy` | Copies PostgreSQL → MySQL in one PostgreSQL snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
 | `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
 | `deploy` | Moves the HeatWave `DATABASE_URL` into the api-kt env file, runs `shiftgate deploy` | Green is active, blue is the rollback colour, `/api/db/health` on `:8021` answers 200 |
@@ -331,7 +331,7 @@ sequences=1`. Any `MISMATCH` exits non-zero.
 | Stopped at | Do this |
 |---|---|
 | `preflight` | Nothing changed. Fix the cause and run it again. |
-| `freeze` | The switch does not work: run `unfreeze`, then fix §4.1. |
+| `freeze` | If the switch does not work, run `unfreeze` and fix §4.1. If writes are still running, find out why (`pg_stat_activity`) and run it again: nothing has been copied. |
 | `copy` | The copy rolled back, including on `MISMATCH`, and the target is still empty. Fix the cause and run it again. |
 | `verify` | The target holds rows, and something changed after the copy. Investigate, then run it again with `--replace-target`. |
 | `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. |
@@ -475,13 +475,14 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    sudo -u opc /opt/brewdial/deploy/oci/verify-restore.sh "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump"   # GATE PASS
    ```
    Do not continue until the Mac's next pull holds the file.
-2. **Stop what still uses PostgreSQL.** Check first that nothing but these
-   connects:
+2. **Stop what still uses PostgreSQL.** First remove any Dagu job that still
+   follows `brewdial-api`, or it restarts a colour. Also pause the job that follows
+   `brewdial-api-kt` (§4.4 step 5), so that no deploy starts during these steps.
+   Then check that nothing but these connects:
    ```sql
    select usename, client_addr, count(*) from pg_stat_activity where datname = 'brewdial' group by 1, 2;
    ```
    ```sh
-   # First remove the Dagu job that follows brewdial-api, or it restarts a colour.
    sudo docker stop shiftgate-brewdial-api-blue shiftgate-brewdial-api-green shiftgate-brewdial-api-kt-blue
    sudo systemctl disable --now brewdial-api    # the legacy systemd unit, if it is still installed
    sudo systemctl disable --now k3s             # if phase 3 left it enabled
@@ -492,6 +493,7 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    ss -ltn | grep -c ':5432 '                   # expect 0
    curl -fsS https://<public host>/api/db/health
    ```
+   Resume the `brewdial-api-kt` follower once this passes. It runs the live API.
 4. **Keep the data directory for 14 days.** Record the date in the change record.
    Find the path with `sudo systemctl cat postgresql-17 | grep PGDATA` (usually
    `/var/lib/pgsql/17/data`). To go back within the 14 days, run `sudo systemctl

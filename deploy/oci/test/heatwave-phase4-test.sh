@@ -131,17 +131,32 @@ EOF
 # The Node API on :8020 and api-kt on :8021.
 cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-method=GET; url=""; write_code=0
+method=GET; url=""; write_code=0; dump_headers=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -X) method="$2"; shift ;;
     -m|-o) shift ;;
+    -D) dump_headers=1; shift ;;
     -w) write_code=1; shift ;;
     http*) url="$1" ;;
   esac
   shift
 done
 respond() { [ "$write_code" = 1 ] && printf '%s' "$1"; [ "$write_code" = 1 ] || cat; }
+if [ "$dump_headers" = 1 ]; then
+  # The freeze probe's in-flight count: a real response has CRLF line ends.
+  case "${STUB_FAIL:-}" in
+    no-inflight-header) printf 'HTTP/1.1 503 Service Unavailable\r\n\r\n' ;;
+    writes-stuck) printf 'HTTP/1.1 503 Service Unavailable\r\nx-writes-in-flight: 2\r\n\r\n' ;;
+    writes-drain)
+      left="$(cat "$STUB_STATE/inflight" 2>/dev/null || echo 1)"
+      printf 'HTTP/1.1 503 Service Unavailable\r\nX-Writes-In-Flight: %s\r\n\r\n' "$left"
+      [ "$left" -gt 0 ] && echo $((left - 1)) >"$STUB_STATE/inflight"
+      ;;
+    *) printf 'HTTP/1.1 503 Service Unavailable\r\nX-Writes-In-Flight: 0\r\n\r\n' ;;
+  esac
+  exit 0
+fi
 case "$url" in
   */api/write-freeze-probe)
     if [ "${STUB_FAIL:-}" = no-switch ]; then printf '404'
@@ -236,7 +251,7 @@ EOF
     STUB_ACTIVE_DIGEST="$active_digest" STUB_NOT_ROOT="$not_root" \
     PHASE4_ENV_DIR="$scenario/env" PHASE4_FREEZE_FILE="$scenario/freeze/write-freeze" \
     PHASE4_CLOUDFLARED_CONFIG="$scenario/config.yml" PHASE4_LOG_DIR="$scenario/log" PHASE4_DRAIN_SECONDS=0 \
-    PHASE4_BACKUP_DIR="$scenario/final-postgres" \
+    PHASE4_BACKUP_DIR="$scenario/final-postgres" PHASE4_DRAIN_TIMEOUT=1 \
     bash "$script" "$@" 2>&1)"
   status=$?
   calls="$(cat "$scenario/state/calls")"
@@ -377,6 +392,25 @@ ingress:
     service: http://127.0.0.1:8020
   - service: http_status:404
 EOF
+write_config kt-at-end-of-file <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    path: /agent/.*
+    service: http://127.0.0.1:8021
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - service: http://127.0.0.1:8021
+EOF
+write_config longer-port <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - hostname: other.example.test
+    service: http://127.0.0.1:80210
+  - service: http_status:404
+EOF
 write_config localhost-on-kt <<'EOF'
 tunnel: test
 ingress:
@@ -420,7 +454,7 @@ EOF
 
 ingress_matrix() {
   local kind="$1" config
-  for config in comment-decoy inline-decoy old-key-decoy second-host-on-kt catch-all-on-kt path-rule-on-kt localhost-on-kt nothing-on-node invalid-no-catch-all; do
+  for config in comment-decoy inline-decoy old-key-decoy second-host-on-kt catch-all-on-kt path-rule-on-kt kt-at-end-of-file localhost-on-kt nothing-on-node invalid-no-catch-all; do
     SCENARIO_MUTATE="cp '$work/configs/$config.yml' config.yml" run_scenario "$kind-$config" "" cutover --digest "$DIGEST" --preflight
     expect_stopped preflight ""
     expect_not_frozen
@@ -429,7 +463,7 @@ ingress_matrix() {
   SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_MUTATE="cp '$work/configs/comment-decoy.yml' config.yml" \
     run_scenario "$kind-rollback-comment-decoy" "" rollback --digest "$DIGEST"
   expect_stopped preflight ""
-  for config in kt-only-in-a-comment other-service-too; do
+  for config in kt-only-in-a-comment other-service-too longer-port; do
     SCENARIO_MUTATE="cp '$work/configs/$config.yml' config.yml" run_scenario "$kind-$config" "" cutover --digest "$DIGEST" --preflight
     [ "$status" = 0 ] || bad "this config sends traffic to the Node API"
     [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
@@ -491,6 +525,17 @@ SCENARIO_ACTIVE_DIGEST="$OTHER_DIGEST" run_scenario other-digest "" cutover --di
 run_scenario node-down node-down cutover --digest "$DIGEST"; expect_stopped preflight ""
 run_scenario old-node old-node cutover --digest "$DIGEST"; expect_stopped preflight ""
 run_scenario switch-ignored no-switch cutover --digest "$DIGEST"; expect_stopped freeze ""
+# r4436264258: the copy waits until writes admitted before the freeze have finished.
+run_scenario writes-still-running writes-stuck cutover --digest "$DIGEST"; expect_stopped freeze ""; expect_frozen
+case "$output" in *"2 admitted write(s) still running"*) ;; *) bad "the message must name the running writes" ;; esac
+run_scenario node-without-count no-inflight-header cutover --digest "$DIGEST"; expect_stopped freeze ""; expect_frozen
+run_scenario writes-drain-then-copy writes-drain cutover --digest "$DIGEST"
+[ "$status" = 0 ] || bad "the window should continue once the writes finish"
+[ "$(cat "$scenario/state/inflight")" = 0 ] || bad "the script did not wait for the count to reach 0"
+case "$output" in *"waiting for 1 admitted write(s)"*) ;; *) bad "the wait must be reported" ;; esac
+expect_no_secret
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
 run_scenario copy-exit copy-exit cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen
 case "$output" in *"COPY_CHECK_FAILED schema drift"*) ;; *) bad "the drift message is missing" ;; esac
 run_scenario copy-mismatch copy-mismatch cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen

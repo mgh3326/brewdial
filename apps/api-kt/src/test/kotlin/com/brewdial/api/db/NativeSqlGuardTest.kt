@@ -82,6 +82,7 @@ class NativeSqlGuardTest {
             /** KDoc naming java.sql.Array */
             val recipe = entityManager.createQuery("select r from Recipe r", Recipe::class.java)
             @Query("select b from Bean b")
+            @Query(value = "select b from Bean b", nativeQuery = false)
         """
         assertEquals(emptyList<String>(), nativeSqlUses(code))
     }
@@ -98,7 +99,7 @@ class NativeSqlGuardTest {
             listOf(
                 "createNative\\w*",
                 "createStoredProcedureQuery",
-                "nativeQuery\\s*=",
+                "nativeQuery\\s*=\\s*true",
                 "@NativeQuery",
                 "@NamedNativeQuer(y|ies)",
                 "@Procedure\\b",
