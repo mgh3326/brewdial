@@ -14,7 +14,7 @@ PostgreSQL.
 | 1. Host preparation | Docker, shiftgate, HAProxy container, env files, deploy key | Nothing is serving from it yet |
 | 2. Cutover k3s → shiftgate | cloudflared `:30020` (k3s) → `:8020` (shiftgate, Node API, PostgreSQL) | Point cloudflared back to `:30020` |
 | 3. k3s removal | `systemctl disable --now k3s` and remove its files later | Until the files are removed: `systemctl start k3s` |
-| 4. Node → api-kt on HeatWave MySQL | Scripted write-frozen window: copy, verify, `brewdial-api-kt` blue (PostgreSQL) → green (MySQL), parity, then cloudflared → `:8021` | Scripted full copy MySQL → PostgreSQL (§4.5), then cloudflared → `:8020` (Node) or the blue colour |
+| 4. Node → api-kt on HeatWave MySQL | Scripted maintenance window: stop the Node API, copy, verify, start `brewdial-api-kt` on MySQL, parity, then cloudflared → `:8021` | Scripted (§4.5): stop api-kt, copy MySQL → PostgreSQL only if MySQL took writes, start the Node API, cloudflared → `:8020` |
 
 Run phases 1–3 together. Phase 4 is a separate change window.
 
@@ -179,29 +179,20 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   `create trigger` in a scratch schema.
 - **PostgreSQL role.** The application role owns the tables. The rollback copy
   needs that: an owner may disable user triggers, and no superuser is involved.
-  The copy checks this at cutover and refuses otherwise. The Node API, api-kt and
-  the copy must all use this one role, because the seal revokes that role's writes.
+  The copy checks this at cutover and refuses otherwise.
 - **Scripts on the host.** `/opt/brewdial` holds a checkout of a commit that
   contains `deploy/oci/heatwave-phase4.sh` (rsync as in `deploy/oci/README.md`).
-- **Write-freeze switch on the Node API.** Deploy a Node image built from a
-  commit that contains the switch, with the mount from
-  `deploy/oci/shiftgate/services.yaml`. Create the directory first, because the
-  deploy mounts it:
-  ```sh
-  sudo install -d -m 0755 /var/lib/brewdial /var/lib/brewdial/freeze
-  sudo install -m 0644 deploy/oci/shiftgate/services.yaml /etc/shiftgate/services.yaml
-  git push origin main:production     # the follower deploys it within a few minutes
-  sudo shiftgate status               # brewdial-api runs the new digest
-  curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8020/api/write-freeze-probe   # expect 404
-  ```
-- **No deploys during the window.** Pause the Dagu job that runs `shiftgate follow
-  brewdial-api --tag production`, and do not move `production`, from the start of
-  the window until the rollback window closes. A deploy starts a new Node image,
-  which runs `node-pg-migrate up` against PostgreSQL before it serves.
+- **Nothing else may start a colour during the window.** Pause every Dagu job that
+  runs `shiftgate follow` or `shiftgate check --heal`, and do not move `production`,
+  from the start of the window until the rollback window closes. Either could bring
+  the stopped Node API back as a writer. The script stops if it finds the Node API
+  running again before it finishes, but the jobs must be paused.
+- **Tell users.** Public traffic gets a 503 from the moment the Node API stops until
+  the switch: a few minutes, planned in advance. Read and write both stop.
 - **Env file for `brewdial-api-kt`.** Create
   `/etc/shiftgate/brewdial-api-kt.env` (`0600`) with `AGENT_TOKEN`,
-  `SENTRY_DSN` and, first, the **PostgreSQL** `DATABASE_URL`
-  (`postgres://brewdial_app:…@127.0.0.1:5432/brewdial`).
+  `SENTRY_DSN` and the **HeatWave** `DATABASE_URL`, the same value as in the copy
+  env file below.
 - **Env files for the copy.** Create `/etc/shiftgate/brewdial-copy.env`
   (`0600`) with two keys: `DATABASE_URL`, the HeatWave target
   (`mysql://app:…@<private-ip>:3306/brewdial?sslMode=REQUIRED`), and
@@ -239,9 +230,8 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   select lower(normalize(name)), count(*) from drippers group by 1 having count(*) > 1;
   ```
 - **No manual loaders during the window.** `scripts/kurly/load.mjs --execute` and
-  `load:xbloom-reference` write to PostgreSQL directly, past the freeze. Do not run
-  them from the start of the window until the rollback window closes. `final-verify`
-  catches a write, but a later one would be lost.
+  `load:xbloom-reference` write to PostgreSQL directly. Do not run them from the start
+  of the window until the rollback window closes. A write during the copy would be lost.
 
 ### 4.2 Parity precheck: Node API vs api-kt
 
@@ -258,22 +248,14 @@ separately:
    grep -rhoE '@(Get|Post|Put|Patch|Delete)Mapping\("[^"]*"' apps/api-kt/src/main | sort -u
    ```
    The documented intentional differences are in `apps/api-kt/README.md`.
-3. **Same data, both runtimes.** Deploy api-kt on **PostgreSQL** (colour blue)
-   with `sudo shiftgate deploy brewdial-api-kt --digest sha256:<api-kt
-   digest>`. It listens on `127.0.0.1:8021` and receives no public traffic.
-   Then compare read endpoints against the Node API on `:8020`:
-   ```sh
-   for p in /api/beans /api/recipes /api/grinders /api/drippers; do
-     diff <(curl -fsS "http://127.0.0.1:8020$p" | jq -S .) <(curl -fsS "http://127.0.0.1:8021$p" | jq -S .) \
-       && echo "same: $p" || echo "DIFF: $p"
-   done
-   ```
-   The only allowed differences are the ones in the README (timestamp
-   precision, numeric JSON types). Stop here if anything else differs.
 
-The window repeats this comparison against api-kt on **MySQL** (§4.3).
+The window then compares api-kt on **MySQL** with responses saved from the Node API
+just before it stops (§4.3).
 
-### 4.3 The window: one scripted sequence
+### 4.3 The window: stop, copy, verify, start
+
+The database is about 10 MB, so this is a short planned maintenance window. Nothing
+runs against a database while it is copied, so no write can land during the copy.
 
 Rehearse first. `--preflight` runs only the read-only checks and changes nothing:
 
@@ -281,49 +263,32 @@ Rehearse first. `--preflight` runs only the read-only checks and changes nothing
 sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest> --preflight
 ```
 
-Then run the window. The data is small, so it takes minutes:
+Then run the window:
 
 ```sh
 sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest>
 ```
 
-The script stops at the first failed check, prints `PHASE4_FAILED step=<step>`
-and exits non-zero. It only prints what the table shows. Tool output goes to
-`/var/log/brewdial-phase4/` (`0700`), with connection credentials redacted.
+The script stops at the first failed step, prints `PHASE4_FAILED step=<step>` and
+exits non-zero. Tool output goes to `/var/log/brewdial-phase4/` (`0700`), with
+connection credentials redacted.
 
 | Step | What it does | Passes when |
 |---|---|---|
-| `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared routes to `:8020` and nothing to `:8021`, api-kt is on blue with this digest, and the freeze probe answers |
-| `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze`, then waits up to 120 s for writes admitted before it to finish | `POST /api/write-freeze-probe` on `:8020` answers 503, and its `X-Writes-In-Flight` header reads 0 |
-| `seal` | Revokes the role's `INSERT`, `UPDATE`, `DELETE` and `TRUNCATE` on every copied table, then tries each kind of write on every table, matching no rows | `PG_WRITES_SEALED`: every write was denied |
-| `copy` | Locks the PostgreSQL tables against writes on any account, waiting up to 120 s for open writes, then copies in one snapshot and compares before it commits. Reads carry on | `COPY_VERIFY_OK` and exit 0 |
+| `preflight` | Reads the env files by path, shiftgate state and health | Every file is `0600` with the right keys, the Node API has an active colour, and no finished cutover stands |
+| `save` | Saves the Node API's answers to the read endpoints, for `parity` | Every endpoint answers |
+| `stop` | Stops every colour of the Node API, and any api-kt | Each container reports not running, and `:8020` no longer answers |
+| `copy` | Copies PostgreSQL → MySQL in one snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
 | `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
-| `deploy` | Moves the HeatWave `DATABASE_URL` into the api-kt env file, runs `shiftgate deploy` | Green is active, blue is the rollback colour, `/api/db/health` on `:8021` answers 200 |
-| `parity` | Compares the §4.2 reads and one bean and recipe, Node on PostgreSQL against api-kt on MySQL | Same after the README's allowed differences |
-| `final-verify` | Compares both databases again | `COPY_VERIFY_OK`: nothing wrote to either side during the window, and `brewdial-api` has the digest it had at preflight |
-| `done` | Prints the cloudflared command | The desk runs it (§4.4) |
+| `start` | `shiftgate deploy brewdial-api-kt` on MySQL | It is active on this digest, and `/api/db/health` on `:8021` answers 200 |
+| `parity` | Compares api-kt with the saved responses | Same after the README's allowed differences |
+| `finish` | Checks that nothing restarted the Node API, and records the finished cutover | Every Node colour is still stopped |
 
-**How the script reads cloudflared.** It asks `cloudflared tunnel ingress rule`
-to resolve every host in an active rule and the catch-all, so comments and unused
-keys do not count. A rule limited by path that points at `:8021` also stops it.
-`cloudflared` must be running and must have started after the file last changed.
+The script then prints the cloudflared command (§4.4).
 
-**The seal is the barrier; the freeze is the courtesy.** The seal stays on from this
-step until `rollback` or `unfreeze` lifts it, across every run and restart, and it
-applies to sessions that are already open. If the freeze failed, a write would get a
-500 instead of a 503, and PostgreSQL would still not change. The seal does not stop
-another role, so nothing else may write to these tables during the window.
-
-**What the freeze does.** While the file exists, the Node API answers 503 with
-`Retry-After` to every method except `GET`, `HEAD` and `OPTIONS`. Reads keep
-working from PostgreSQL. A `GET` that carries a new identity stays anonymous
-instead of creating the user. The file lives on disk, so the freeze survives a
-reboot and a container restart. To check it by hand, use the probe above: that
-path has no route, so the probe can never write.
-
-**What the copy verifies.** The source's column list drives the copy. A table,
-column or sequence that only one side has stops the run before it writes
-anything (`COPY_CHECK_FAILED schema drift: …`). After the copy:
+**What the copy verifies.** The source's column list drives the copy. A table, column
+or sequence that only one side has stops the run before it writes anything
+(`COPY_CHECK_FAILED schema drift: …`). After the copy:
 
 - **row count**: source vs target, per table;
 - **checksum**: SHA-256 over every row in a vendor-neutral canonical form
@@ -335,42 +300,25 @@ anything (`COPY_CHECK_FAILED schema drift: …`). After the copy:
 The report ends with `COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15
 sequences=1`. Any `MISMATCH` exits non-zero.
 
-**If it stops.** Writes stay frozen. Then:
+**If it stops.** The Node API stays stopped, and PostgreSQL is untouched. The window's
+way out is always the same: run `rollback` (§4.5), which restarts the Node API. To
+retry instead:
 
 | Stopped at | Do this |
 |---|---|
-| `preflight` | Nothing changed. Fix the cause and run it again. |
-| `freeze` | If the switch does not work, run `unfreeze` and fix §4.1. If writes are still running, find out why (`pg_stat_activity`) and run it again: nothing has been copied. |
-| `seal` | A write got through, so the role has another grant. Remove that grant and run it again. |
-| `copy` | The copy rolled back, including on `MISMATCH`, and the target is still empty. Fix the cause and run it again. |
-| `verify` | The target holds rows, and something changed after the copy. Investigate, then run it again with `--replace-target`. |
-| `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. If the fix needs a new api-kt digest, restore the env file first (below) and deploy that digest to blue on PostgreSQL. The script refuses a blue that is not on PostgreSQL. |
+| `preflight` or `save` | Nothing changed. Fix the cause and run it again. |
+| `stop` | Find what still serves `:8020` or restarted a colour, then run it again. |
+| `copy` | The copy rolled back, and the target is still empty. Fix the cause and run it again. |
+| `verify`, `start`, `parity` or `finish` | MySQL holds rows. Run it again with `--replace-target`. |
 
-To abandon the window, also restore the env file and open writes again. `unfreeze`
-lifts the seal first. This also disables `rollback`, because MySQL is stale from then
-on:
-
-```sh
-sudo cp -p /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api-kt.env
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze --digest sha256:<api-kt digest>
-```
-
-After a cutover has verified, `unfreeze` first compares both databases and refuses if
-they differ, because MySQL may then hold writes that PostgreSQL lacks. Run `rollback`
-in that case. A new `cutover` is refused until `rollback` or `unfreeze` ends the
-verified one, so `--replace-target` cannot overwrite live data either.
-
-If `unfreeze` cannot prove that writes reopened, it puts the freeze back and keeps
-`rollback` available. If it also reports `writes may be open`, check the Node API
-before you run a rollback.
-
-`copy` always refuses a target that holds rows, so a repeated run can never
-overwrite live MySQL by accident. Only `--replace-target` replaces it.
+A retry keeps the responses saved before the Node API stopped. `copy` always refuses
+a target that holds rows, and no `cutover` runs while a finished one stands, so
+`--replace-target` cannot overwrite live data.
 
 **If `parity` shows only a different order.** PostgreSQL and MySQL may sort
 `name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation), and
 they place a NULL `continuum_position` differently. Decide whether that is
-acceptable. To accept it, retry as above and add `--accept-order`. It covers only
+acceptable. To accept it, retry with `--replace-target --accept-order`. It covers only
 the order of the rows in `/api/beans`, `/api/grinders` and `/api/drippers`, and of
 recipes with an equal `created_at`, which have no defined order on either database.
 The script still stops on any other order difference, such as recipe steps or a
@@ -379,76 +327,56 @@ accepted path.
 
 ### 4.4 Switch traffic (desk)
 
-1. Run the command the script printed, and only that command:
+1. Run the command the script printed:
    ```sh
    sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
    ```
-   Do not run `shiftgate prune` or another api-kt deploy until the rollback
-   window closes. Blue is the PostgreSQL colour, and shiftgate keeps only that
-   one previous container.
 2. Smoke test: run public `/api/health`, `/api/db/health` and a read, then
    one agent write through MCP. Check Sentry.
-3. Keep the freeze file. PostgreSQL stays sealed and the Node API stays read-only,
-   so nothing can diverge there while it is the rollback target.
-4. Move the backup timers to HeatWave now (§4.6). PostgreSQL no longer changes,
+3. Move the backup timers to HeatWave now (§4.6). PostgreSQL no longer changes,
    and the timers do not cover the live data until you do.
-5. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
+4. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
    move its `production` tag, and change the Dagu job to follow `brewdial-api-kt`.
-   Do this in a follow-up PR, after the rollback window closes. Do not run any
-   follower or deploy for api-kt until then, because a deploy changes the colours:
-   it replaces blue, the PostgreSQL rollback colour, and `rollback` then refuses.
+   Do this in a follow-up PR, after the rollback window closes.
 
-### 4.5 Rollback: full copy MySQL → PostgreSQL
+### 4.5 Rollback
 
-Rollback replaces PostgreSQL with the MySQL data, through the same verified
-tool. There is no replay by timestamp. Rows written, changed or deleted on MySQL
-after the cutover all arrive, and the sequence continues where MySQL stopped.
+One command covers both cases. It uses the digest the cutover ran with:
 
-1. **Stop writes on MySQL.** Point traffic at the frozen Node API. Public reads
-   keep working from the old PostgreSQL data, and every write answers 503:
-   ```sh
-   sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
-   ```
-2. **Copy back.** The script requires cloudflared on `:8020`, the freeze still on,
-   and a cutover that verified and that no `rollback` or `unfreeze` has ended, so
-   an empty or stale MySQL can never replace PostgreSQL. It then:
-   1. Stops the api-kt green container, so that nothing can write to MySQL. A stop
-      waits up to 40 s for requests to finish.
-   2. Dumps PostgreSQL to
-      `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`.
-   3. Locks the MySQL tables against writes on any account, waiting up to 120 s for
-      open writes, then, in one PostgreSQL transaction, lifts the seal and replaces every row in one transaction, compares before it commits, and
-      compares again in a new snapshot.
+```sh
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
+```
 
-   An open write on MySQL, even from your own session, makes the copy refuse.
-   ```sh
-   sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
-   ```
-   On failure, PostgreSQL keeps its previous rows and writes stay frozen. Read the
-   tool log the script names: a value PostgreSQL cannot store, such as one that
-   exceeds a size limit there, is named by its database error. Fix the row on MySQL,
-   then run it again. MySQL stays as it was. To stay on MySQL instead, run `sudo
-   docker start shiftgate-brewdial-api-kt-green` and point cloudflared back at `:8021`.
-3. **Choose the runtime.** The script prints both commands:
-   - **Node API on PostgreSQL** (the phase-2 state): run `sudo
-     /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze`. Traffic is already on
-     `:8020`.
-   - **api-kt on PostgreSQL** (keeps the Kotlin runtime): restore the env file,
-     because the next deploy reads it. Then run `sudo shiftgate rollback
-     brewdial-api-kt`, which starts the kept blue container with its PostgreSQL
-     env, and point cloudflared at `:8021`. The Node API stays frozen.
+It stops api-kt and the Node API, so that nothing runs against either database. Then:
 
-   If the Node API serves again, resume the Dagu follower.
-4. **Point the backup timers back at PostgreSQL** if §4.6 already ran:
-   ```sh
-   sudo sed -i 's#backup-heatwave.sh#backup.sh#' /etc/systemd/system/brewdial-backup.service
-   sudo sed -i 's#verify-restore-heatwave.sh#verify-restore.sh#' /etc/systemd/system/brewdial-verify.service
-   sudo systemctl daemon-reload
-   ```
+| State | What it does |
+|---|---|
+| No finished cutover: the window failed or was abandoned | Nothing is copied, because MySQL never served. It starts the Node API on the untouched PostgreSQL |
+| A finished cutover, and MySQL still matches PostgreSQL | Nothing is copied, because MySQL took no writes. It starts the Node API |
+| A finished cutover, and MySQL differs | It dumps PostgreSQL to `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`, replaces every row from MySQL in one transaction, compares before it commits, compares again in a new snapshot, then starts the Node API |
 
-The copy needs both databases, so this rollback is available until §4.7 stops
-PostgreSQL. Keep the window as long as the desk needs, and record the decision
-to close it.
+Rows written, changed or deleted on MySQL all arrive, and the sequence continues
+where MySQL stopped. Public traffic gets a 503 until this finishes.
+
+Then switch traffic back, with the command it prints, and resume the Dagu jobs:
+
+```sh
+sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
+```
+
+If §4.6 already ran, point the backup timers back at PostgreSQL:
+
+```sh
+sudo sed -i 's#backup-heatwave.sh#backup.sh#' /etc/systemd/system/brewdial-backup.service
+sudo sed -i 's#verify-restore-heatwave.sh#verify-restore.sh#' /etc/systemd/system/brewdial-verify.service
+sudo systemctl daemon-reload
+```
+
+On failure, PostgreSQL keeps its previous rows and the Node API stays stopped. Read
+the tool log the script names: a value PostgreSQL cannot store, such as one that
+exceeds a size limit there, is named by its database error. Fix the row on MySQL,
+then run `rollback` again. Once a rollback has copied or found no writes, a second one
+copies nothing, so it can never overwrite what PostgreSQL takes next.
 
 ### 4.6 Backup timers → HeatWave
 
@@ -493,7 +421,7 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
 
 1. **Final dump** to the existing backup path. `final-postgres/` is outside
    retention, and the Mac pulls it with everything else. It holds the data as
-   of the cutover, because PostgreSQL has been frozen since then. The current
+   of the cutover, because nothing has written to PostgreSQL since then. The current
    data is in the HeatWave dumps from §4.6.
    ```sh
    stamp="$(date -u +%Y%m%d-%H%M)"
@@ -503,15 +431,13 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    sudo -u opc /opt/brewdial/deploy/oci/verify-restore.sh "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump"   # GATE PASS
    ```
    Do not continue until the Mac's next pull holds the file.
-2. **Stop what still uses PostgreSQL.** First remove any Dagu job that still
-   follows `brewdial-api`, or it restarts a colour. Also pause the job that follows
-   `brewdial-api-kt` (§4.4 step 5), so that no deploy starts during these steps.
-   Then check that nothing but these connects:
+2. **Stop what still uses PostgreSQL.** The Node API stopped in the window. Remove
+   any Dagu job that still follows or heals `brewdial-api`, or it restarts a colour.
+   Then check that nothing connects:
    ```sql
    select usename, client_addr, count(*) from pg_stat_activity where datname = 'brewdial' group by 1, 2;
    ```
    ```sh
-   sudo docker stop shiftgate-brewdial-api-blue shiftgate-brewdial-api-green shiftgate-brewdial-api-kt-blue
    sudo systemctl disable --now brewdial-api    # the legacy systemd unit, if it is still installed
    sudo systemctl disable --now k3s             # if phase 3 left it enabled
    ```
@@ -521,21 +447,19 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    ss -ltn | grep -c ':5432 '                   # expect 0
    curl -fsS https://<public host>/api/db/health
    ```
-   Resume the `brewdial-api-kt` follower once this passes. It runs the live API.
 4. **Keep the data directory for 14 days.** Record the date in the change record.
    Find the path with `sudo systemctl cat postgresql-17 | grep PGDATA` (usually
    `/var/lib/pgsql/17/data`). To go back within the 14 days, run `sudo systemctl
-   enable --now postgresql-17` and `sudo docker start
-   shiftgate-brewdial-api-<active colour>`, then §4.5 steps 1–3. That works only
-   while no api-kt deploy has changed the colours. Otherwise `rollback` refuses:
-   decide by hand, using the HeatWave dumps from §4.6.
+   enable --now postgresql-17`, then §4.5 with the digest the cutover ran with. If
+   api-kt has migrated its schema since, that image may no longer match MySQL: decide
+   by hand, using the HeatWave dumps from §4.6.
 5. **Remove, after 14 days** (a later, separate change):
    ```sh
    sudo dnf remove 'postgresql17*'
    sudo rm -rf /var/lib/pgsql/17
    sudo rm -f /etc/shiftgate/brewdial-copy.env /etc/shiftgate/brewdial-rollback.env \
-     /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api.env /etc/brewdial/api.env
+     /etc/shiftgate/brewdial-api.env /etc/brewdial/api.env /var/lib/brewdial/phase4-cutover-done
    ```
-   Then remove `/var/lib/brewdial/freeze`. In the repository, delete the
+   In the repository, delete the
    `brewdial-api` service from `services.yaml`, `apps/api`, `packages/db`,
    `backup.sh` and `verify-restore.sh` in one PR, and keep `final-postgres/`.

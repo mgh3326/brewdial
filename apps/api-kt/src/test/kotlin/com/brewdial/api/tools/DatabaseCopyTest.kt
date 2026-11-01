@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import java.sql.Connection
 import java.sql.DriverManager
-import java.time.Duration
 import java.util.Properties
 import java.util.UUID
 
@@ -180,271 +179,6 @@ class DatabaseCopyTest {
     }
 
     @Test
-    fun anOpenWriteOnThePostgresSourceStopsTheCopyBeforeItWrites() {
-        DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword).use { writer ->
-            writer.autoCommit = false
-            writer.update("update beans set origin = 'in flight' where id = 'bean-1'")
-
-            val failure = assertThrows(IllegalStateException::class.java) { forward(CopyMode.COPY) }
-
-            assertTrue(failure.message!!.contains("could write"), failure.message)
-            assertEquals(0L, mysql.long("select count(*) from beans"), "nothing may be written")
-            writer.rollback()
-        }
-
-        assertTrue(forward(CopyMode.COPY), output.joinToString("\n"))
-    }
-
-    @Test
-    fun theCopyWaitsForAWriteThatFinishesAndThenSeesIt() {
-        val writer = DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword)
-        writer.autoCommit = false
-        writer.update("update beans set origin = 'committed while waiting' where id = 'bean-1'")
-        val committer = Thread {
-            Thread.sleep(700)
-            writer.commit()
-            writer.close()
-        }
-        committer.start()
-
-        assertTrue(forward(CopyMode.COPY, Duration.ofSeconds(30)), output.joinToString("\n"))
-
-        committer.join()
-        assertEquals("committed while waiting", mysql.string("select origin from beans where id = 'bean-1'"))
-    }
-
-    @Test
-    fun anIdlePostgresSessionDoesNotStopTheCopy() {
-        DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword).use { reader ->
-            reader.autoCommit = false
-            reader.string("select origin from beans where id = 'bean-1'")
-
-            assertTrue(forward(CopyMode.COPY), output.joinToString("\n"))
-        }
-    }
-
-    @Test
-    fun anOpenWriteOfTheApiUserStopsTheRollback() {
-        assertTrue(forward(CopyMode.COPY))
-        val before = pgFingerprints()
-
-        mysqlAsCopyUser().use { stillWriting ->
-            stillWriting.autoCommit = false
-            stillWriting.update("update beans set origin = 'in flight' where id = 'bean-1'")
-
-            val failure = assertThrows(IllegalStateException::class.java) { reverse(CopyMode.REPLACE) }
-
-            assertTrue(failure.message!!.contains("could write"), failure.message)
-            assertEquals(before, pgFingerprints())
-            stillWriting.rollback()
-        }
-
-        assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
-    }
-
-    @Test
-    fun anIdleSessionOfTheApiUserDoesNotStopTheRollback() {
-        assertTrue(forward(CopyMode.COPY))
-
-        mysqlAsCopyUser().use { idle ->
-            idle.string("select 1")
-
-            assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
-        }
-    }
-
-    @Test
-    fun aWriterOnAnotherMysqlAccountStopsTheRollback() {
-        assertTrue(forward(CopyMode.COPY))
-        val before = pgFingerprints()
-
-        connect(mysqlAdminConfig, database).use { otherAccount ->
-            otherAccount.autoCommit = false
-            otherAccount.update("update beans set origin = 'in flight' where id = 'bean-1'")
-
-            val failure = assertThrows(IllegalStateException::class.java) { reverse(CopyMode.REPLACE) }
-
-            assertTrue(failure.message!!.contains("could write"), failure.message)
-            assertEquals(before, pgFingerprints())
-            otherAccount.rollback()
-        }
-
-        assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
-        assertEquals("Panama", pgAdmin.string("select origin from beans where id = 'bean-1'"))
-    }
-
-    @Test
-    fun aReadOnlySnapshotOnAnotherMysqlAccountDoesNotStopTheRollback() {
-        assertTrue(forward(CopyMode.COPY))
-
-        connect(mysqlAdminConfig, database).use { backup ->
-            backup.autoCommit = false
-            backup.string("select origin from beans where id = 'bean-1'")
-
-            assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
-        }
-    }
-
-    private fun seal(): Boolean = DatabaseCopy(
-        CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL),
-        CopyEndpoint(mysql, DatabaseVendor.MYSQL),
-        output::add
-    ).run(CopyMode.SEAL)
-
-    private fun unseal(): Boolean = DatabaseCopy(
-        CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL),
-        CopyEndpoint(mysql, DatabaseVendor.MYSQL),
-        output::add
-    ).run(CopyMode.UNSEAL)
-
-    /** A session of the role, as the application holds one, opened before the seal. */
-    private fun appSession(): Connection = DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword)
-
-    @Test
-    fun theSealStopsEveryKindOfWriteEvenOnASessionAlreadyOpen() {
-        appSession().use { app ->
-            app.string("select origin from beans where id = 'bean-1'")
-
-            assertTrue(seal())
-            assertTrue(outputLines().contains("PG_WRITES_SEALED tables=15"), outputLines().joinToString("\n"))
-
-            listOf(
-                "update beans set origin = 'x' where id = 'bean-1'",
-                "delete from saved_beans",
-                "insert into beans (id, name) values ('sealed', 'sealed')",
-                "truncate bean_photos cascade",
-                // A definer function runs as the owner, which lost the privileges too.
-                "select resolve_app_user('toss_anon', 'sealed-key-000000000')"
-            ).forEach { write ->
-                val failure = assertThrows(java.sql.SQLException::class.java, { app.update(write) }, write)
-                assertEquals("42501", failure.sqlState, write)
-            }
-            assertEquals("Panama", app.string("select origin from beans where id = 'bean-1'"), "reads carry on")
-        }
-    }
-
-    @Test
-    fun theSealLastsAcrossRunsAndNewSessions() {
-        assertTrue(seal())
-
-        assertTrue(forward(CopyMode.COPY), output.joinToString("\n"))
-        assertTrue(forward(CopyMode.VERIFY))
-
-        appSession().use { later ->
-            assertEquals("42501", assertThrows(java.sql.SQLException::class.java) { later.update("delete from saved_beans") }.sqlState)
-        }
-    }
-
-    @Test
-    fun aSealThatAnotherGrantDefeatsIsRefused() {
-        pgAdmin.update("grant delete on saved_beans to public")
-
-        val failure = assertThrows(IllegalStateException::class.java) { seal() }
-
-        assertTrue(failure.message!!.contains("saved_beans still accepts writes"), failure.message)
-    }
-
-    @Test
-    fun aProbeNeverChangesData() {
-        val before = pgFingerprints()
-        pgAdmin.update("grant insert, update, delete on saved_beans to public")
-
-        assertThrows(IllegalStateException::class.java) { seal() }
-
-        assertEquals(before, pgFingerprints())
-    }
-
-    @Test
-    fun unsealGivesTheWritesBack() {
-        assertTrue(seal())
-        assertTrue(seal(), "sealing twice is safe")
-
-        assertTrue(unseal())
-        assertTrue(unseal(), "unsealing twice is safe")
-
-        assertTrue(outputLines().contains("PG_WRITES_OPEN tables=15"), outputLines().joinToString("\n"))
-        appSession().use { app -> app.update("update beans set origin = 'open' where id = 'bean-1'") }
-        assertEquals("open", pgAdmin.string("select origin from beans where id = 'bean-1'"))
-    }
-
-    @Test
-    fun aRollbackLiftsTheSealOnlyIfItCommits() {
-        assertTrue(seal())
-        assertTrue(forward(CopyMode.COPY))
-        mysql.update("insert into beans (id, name) values ('bean-boom', 'BOOM')")
-        pgAdmin.update("alter table beans add constraint beans_no_boom check (name <> 'BOOM')")
-
-        assertThrows(Exception::class.java) { reverse(CopyMode.REPLACE) }
-        appSession().use { app ->
-            assertEquals("42501", assertThrows(java.sql.SQLException::class.java) { app.update("delete from saved_beans") }.sqlState, "a failed replace keeps the seal")
-        }
-
-        pgAdmin.update("alter table beans drop constraint beans_no_boom")
-        assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
-        assertEquals(1L, pgAdmin.long("select count(*) from beans where id = 'bean-boom'"))
-        appSession().use { app -> app.update("update beans set origin = 'open' where id = 'bean-1'") }
-    }
-
-    @Test
-    fun anOpenWriteOnAnotherPostgresRoleStopsTheCopy() {
-        connect(pgAdminConfig, database).use { otherRole ->
-            otherRole.autoCommit = false
-            otherRole.update("update beans set origin = 'in flight' where id = 'bean-1'")
-
-            val failure = assertThrows(IllegalStateException::class.java) { forward(CopyMode.COPY) }
-
-            assertTrue(failure.message!!.contains("could write"), failure.message)
-            assertEquals(0L, mysql.long("select count(*) from beans"), "nothing may be written")
-            otherRole.rollback()
-        }
-    }
-
-    /** r4436714500: nothing can commit on the source from before the first read until the run ends. */
-    @Test
-    fun noPostgresWriteCanEnterWhileTheCopyRuns() {
-        val attempts = mutableListOf<Boolean>()
-        val duringTheRun: (String) -> Unit = { _ ->
-            DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword).use { writer ->
-                writer.update("set lock_timeout = '200ms'")
-                attempts += runCatching { writer.update("update beans set origin = 'too late' where id = 'bean-1'") }.isSuccess
-            }
-        }
-
-        assertTrue(
-            DatabaseCopy(CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL), CopyEndpoint(mysql, DatabaseVendor.MYSQL), duringTheRun, Duration.ofSeconds(1)).run(CopyMode.COPY)
-        )
-
-        assertTrue(attempts.isNotEmpty())
-        assertTrue(attempts.none { it }, "a write got through during the run: $attempts")
-        // Released at the end.
-        pg.update("update beans set origin = 'after the run' where id = 'bean-1'")
-        assertEquals("after the run", pg.string("select origin from beans where id = 'bean-1'"))
-    }
-
-    @Test
-    fun noMysqlWriteCanEnterWhileTheRollbackRuns() {
-        assertTrue(forward(CopyMode.COPY))
-        val attempts = mutableListOf<Boolean>()
-        val duringTheRun: (String) -> Unit = { _ ->
-            connect(mysqlAdminConfig, database).use { writer ->
-                writer.update("set session lock_wait_timeout = 1")
-                attempts += runCatching { writer.update("update beans set origin = 'too late' where id = 'bean-1'") }.isSuccess
-            }
-        }
-
-        mysqlAsCopyUser().use { source ->
-            assertTrue(
-                DatabaseCopy(CopyEndpoint(source, DatabaseVendor.MYSQL), CopyEndpoint(pg, DatabaseVendor.POSTGRESQL), duringTheRun, Duration.ofSeconds(1)).run(CopyMode.REPLACE)
-            )
-            assertTrue(attempts.isNotEmpty())
-            assertTrue(attempts.none { it }, "a write got through during the run: $attempts")
-            // Released at the end, while this connection is still open.
-            mysql.update("update beans set origin = 'after the run' where id = 'bean-1'")
-        }
-        assertEquals("after the run", mysql.string("select origin from beans where id = 'bean-1'"))
-    }
-
-    @Test
     fun aTableThePostgresRoleDoesNotOwnStopsTheCutover() {
         pgAdmin.update("alter table bean_photos owner to postgres")
 
@@ -547,19 +281,17 @@ class DatabaseCopyTest {
 
     private fun outputLines() = output.flatMap { it.lines() }
 
-    private fun forward(mode: CopyMode, quietTimeout: Duration = Duration.ofSeconds(1)): Boolean = DatabaseCopy(
+    private fun forward(mode: CopyMode): Boolean = DatabaseCopy(
         CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL),
         CopyEndpoint(mysql, DatabaseVendor.MYSQL),
-        output::add,
-        quietTimeout
+        output::add
     ).run(mode)
 
-    private fun reverse(mode: CopyMode, quietTimeout: Duration = Duration.ofSeconds(1)): Boolean = mysqlAsCopyUser().use { source ->
+    private fun reverse(mode: CopyMode): Boolean = mysqlAsCopyUser().use { source ->
         DatabaseCopy(
             CopyEndpoint(source, DatabaseVendor.MYSQL),
             CopyEndpoint(pg, DatabaseVendor.POSTGRESQL),
-            output::add,
-            quietTimeout
+            output::add
         ).run(mode)
     }
 

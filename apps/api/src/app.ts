@@ -9,7 +9,6 @@ import { feedback } from './routes/feedback.js'
 import { me } from './routes/me.js'
 import { identityMiddleware } from './middleware/identity.js'
 import { agentAuth } from './middleware/agent-auth.js'
-import { writeFreeze } from './middleware/write-freeze.js'
 import { agentRouter } from './routes/agent.js'
 
 // Toss mini-app WebView calls cross-origin from these EXACT origins and rejects
@@ -40,9 +39,6 @@ api.use(
     maxAge: 86400,
   })
 )
-
-// After CORS so a frozen response still reaches the browser; before everything that writes.
-api.use('*', writeFreeze)
 
 // Populate c.get('appUserId') for all routes — required before /me's requireIdentity guard.
 api.use('*', identityMiddleware)

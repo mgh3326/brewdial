@@ -58,8 +58,8 @@ ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
    --digest <digest>` on the host over the tailnet. Host config:
    `shiftgate/services.yaml`. Cutover, rollback and k3s removal:
    `docs/runbooks/oci-heatwave-cutover.md`.
-4. **Phase 4 (HeatWave):** `heatwave-phase4.sh` runs the write-frozen window and the
-   rollback copy. `backup-heatwave.sh` and `verify-restore-heatwave.sh` replace the
+4. **Phase 4 (HeatWave):** `heatwave-phase4.sh` runs the stop, copy, verify and start
+   window, and the rollback. `backup-heatwave.sh` and `verify-restore-heatwave.sh` replace the
    PostgreSQL scripts behind the same timers when PostgreSQL retires. Procedure:
    `docs/runbooks/oci-heatwave-cutover.md` §4.3–§4.7.
 5. **k3s CI deploy (ROB-1214 Phase 2+, DEPRECATED):** `.github/workflows/deploy-oci-k3s.yml`

@@ -37,7 +37,5 @@ jobs:
       - name: Credentials reach the MySQL option file unchanged
         run: bash deploy/oci/test/heatwave-client-test.sh
 
-      - name: Phase-4 script stops at the first failed check and prints no secret
-        env:
-          PHASE4_REQUIRE_REAL_CLOUDFLARED: "1"
+      - name: Phase-4 script stops at the first failed step and prints no secret
         run: bash deploy/oci/test/heatwave-phase4-test.sh

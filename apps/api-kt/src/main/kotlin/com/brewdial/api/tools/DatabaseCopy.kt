@@ -9,8 +9,6 @@ import java.math.BigDecimal
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.ResultSet
-import java.sql.SQLException
-import java.time.Duration
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -31,17 +29,11 @@ internal enum class CopyMode {
     REPLACE,
 
     /** Compare only; writes nothing. */
-    VERIFY,
-
-    /** Revoke the PostgreSQL role's write privileges, for the whole window across runs. */
-    SEAL,
-
-    /** Give them back. */
-    UNSEAL;
+    VERIFY;
 
     companion object {
         fun parse(value: String): CopyMode = entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
-            ?: error("BREWDIAL_COPY_MODE must be copy, replace, verify, seal or unseal")
+            ?: error("BREWDIAL_COPY_MODE must be copy, replace or verify")
     }
 }
 
@@ -60,8 +52,7 @@ internal class CopyEndpoint(val connection: Connection, val vendor: DatabaseVend
 internal class DatabaseCopy(
     private val source: CopyEndpoint,
     private val target: CopyEndpoint,
-    private val output: (String) -> Unit = ::println,
-    private val quietTimeout: Duration = Duration.ofSeconds(120)
+    private val output: (String) -> Unit = ::println
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -78,9 +69,11 @@ internal class DatabaseCopy(
      */
     fun run(mode: CopyMode): Boolean {
         checkPostgresOwnership()
-        if (mode == CopyMode.SEAL) return seal()
-        if (mode == CopyMode.UNSEAL) return unseal()
-        holdSourceAgainstWrites()
+        // One snapshot of the source for the whole copy and verification. Nothing
+        // else writes: the window stops every writer before the tool runs.
+        source.connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
+        source.connection.autoCommit = false
+        source.connection.isReadOnly = true
         try {
             val columns = TABLES.associateWith { table -> sharedColumns(table) }
             checkTableList(source)
@@ -89,95 +82,8 @@ internal class DatabaseCopy(
             checkCounterList(target)
             return if (mode == CopyMode.VERIFY) report(columns) else write(mode, columns)
         } finally {
-            releaseSource()
+            source.connection.rollback()
         }
-    }
-
-    /**
-     * The barrier for the whole window, across runs and restarts: every session of
-     * the role loses its write privileges at once, whatever the application does. It
-     * does not stop another role, or a write already running, which the lock on each
-     * run does. Only a probe that fails proves it, so each kind of write is tried on
-     * every table, and matching no rows, so that a probe can never change data.
-     */
-    private fun seal(): Boolean {
-        execute("revoke insert, update, delete, truncate on ${postgresTables()} from current_user", postgres.connection)
-        TABLES.forEach { table ->
-            val quoted = name(postgres, table)
-            val column = name(postgres, columns(postgres, table).keys.first())
-            listOf(
-                "insert into $quoted select * from $quoted where false",
-                "update $quoted set $column = $column where false",
-                "delete from $quoted where false"
-            ).forEach { probe -> check(isDenied(probe)) { "$table still accepts writes after the seal, so the role has another grant: $probe" } }
-            check(!hasTruncate(table)) { "$table can still be truncated after the seal" }
-        }
-        output("PG_WRITES_SEALED tables=${TABLES.size}")
-        return true
-    }
-
-    private fun unseal(): Boolean {
-        grantWrites()
-        check(TABLES.all { hasTruncate(it) }) { "the role did not get its write privileges back" }
-        output("PG_WRITES_OPEN tables=${TABLES.size}")
-        return true
-    }
-
-    private fun grantWrites() {
-        execute("grant insert, update, delete, truncate on ${postgresTables()} to current_user", postgres.connection)
-    }
-
-    private fun isDenied(probe: String): Boolean = try {
-        execute(probe, postgres.connection)
-        false
-    } catch (exception: SQLException) {
-        exception.sqlState == PG_INSUFFICIENT_PRIVILEGE
-    }
-
-    private fun hasTruncate(table: String): Boolean =
-        query(postgres.connection, "select has_table_privilege(current_user, '${name(postgres, table)}', 'TRUNCATE')") { rows ->
-            rows.next()
-            rows.getBoolean(1)
-        }
-
-    private fun postgresTables() = TABLES.joinToString(", ") { name(postgres, it) }
-
-    private val postgres get() = if (source.vendor == DatabaseVendor.POSTGRESQL) source else target
-
-    /**
-     * Held for the whole run, on every account: new writes wait, open ones must finish
-     * first, and reads carry on. A check that the source is quiet would leave a gap
-     * before the first read. A timeout means something still holds a write open.
-     */
-    private fun holdSourceAgainstWrites() {
-        val connection = source.connection
-        val seconds = quietTimeout.seconds.coerceAtLeast(1)
-        try {
-            when (source.vendor) {
-                DatabaseVendor.POSTGRESQL -> {
-                    // Repeatable read takes its one snapshot at the first query, after these locks.
-                    connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
-                    connection.autoCommit = false
-                    execute("set local lock_timeout = '${seconds}s'", connection)
-                    execute("lock table ${TABLES.joinToString(", ") { name(source, it) }} in share mode", connection)
-                    execute("set transaction read only", connection)
-                }
-                // No transaction is open: with writers locked out, every read sees the same data.
-                DatabaseVendor.MYSQL -> {
-                    execute("set session lock_wait_timeout = $seconds", connection)
-                    val tables = TABLES + RECIPE_CODE_SEQUENCE
-                    execute("lock tables ${tables.joinToString(", ") { "${name(source, it)} read" }}", connection)
-                }
-            }
-        } catch (exception: SQLException) {
-            if (!connection.autoCommit) connection.rollback()
-            error("the ${source.vendor} source was not locked within $quietTimeout, so a session that could write may still hold it (${exception.sqlState})")
-        }
-    }
-
-    private fun releaseSource() = when (source.vendor) {
-        DatabaseVendor.POSTGRESQL -> source.connection.rollback()
-        DatabaseVendor.MYSQL -> execute("unlock tables", source.connection)
     }
 
     /**
@@ -185,6 +91,7 @@ internal class DatabaseCopy(
      * do. Checked in both directions, so that the cutover fails rather than the rollback.
      */
     private fun checkPostgresOwnership() {
+        val postgres = if (source.vendor == DatabaseVendor.POSTGRESQL) source else target
         val tables = TABLES.joinToString(", ") { "'$it'" }
         val foreign = mutableListOf<String>()
         query(
@@ -335,8 +242,6 @@ internal class DatabaseCopy(
         DatabaseVendor.MYSQL -> execute("set @bd_replication_role = 'replica'")
         DatabaseVendor.POSTGRESQL -> {
             execute("set local lock_timeout = '30s'")
-            // Lifts the seal in this transaction: a failed replace leaves it on.
-            grantWrites()
             TABLES.forEach { table -> execute("alter table ${name(target, table)} disable trigger user") }
         }
     }
@@ -497,8 +402,8 @@ internal class DatabaseCopy(
         array.free()
     }
 
-    private fun execute(sql: String, connection: Connection = target.connection) {
-        connection.createStatement().use { it.execute(sql) }
+    private fun execute(sql: String) {
+        target.connection.createStatement().use { it.execute(sql) }
     }
 
     private fun <T> query(connection: Connection, sql: String, read: (ResultSet) -> T): T =
@@ -537,7 +442,6 @@ internal class DatabaseCopy(
 
     internal companion object {
         private const val BATCH = 500
-        private const val PG_INSUFFICIENT_PRIVILEGE = "42501"
         private const val PG_TEXT_ARRAY = "_text"
         const val RECIPE_CODE_SEQUENCE = "recipe_code_seq"
 

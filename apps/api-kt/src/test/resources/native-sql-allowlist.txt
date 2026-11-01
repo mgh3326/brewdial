@@ -3,7 +3,7 @@
 # Do not add to this list without a reason that JPQL, criteria or Flyway cannot meet.
 #
 # Permanent: the copy tool works on both schemas at once, below the ORM.
-10 kotlin/com/brewdial/api/tools/DatabaseCopy.kt cross-vendor data copy (phase 4 and rollback)
+9 kotlin/com/brewdial/api/tools/DatabaseCopy.kt cross-vendor data copy (phase 4 and rollback)
 4 kotlin/com/brewdial/api/tools/DatabaseCopyRunner.kt opens the second connection for the copy
 #
 # Existing debt from the Hono port: move these to JPQL or criteria, then lower the count.
