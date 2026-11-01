@@ -25,10 +25,10 @@ internal fun hasNulCharacter(body: ByteArray): Boolean =
 /**
  * MySQL stores a NUL character and PostgreSQL refuses it, so one such value would
  * block every copy back to PostgreSQL. Refused here, for both databases, so that
- * the data stays portable.
+ * the data stays portable. Runs after agent auth, and buffers one bounded body.
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 2)
+@Order(Ordered.HIGHEST_PRECEDENCE + 4)
 class NulCharacterFilter : OncePerRequestFilter() {
     override fun doFilterInternal(
         request: HttpServletRequest,
@@ -39,14 +39,22 @@ class NulCharacterFilter : OncePerRequestFilter() {
             filterChain.doFilter(request, response)
             return
         }
-        val body = request.inputStream.readAllBytes()
+        val body = request.inputStream.readNBytes(MAX_BODY_BYTES + 1)
+        if (body.size > MAX_BODY_BYTES) {
+            refuse(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "body too large")
+            return
+        }
         if (hasNulCharacter(body)) {
-            response.status = HttpServletResponse.SC_BAD_REQUEST
-            response.contentType = "application/json"
-            response.writer.write("{\"error\":\"invalid body\"}")
+            refuse(response, HttpServletResponse.SC_BAD_REQUEST, "invalid body")
             return
         }
         filterChain.doFilter(CachedBodyRequest(request, body), response)
+    }
+
+    private fun refuse(response: HttpServletResponse, status: Int, error: String) {
+        response.status = status
+        response.contentType = "application/json"
+        response.writer.write("{\"error\":\"$error\"}")
     }
 
     private class CachedBodyRequest(
@@ -70,7 +78,9 @@ class NulCharacterFilter : OncePerRequestFilter() {
         }
     }
 
-    private companion object {
-        val READ_METHODS = setOf("GET", "HEAD", "OPTIONS")
+    internal companion object {
+        /** A ceiling, not a validation rule: the whole database holds about 10 MB. */
+        const val MAX_BODY_BYTES = 1024 * 1024
+        private val READ_METHODS = setOf("GET", "HEAD", "OPTIONS")
     }
 }

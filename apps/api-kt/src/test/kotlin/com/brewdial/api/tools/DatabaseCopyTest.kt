@@ -53,6 +53,7 @@ class DatabaseCopyTest {
             // Like production: the rollback source connects as a user only the API shares.
             admin.update("create user '$mysqlCopyUser'@'%' identified by '$pgOwnerPassword'")
             admin.update("grant all on $database.* to '$mysqlCopyUser'@'%'")
+            admin.update("grant process on *.* to '$mysqlCopyUser'@'%'")
         }
         val pgUrl = databaseUrl(pgAdminConfig)
         Flyway.configure().dataSource(pgUrl, pgOwner, pgOwnerPassword)
@@ -238,6 +239,52 @@ class DatabaseCopyTest {
         }
 
         assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
+    }
+
+    @Test
+    fun aWriterOnAnotherMysqlAccountStopsTheRollback() {
+        assertTrue(forward(CopyMode.COPY))
+        val before = pgFingerprints()
+
+        connect(mysqlAdminConfig, database).use { otherAccount ->
+            otherAccount.autoCommit = false
+            otherAccount.update("update beans set origin = 'in flight' where id = 'bean-1'")
+
+            val failure = assertThrows(IllegalStateException::class.java) { reverse(CopyMode.REPLACE) }
+
+            assertTrue(failure.message!!.contains("could write"), failure.message)
+            assertEquals(before, pgFingerprints())
+            otherAccount.rollback()
+        }
+
+        assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
+        assertEquals("Panama", pgAdmin.string("select origin from beans where id = 'bean-1'"))
+    }
+
+    @Test
+    fun aReadOnlySnapshotOnAnotherMysqlAccountDoesNotStopTheRollback() {
+        assertTrue(forward(CopyMode.COPY))
+
+        connect(mysqlAdminConfig, database).use { backup ->
+            backup.autoCommit = false
+            backup.string("select origin from beans where id = 'bean-1'")
+
+            assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
+        }
+    }
+
+    @Test
+    fun aMysqlUserThatCannotSeeOtherAccountsStopsTheCutover() {
+        connect(mysqlAdminConfig).use { admin -> admin.update("revoke process on *.* from '$mysqlCopyUser'@'%'") }
+
+        val failure = mysqlAsCopyUser().use { target ->
+            assertThrows(IllegalStateException::class.java) {
+                DatabaseCopy(CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL), CopyEndpoint(target, DatabaseVendor.MYSQL), output::add).run(CopyMode.COPY)
+            }
+        }
+
+        assertTrue(failure.message!!.contains("grant it PROCESS"), failure.message)
+        assertEquals(0L, mysql.long("select count(*) from beans"), "nothing may be written")
     }
 
     @Test

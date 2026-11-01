@@ -43,7 +43,7 @@ This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate
 - PostgreSQL timestamps retain microsecond precision here; Hono serializes them at millisecond precision.
 - PostgreSQL `int8` and `numeric` values are JSON numbers here, rather than Hono's strings.
 - Array request bodies on agent write routes return `400 {"error":"invalid body"}`.
-- A write whose body holds a NUL character returns `400 {"error":"invalid body"}` on both databases. MySQL would store it and PostgreSQL refuses it, so the data could not move between them.
+- A write whose body holds a NUL character returns `400 {"error":"invalid body"}` on both databases. MySQL would store it and PostgreSQL refuses it, so the data could not move between them. A write body over 1 MiB returns `413 {"error":"body too large"}`.
 
 Follow-up work is tracked in ROB-1316.
 

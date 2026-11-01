@@ -9,6 +9,7 @@ import java.math.BigDecimal
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -70,6 +71,7 @@ internal class DatabaseCopy(
      * is compared inside its transaction and commits only if everything matches.
      */
     fun run(mode: CopyMode): Boolean {
+        checkMysqlWritersAreVisible()
         waitForQuietSource()
         checkPostgresOwnership()
         // One snapshot of the source for the whole copy and verification.
@@ -131,10 +133,26 @@ internal class DatabaseCopy(
             "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() " +
                 "and backend_type = 'client backend' and backend_xid is not null"
         // MySQL is the source only for a rollback, with api-kt stopped. The application
-        // user then has no reason to be connected, and an open transaction looks idle
-        // without the PROCESS privilege, so any other session of this user counts.
+        // user then has no reason to be connected, so any other session of it counts,
+        // and so does a transaction of any account that has written or is waiting to.
+        // A backup's read-only snapshot does not.
         DatabaseVendor.MYSQL ->
-            "select count(*) from information_schema.processlist where user = substring_index(current_user(), '@', 1) and id <> connection_id()"
+            "select (select count(*) from information_schema.processlist where user = substring_index(current_user(), '@', 1) and id <> connection_id()) + " +
+                "(select count(*) from information_schema.innodb_trx where trx_mysql_thread_id <> connection_id() " +
+                "and (trx_rows_modified > 0 or trx_state = 'LOCK WAIT' or trx_tables_locked > 0))"
+    }
+
+    /**
+     * Without PROCESS, MySQL hides other accounts' sessions and refuses innodb_trx.
+     * Checked in both directions, so that the cutover fails rather than the rollback.
+     */
+    private fun checkMysqlWritersAreVisible() {
+        val mysql = if (source.vendor == DatabaseVendor.MYSQL) source else target
+        try {
+            query(mysql.connection, "select count(*) from information_schema.innodb_trx") { rows -> rows.next() }
+        } catch (exception: SQLException) {
+            error("the MySQL user cannot see other accounts' writes, which a rollback must check: grant it PROCESS (${exception.errorCode})")
+        }
     }
 
     /**

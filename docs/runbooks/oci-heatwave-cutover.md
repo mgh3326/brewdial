@@ -173,7 +173,9 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
 - **HeatWave.** The DB system runs MySQL 8.4 LTS or newer in the private
   subnet. Its security list allows TCP 3306 from the host's subnet only.
   Create the database and an application user: `create database brewdial;`
-  and grant all on `brewdial.*`. The user creates triggers, so with binary
+  and grant all on `brewdial.*`. Also `grant process on *.* to <user>`: the rollback
+  copy uses it to see other accounts' writes, and the copy refuses at cutover without
+  it. The user creates triggers, so with binary
   logging on it also needs `log_bin_trust_function_creators=ON` in the DB
   system configuration, or an equivalent privilege. Test this once with
   `create trigger` in a scratch schema.
@@ -406,8 +408,8 @@ after the cutover all arrive, and the sequence continues where MySQL stopped.
       waits up to 40 s for requests to finish.
    2. Dumps PostgreSQL to
       `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`.
-   3. Waits up to 120 s until no other session of the MySQL application user remains,
-      then replaces every row in one transaction, compares before it commits, and
+   3. Waits up to 120 s until no other session of the MySQL application user remains
+      and no other account has a write transaction, then replaces every row in one transaction, compares before it commits, and
       compares again in a new snapshot.
 
    Close any session of your own that uses that MySQL user first, or the copy

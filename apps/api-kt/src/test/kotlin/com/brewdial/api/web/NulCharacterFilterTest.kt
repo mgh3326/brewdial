@@ -82,6 +82,21 @@ class NulCharacterFilterTest {
     }
 
     @Test
+    fun aBodyOverTheLimitIsRefusedBeforeTheHandler() {
+        mvc.perform(post("/echo").contentType(MediaType.APPLICATION_JSON).content(ByteArray(NulCharacterFilter.MAX_BODY_BYTES + 1) { 'x'.code.toByte() }))
+            .andExpect(status().isPayloadTooLarge)
+            .andExpect(content().json("""{"error":"body too large"}"""))
+    }
+
+    @Test
+    fun aBodyAtTheLimitReachesTheHandlerUnchanged() {
+        val body = ByteArray(NulCharacterFilter.MAX_BODY_BYTES) { 'x'.code.toByte() }
+        mvc.perform(post("/echo").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk)
+            .andExpect(content().string(hex(body)))
+    }
+
+    @Test
     fun readsAreNotInspected() {
         mvc.perform(get("/echo")).andExpect(status().isOk).andExpect(content().string("read"))
     }
