@@ -36,9 +36,9 @@ Conventions:
    Install `docker-ce` for Oracle Linux 9 (aarch64) and run `sudo systemctl
    enable --now docker`.
 2. **shiftgate.** Build the binary for linux/arm64 from the pinned revision,
-   which `.github/workflows/shiftgate-render.yml` also uses:
+   (`.github/workflows/shiftgate-render.yml` pins c65b3a4428c9 for rendering only; the host needs `follow`, added in d0cc564):
    ```sh
-   git clone https://github.com/mgh3326/shiftgate && cd shiftgate && git checkout c65b3a4428c9
+   git clone https://github.com/mgh3326/shiftgate && cd shiftgate && git checkout d0cc564   # first revision with `shiftgate follow`
    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o shiftgate ./cmd/shiftgate
    # Copy the binary to the host if you built it elsewhere, then on the host:
    sudo install -m 0755 shiftgate /usr/local/bin/shiftgate

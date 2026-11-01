@@ -4,7 +4,8 @@ name: Deploy OCI (shiftgate)
 #
 # build:   docker build (arm64, the OCI box is aarch64) → push to GHCR → read the
 #          pushed digest.
-# release: on a production release, also move the `production` tag to that digest.
+# release: on a production release, move the `production` tag to that digest
+#          (separate job behind the `oci-production` environment).
 # plan:    print the digest and the host command the follower will run.
 #
 # Deploys are pull-based (operator 2026-11-01): CI never reaches the host and
@@ -127,17 +128,6 @@ jobs:
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "Pushed ${IMAGE}@${digest}"
 
-      - name: Move the production tag (release only)
-        if: steps.mode.outputs.mode == 'deploy'
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create --tag "${IMAGE}:production" "${IMAGE}@${DIGEST}"
-          got="$(docker buildx imagetools inspect "${IMAGE}:production" --format '{{json .Manifest}}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
-          [ "${got}" = "${DIGEST}" ] || { echo "production tag points at ${got}, expected ${DIGEST}"; exit 1; }
-          echo "production → ${DIGEST}"
-
   plan:
     name: Plan (print the shiftgate command)
     needs: build
@@ -168,3 +158,32 @@ jobs:
             echo "| host command | \`${cmd}\` |"
             echo "| mode | \`${MODE}\` |"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  release:
+    name: Release (move the production tag)
+    needs: [build, plan]
+    if: needs.build.outputs.mode == 'deploy'
+    runs-on: ubuntu-24.04-arm
+    # Keeps the environment gate (required reviewers, branch rules) on the step
+    # that now triggers the host deploy.
+    environment: oci-production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Point production at the pushed digest
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "bad digest"; exit 1; }
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          # Pull by digest and push the same manifest under the tag, so the tag's
+          # digest is exactly the built one (no new index is created).
+          docker pull "${IMAGE}@${DIGEST}"
+          docker tag "${IMAGE}@${DIGEST}" "${IMAGE}:production"
+          docker push "${IMAGE}:production"
+          got="sha256:$(docker buildx imagetools inspect --raw "${IMAGE}:production" | sha256sum | cut -d' ' -f1)"
+          [ "${got}" = "${DIGEST}" ] || { echo "production tag points at ${got}, expected ${DIGEST}"; exit 1; }
+          echo "production → ${DIGEST}"
