@@ -5,7 +5,8 @@
 # Layout in the final image:
 #   /app       — @brewdial/api prod deploy (dist + prod node_modules)
 #   /migrate   — @brewdial/db deploy incl. node-pg-migrate + SQL migrations
-#                (used by the k8s migration initContainer; see deploy/oci/k3s/)
+#                (run before the server: k8s initContainer in deploy/oci/k3s/,
+#                shiftgate `args` in deploy/oci/shiftgate/services.yaml)
 
 # node:22-alpine multi-arch manifest list digest (linux/arm64 pulled on the
 # ARM runner). Pinned 2026-08-06.
@@ -50,6 +51,10 @@ COPY --from=build /out/db /migrate
 COPY packages/db/migrations /migrate/migrations
 
 ENV NODE_ENV=production
+# Sentry release. deploy-oci.yml passes --build-arg GIT_SHA=<short sha>; a
+# runtime GIT_SHA (k8s ConfigMap, env file) still overrides it.
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
 # node base image ships uid/gid 1000 as `node`.
 USER node
 EXPOSE 3020

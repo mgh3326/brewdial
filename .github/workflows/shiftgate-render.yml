@@ -1,0 +1,48 @@
+name: shiftgate render check
+
+# Renders deploy/oci/shiftgate/services.yaml with the pinned shiftgate release
+# and validates the generated HAProxy config with `haproxy -c`. No host access.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/oci/shiftgate/**"
+      - ".github/workflows/shiftgate-render.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/oci/shiftgate/**"
+      - ".github/workflows/shiftgate-render.yml"
+
+permissions:
+  contents: read
+
+env:
+  # mgh3326/shiftgate main at "feat: shiftgate — blue-green deploys behind one shared HAProxy (#2)".
+  SHIFTGATE_REV: c65b3a4428c9
+
+jobs:
+  render:
+    name: shiftgate render + haproxy -c
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.27"
+          cache: false
+
+      - name: Install shiftgate and HAProxy
+        run: |
+          set -euo pipefail
+          go install "github.com/mgh3326/shiftgate/cmd/shiftgate@${SHIFTGATE_REV}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq haproxy   # 2.8 on Ubuntu 24.04
+          haproxy -v | head -1
+
+      - name: Render and validate
+        run: deploy/oci/shiftgate/check-render.sh

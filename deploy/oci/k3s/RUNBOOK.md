@@ -1,5 +1,12 @@
 # k3s deploy runbook — BrewDial API (ROB-1214)
 
+> **DEPRECATED (ROB-1435).** The OCI host is moving from k3s to shiftgate
+> (blue-green containers behind one HAProxy). New deploys:
+> `.github/workflows/deploy-oci.yml`; procedure:
+> [`docs/runbooks/oci-heatwave-cutover.md`](../../../docs/runbooks/oci-heatwave-cutover.md).
+> These manifests and `deploy-oci-k3s.yml` (manual dispatch only) stay until
+> that runbook's k3s-removal step, so k3s remains a rollback target.
+
 Single-node k3s on the OCI box (Oracle Linux 9.7, aarch64, SELinux Enforcing).
 Postgres stays on the **host**, outside the cluster (hard invariant — the
 ROB-630 backup + weekly verify-restore gate targets host PG).
@@ -7,7 +14,7 @@ ROB-630 backup + weekly verify-restore gate targets host PG).
 Phase 1 scope: everything here is validated in CI (`.github/workflows/k8s-validate.yml`).
 **Production cutover to variant B was completed 2026-08-06** (operator-approved).
 This document records the applied shape. **CI image deploy** is
-`.github/workflows/deploy-oci.yml` (production push + workflow_dispatch) —
+`.github/workflows/deploy-oci-k3s.yml` (workflow_dispatch only since ROB-1435) —
 see §7.
 
 > **Fact accuracy.** Values under **Confirmed** came from a single production
@@ -215,7 +222,7 @@ Actions run of `Deploy OCI` with the previous healthy commit:
 
 ```bash
 # previous healthy short or full SHA that still has ghcr.io/.../brewdial:sha-<short>
-gh workflow run deploy-oci.yml -f git_sha=<prior-sha>
+gh workflow run deploy-oci-k3s.yml -f git_sha=<prior-sha>
 # then: gh run watch  (confirm DEPLOY_OK + imageID)
 ```
 
@@ -339,7 +346,7 @@ are mounted.)
 
 ## 7. CI release procedure (ROB-1214 Phase 2+)
 
-Implemented workflow: `.github/workflows/deploy-oci.yml`.
+Implemented workflow: `.github/workflows/deploy-oci-k3s.yml`.
 
 ### 7.1 Branch roles
 
@@ -407,7 +414,7 @@ Scope is **image + GIT_SHA only**. Manifest structure changes remain manual
 
 ```bash
 # Deploy or roll back to a known-good main commit that still has a GHCR image:
-gh workflow run deploy-oci.yml -f git_sha=<full-or-short-sha>
+gh workflow run deploy-oci-k3s.yml -f git_sha=<full-or-short-sha>
 ```
 
 This is the **standard rollback** path (see §4.1). Prefer it over force-pushing
@@ -534,6 +541,6 @@ cloudflared, and verify `curl -fsS localhost:30020/api/db/health`. Leave the
 old Node Deployment in place; no Kubernetes rollback is required for the
 traffic reversal.
 
-`deploy-oci.yml` remains **Node API only**. It does not deploy, update, or
+`deploy-oci-k3s.yml` remains **Node API only**. It does not deploy, update, or
 roll back `brewdial-api-kt`; any Phase 3 Kubernetes action requires explicit
 operator attendance.

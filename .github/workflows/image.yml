@@ -5,7 +5,7 @@ name: Container Image
 # tag on main pushes only.
 # Runs on the ARM runner so no QEMU emulation is needed.
 #
-# Deploy is separate: `.github/workflows/deploy-oci.yml` (production push +
+# Deploy is separate: `.github/workflows/deploy-oci.yml` (shiftgate; production push +
 # workflow_dispatch). This workflow does not deploy.
 
 on:
