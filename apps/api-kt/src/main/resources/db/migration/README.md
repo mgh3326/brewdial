@@ -41,4 +41,4 @@ per vendor, in the same PR.
 | view `bean_summaries` (`filter`, `bool_or`) | view with conditional aggregates | `has_ai` is 0/1 |
 | `resolve_app_user` | `JdbcIdentityResolver` (application) | Unique key + one transaction instead of an advisory lock |
 | `merge_app_users`, `set_recipe_code_seq` | not ported | No api-kt caller; the data copy sets `recipe_code_seq` |
-| `session_replication_role = replica` | `@bd_replication_role = 'replica'` | Used only by the data copy |
+| `session_replication_role = replica` | `@bd_replication_role = 'replica'` | Used only by the data copy. Copying into PostgreSQL uses `disable trigger user` instead, because the owner role is not a superuser |
