@@ -36,12 +36,14 @@ services:
     # the colour port (shiftgate sets PORT to it).
     network: host
     env_files: [/etc/shiftgate/brewdial-api.env]
-    env: {HOST: "127.0.0.1", NODE_ENV: production}
+    # The phase-4 write freeze: the app answers 503 to writes while this file exists.
+    # Mounted as a directory, so that a file created later shows up in the container.
+    env: {HOST: "127.0.0.1", NODE_ENV: production, BREWDIAL_WRITE_FREEZE_FILE: /var/lib/brewdial/freeze/write-freeze}
     # Same order as the k3s initContainer: migrate (idempotent, pgmigrations),
     # then start. A failed migration exits the container and fails the health
     # check, so traffic never flips to it.
     args: ["sh", "-c", "node /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js -m /migrate/migrations -j sql up && exec node /app/dist/server.js"]
-    run_args: ["--memory=512m"]
+    run_args: ["--memory=512m", "-v", "/var/lib/brewdial/freeze:/var/lib/brewdial/freeze:ro"]
     health: {http: /api/db/health, expect_status: 200, timeout: 90s, interval: 2s}
     check: {inter: 5s, fall: 2, rise: 1}
     drain_timeout: 30s

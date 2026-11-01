@@ -34,13 +34,25 @@ log "rsync $BOX:$REMOTE_DIR -> $LOCAL_DIR (no --delete)"
 rsync -az -e "ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new" \
   "$BOX:$REMOTE_DIR" "$LOCAL_DIR/"
 
-newest="$(find "$LOCAL_DIR/daily" -maxdepth 1 -type f -name '*.dump' 2>/dev/null | sort -r | head -1)"
+# *.sql.gz from HeatWave; *.dump from PostgreSQL until it is retired. The timestamped
+# names sort by date, whatever the directory part or extension.
+newest="$(find "$LOCAL_DIR/daily" -maxdepth 1 -type f \( -name '*.dump' -o -name '*.sql.gz' \) 2>/dev/null | sort -r | head -1)"
 [ -n "$newest" ] || { log "no daily dump present after pull"; hc fail; exit 1; }
 log "newest local dump: $newest ($(du -h "$newest" | cut -f1))"
-# If a Postgres client is installed, confirm the pulled archive isn't truncated.
-if command -v pg_restore >/dev/null 2>&1; then
-  pg_restore -l "$newest" >/dev/null && log "archive TOC OK (pg_restore -l)"
-fi
+# Confirm the pulled archive isn't truncated.
+case "$newest" in
+  *.sql.gz)
+    gzip -t "$newest" && gzip -dc "$newest" | tail -n 1 | grep -q '^-- Dump completed' \
+      && log "dump complete (gzip -t, last line)" \
+      || { log "pulled dump is truncated: $newest"; hc fail; exit 1; }
+    ;;
+  *)
+    # If a Postgres client is installed.
+    if command -v pg_restore >/dev/null 2>&1; then
+      pg_restore -l "$newest" >/dev/null && log "archive TOC OK (pg_restore -l)"
+    fi
+    ;;
+esac
 
 prune() {  # prune <dir> <ext> <keep>
   local dir="$1" ext="$2" keep="$3" f i=0
@@ -51,8 +63,10 @@ prune() {  # prune <dir> <ext> <keep>
 }
 prune "$LOCAL_DIR/daily"   dump "$KEEP_DAILY"
 prune "$LOCAL_DIR/weekly"  dump "$KEEP_WEEKLY"
+prune "$LOCAL_DIR/daily"   sql.gz "$KEEP_DAILY"
+prune "$LOCAL_DIR/weekly"  sql.gz "$KEEP_WEEKLY"
 prune "$LOCAL_DIR/globals" sql  "$KEEP_GLOBALS"
 
 count() { find "$1" -maxdepth 1 -type f -name "*.$2" 2>/dev/null | wc -l | tr -d ' '; }
-log "pull complete ($(count "$LOCAL_DIR/daily" dump) daily on Mac)"
+log "pull complete ($(count "$LOCAL_DIR/daily" dump) PostgreSQL + $(count "$LOCAL_DIR/daily" sql.gz) HeatWave daily on Mac)"
 hc

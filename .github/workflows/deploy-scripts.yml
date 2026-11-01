@@ -1,0 +1,38 @@
+name: Deploy scripts
+
+# The OCI host scripts have no other test run. Uses stubs only: no host access.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/oci/**"
+      - "deploy/mac/**"
+      - ".github/workflows/deploy-scripts.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/oci/**"
+      - "deploy/mac/**"
+      - ".github/workflows/deploy-scripts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Deploy scripts (shellcheck, phase-4 script)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Shellcheck the HeatWave scripts
+        run: >-
+          shellcheck -x -e SC1091 -s bash
+          deploy/oci/heatwave-phase4.sh deploy/oci/test/heatwave-phase4-test.sh
+          deploy/oci/heatwave-client.sh deploy/oci/backup-heatwave.sh
+          deploy/oci/verify-restore-heatwave.sh
+
+      - name: Phase-4 script stops at the first failed check and prints no secret
+        run: bash deploy/oci/test/heatwave-phase4-test.sh

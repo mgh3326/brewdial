@@ -5,14 +5,16 @@ The OCI host runs a single `brewdial-api` pod on k3s, and k3s alone costs about
 [shiftgate](https://github.com/mgh3326/shiftgate): blue-green Docker
 containers behind one HAProxy, deployed by digest from CI. It then moves the
 API to the Kotlin service (`apps/api-kt`) on OCI HeatWave MySQL. PostgreSQL
-stays available the whole time as the rollback target.
+stays the rollback target until the desk retires it (§4.7). `apps/api-kt` is the
+only API after phase 4: the Node API (`apps/api`) and `packages/db` retire with
+PostgreSQL.
 
 | Phase | What changes | Rollback |
 |---|---|---|
 | 1. Host preparation | Docker, shiftgate, HAProxy container, env files, deploy key | Nothing is serving from it yet |
 | 2. Cutover k3s → shiftgate | cloudflared `:30020` (k3s) → `:8020` (shiftgate, Node API, PostgreSQL) | Point cloudflared back to `:30020` |
 | 3. k3s removal | `systemctl disable --now k3s` and remove its files later | Until the files are removed: `systemctl start k3s` |
-| 4. Node → api-kt on HeatWave MySQL | Data copy with verification, `brewdial-api-kt` blue (PostgreSQL) → green (MySQL), cloudflared → `:8021` | `shiftgate rollback brewdial-api-kt` (back to the PostgreSQL colour), or cloudflared → `:8020` (Node) |
+| 4. Node → api-kt on HeatWave MySQL | Scripted write-frozen window: copy, verify, `brewdial-api-kt` blue (PostgreSQL) → green (MySQL), parity, then cloudflared → `:8021` | Scripted full copy MySQL → PostgreSQL (§4.5), then cloudflared → `:8020` (Node) or the blue colour |
 
 Run phases 1–3 together. Phase 4 is a separate change window.
 
@@ -198,16 +200,33 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   logging on it also needs `log_bin_trust_function_creators=ON` in the DB
   system configuration, or an equivalent privilege. Test this once with
   `create trigger` in a scratch schema.
+- **PostgreSQL role.** The application role owns the tables. The rollback copy
+  needs that: an owner may disable user triggers, and no superuser is involved.
+- **Scripts on the host.** `/opt/brewdial` holds a checkout of a commit that
+  contains `deploy/oci/heatwave-phase4.sh` (rsync as in `deploy/oci/README.md`).
+- **Write-freeze switch on the Node API.** Deploy a Node image built from a
+  commit that contains the switch, with the mount from
+  `deploy/oci/shiftgate/services.yaml`. Create the directory first, because the
+  deploy mounts it:
+  ```sh
+  sudo install -d -m 0755 /var/lib/brewdial /var/lib/brewdial/freeze
+  sudo install -m 0644 deploy/oci/shiftgate/services.yaml /etc/shiftgate/services.yaml
+  sudo shiftgate deploy brewdial-api --digest sha256:<node digest>
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8020/api/write-freeze-probe   # expect 404
+  ```
 - **Env file for `brewdial-api-kt`.** Create
   `/etc/shiftgate/brewdial-api-kt.env` (`0600`) with `AGENT_TOKEN`,
   `SENTRY_DSN` and, first, the **PostgreSQL** `DATABASE_URL`
   (`postgres://brewdial_app:…@127.0.0.1:5432/brewdial`).
-- **Env file for the copy.** Create `/etc/shiftgate/brewdial-copy.env`
+- **Env files for the copy.** Create `/etc/shiftgate/brewdial-copy.env`
   (`0600`) with two keys: `DATABASE_URL`, the HeatWave target
   (`mysql://app:…@<private-ip>:3306/brewdial?sslMode=REQUIRED`), and
   `BREWDIAL_COPY_SOURCE_URL`, the PostgreSQL source. Passing them by file keeps
-  the passwords out of the process list. Step 4.4 moves the HeatWave URL into
-  the api-kt env file.
+  the passwords out of the process list. Then derive the rollback file, which
+  swaps the two directions, without displaying it:
+  ```sh
+  sudo sh -c 'umask 077; sed -n -e "s/^BREWDIAL_COPY_SOURCE_URL=/DATABASE_URL=/p" -e "s/^DATABASE_URL=/BREWDIAL_COPY_SOURCE_URL=/p" /etc/shiftgate/brewdial-copy.env > /etc/shiftgate/brewdial-rollback.env'
+  ```
 - **PostgreSQL is at migration 007.** Run `select name from pgmigrations order
   by run_on;`. On its first start against this database, api-kt's Flyway
   records it as baseline V1 (`baseline-on-migrate`), and V1 equals
@@ -247,7 +266,7 @@ separately:
    digest>`. It listens on `127.0.0.1:8021` and receives no public traffic.
    Then compare read endpoints against the Node API on `:8020`:
    ```sh
-   for p in /api/beans /api/recipes /api/grinders /api/drippers /api/preferences/global; do
+   for p in /api/beans /api/recipes /api/grinders /api/drippers; do
      diff <(curl -fsS "http://127.0.0.1:8020$p" | jq -S .) <(curl -fsS "http://127.0.0.1:8021$p" | jq -S .) \
        && echo "same: $p" || echo "DIFF: $p"
    done
@@ -255,79 +274,205 @@ separately:
    The only allowed differences are the ones in the README (timestamp
    precision, numeric JSON types). Stop here if anything else differs.
 
-### 4.3 Copy and verify: PostgreSQL → MySQL
+The window repeats this comparison against api-kt on **MySQL** (§4.3).
 
-The copy runs the api-kt image in its copy mode. Flyway first creates the
-MySQL schema and Hibernate validates it. Then every table is copied in
-foreign-key order, inside one PostgreSQL snapshot. The MySQL insert triggers
-are bypassed (`@bd_replication_role='replica'`, the equivalent of PostgreSQL
-`session_replication_role`). The copy also carries over `recipe_code_seq`.
-Finally, each table is verified:
+### 4.3 The window: one scripted sequence
 
-- **row count**: PostgreSQL vs MySQL;
+Rehearse first. `--preflight` runs only the read-only checks and changes nothing:
+
+```sh
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest> --preflight
+```
+
+Then run the window. The data is small, so it takes minutes:
+
+```sh
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest>
+```
+
+The script stops at the first failed check, prints `PHASE4_FAILED step=<step>`
+and exits non-zero. It only prints what the table shows. Tool output goes to
+`/var/log/brewdial-phase4/` (`0700`), with connection credentials redacted.
+
+| Step | What it does | Passes when |
+|---|---|---|
+| `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared points at `:8020`, api-kt is on blue with this digest, and the freeze probe answers |
+| `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze` | `POST /api/write-freeze-probe` on `:8020` answers 503 |
+| `copy` | Copies PostgreSQL → MySQL in one PostgreSQL snapshot | `COPY_VERIFY_OK` and exit 0 |
+| `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
+| `deploy` | Moves the HeatWave `DATABASE_URL` into the api-kt env file, runs `shiftgate deploy` | Green is active, blue is the rollback colour, `/api/db/health` on `:8021` answers 200 |
+| `parity` | Compares the §4.2 reads and one bean and recipe, Node on PostgreSQL against api-kt on MySQL | Same after the README's allowed differences |
+| `final-verify` | Compares both databases again | `COPY_VERIFY_OK`: nothing wrote to either side during the window |
+| `done` | Prints the cloudflared command | The desk runs it (§4.4) |
+
+**What the freeze does.** While the file exists, the Node API answers 503 with
+`Retry-After` to every method except `GET`, `HEAD` and `OPTIONS`. Reads keep
+working from PostgreSQL. A `GET` that carries a new identity stays anonymous
+instead of creating the user. The file lives on disk, so the freeze survives a
+reboot and a container restart. To check it by hand, use the probe above: that
+path has no route, so the probe can never write.
+
+**What the copy verifies.** The source's column list drives the copy. A table,
+column or sequence that only one side has stops the run before it writes
+anything (`COPY_CHECK_FAILED schema drift: …`). After the copy:
+
+- **row count**: source vs target, per table;
 - **checksum**: SHA-256 over every row in a vendor-neutral canonical form
   (UUIDs as text, JSON with sorted keys and normalised numbers, `text[]` as
   JSON arrays, timestamps as UTC instants, every value length-prefixed), rows
-  sorted.
+  sorted;
+- **sequence**: the last number `recipe_code_seq` handed out, on both sides.
 
-1. **Freeze writes.** Point cloudflared at a maintenance response
-   (`service: http_status:503`) and restart it. The data is small, so the
-   window is minutes. The Node API keeps running on `:8020`.
-2. **Copy**, with both URLs coming from the copy env file:
+The report ends with `COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15
+sequences=1`. Any `MISMATCH` exits non-zero.
+
+**If it stops.** Writes stay frozen. Then:
+
+| Stopped at | Do this |
+|---|---|
+| `preflight` | Nothing changed. Fix the cause and run it again. |
+| `freeze` | The switch does not work: run `unfreeze`, then fix §4.1. |
+| `copy`, with a check or database error | The copy rolled back and the target is still empty. Fix the cause and run it again. |
+| `copy` or `verify`, with `MISMATCH` | The target holds rows. Investigate, then run it again with `--replace-target`. |
+| `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. |
+
+To abandon the window, also restore the env file and open writes again:
+
+```sh
+sudo cp -p /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api-kt.env
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze
+```
+
+`copy` always refuses a target that holds rows, so a repeated run can never
+overwrite live MySQL by accident. Only `--replace-target` replaces it.
+
+**If `parity` shows only a different order.** PostgreSQL and MySQL may sort
+`name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation).
+Decide whether that is acceptable. To accept it, retry as above and add
+`--accept-order`. The script still stops on any difference in content, and it
+reports each accepted path.
+
+### 4.4 Switch traffic (desk)
+
+1. Run the command the script printed, and only that command:
    ```sh
-   sudo docker run --rm --network host \
-     --env-file /etc/shiftgate/brewdial-copy.env \
-     -e SPRING_MAIN_WEB_APPLICATION_TYPE=none -e BREWDIAL_COPY_MODE=copy \
-     ghcr.io/mgh3326/brewdial-api-kt@sha256:<api-kt digest>
-   ```
-   The output ends with a table (`TABLE  POSTGRES_ROWS  MYSQL_ROWS
-   POSTGRES_SHA256  MYSQL_SHA256  RESULT`) and with `COPY_VERIFY_OK
-   tables=15`, exit code 0. Any `MISMATCH` exits non-zero: stop, keep the
-   freeze, and investigate. The copy refuses a non-empty target, so to retry,
-   drop and recreate the HeatWave database first.
-3. **Re-verify** just before the switch, still frozen. Run the same command
-   with `-e BREWDIAL_COPY_MODE=verify`. It copies nothing and repeats the
-   counts and checksums. Save the output with the change record.
-
-### 4.4 Cutover through shiftgate
-
-1. Move the HeatWave `DATABASE_URL` into `/etc/shiftgate/brewdial-api-kt.env`
-   with `sudoedit`, replacing the PostgreSQL line. The PostgreSQL URL stays in
-   `/etc/shiftgate/brewdial-copy.env` as `BREWDIAL_COPY_SOURCE_URL`.
-2. Deploy the **same** api-kt digest again. shiftgate starts the idle colour
-   (green) with the new env file, health-checks `/api/db/health` against
-   MySQL, and flips HAProxy on `:8021`:
-   ```sh
-   sudo shiftgate deploy brewdial-api-kt --digest sha256:<api-kt digest>
-   sudo shiftgate status    # brewdial-api-kt ACTIVE=green, PREVIOUS=blue (the PostgreSQL colour)
+   sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
    ```
    Do not run `shiftgate prune` or another api-kt deploy until the rollback
-   window closes. Blue is the PostgreSQL rollback target, and shiftgate keeps
-   only that one previous container.
-3. Switch traffic: set the cloudflared ingress to `http://127.0.0.1:8021`
-   and restart cloudflared. This also ends the write freeze.
-4. Smoke test: run public `/api/health`, `/api/db/health` and a read, then
+   window closes. Blue is the PostgreSQL colour, and shiftgate keeps only that
+   one previous container.
+2. Smoke test: run public `/api/health`, `/api/db/health` and a read, then
    one agent write through MCP. Check Sentry.
-5. Point CI at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
+3. Keep the freeze file. The Node API on PostgreSQL stays read-only, so nothing
+   can diverge there while it is the rollback target.
+4. Point CI at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
    deploy `brewdial-api-kt`. Do this in a follow-up PR, after the window.
 
-### 4.5 Rollback to the PostgreSQL colour
+### 4.5 Rollback: full copy MySQL → PostgreSQL
 
-- **api-kt on PostgreSQL** (keeps the Kotlin runtime): run `sudo shiftgate
-  rollback brewdial-api-kt`. It starts the kept blue container, which still
-  has the PostgreSQL env it was created with, health-checks it, and flips
-  `:8021` back. Running the command again rolls forward to MySQL.
-- **Node API on PostgreSQL** (the phase-2 state): set the cloudflared ingress
-  back to `http://127.0.0.1:8020` and restart cloudflared. `brewdial-api` was
-  never stopped.
+Rollback replaces PostgreSQL with the MySQL data, through the same verified
+tool. There is no replay by timestamp. Rows written, changed or deleted on MySQL
+after the cutover all arrive, and the sequence continues where MySQL stopped.
 
-**Data written after the cutover exists only in MySQL.** The copy runs one
-way only, so a rollback after real writes loses them. Before you roll back,
-list the affected rows on MySQL:
-`select … where created_at > '<cutover UTC>' or updated_at > '<cutover UTC>'`
-for every table. Then re-apply them to PostgreSQL by hand or accept the loss.
-Decide this before step 4.4.3, and keep the rollback window short (hours).
+1. **Stop writes on MySQL.** Point traffic at the frozen Node API. Public reads
+   keep working from the old PostgreSQL data, and every write answers 503:
+   ```sh
+   sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
+   ```
+2. **Copy back.** The script requires cloudflared on `:8020` and the freeze still
+   on. It replaces every PostgreSQL row in one transaction, which also restores
+   the triggers, and it compares both databases twice:
+   ```sh
+   sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
+   ```
+   On failure, PostgreSQL keeps its previous rows and writes stay frozen. Fix the
+   cause and run it again. MySQL stays as it was.
+3. **Choose the runtime.** The script prints both commands:
+   - **Node API on PostgreSQL** (the phase-2 state): run `sudo
+     /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze`. Traffic is already on
+     `:8020`.
+   - **api-kt on PostgreSQL** (keeps the Kotlin runtime): run `sudo shiftgate
+     rollback brewdial-api-kt`, which starts the kept blue container with its
+     PostgreSQL env, then point cloudflared at `:8021`. The Node API stays frozen.
 
-After the window, keep PostgreSQL running and backed up (ROB-630) until the
-desk retires it. api-kt keeps working against it, which other environments
-and future rollbacks need.
+The copy needs both databases, so this rollback is available until §4.7 stops
+PostgreSQL. Keep the window as long as the desk needs, and record the decision
+to close it.
+
+### 4.6 Backup timers → HeatWave
+
+Do this when the rollback window closes, before §4.7. The timer names and
+schedules stay. `backup-heatwave.sh` runs `mysqldump --single-transaction` and
+`verify-restore-heatwave.sh` restores into a throwaway MySQL container with no
+network, then compares every table with the live schema. Both read credentials
+from an env-file path and never print them. The clients run from a pinned
+`mysql:8.4` image, so the host needs no MySQL package.
+
+1. Create a read-only user on HeatWave, then the env file
+   (`deploy/oci/heatwave.env.example`):
+   ```sh
+   sudo install -m 0600 -o opc -g opc /dev/null /etc/brewdial/heatwave.env
+   sudoedit /etc/brewdial/heatwave.env
+   sudo grep -c '^DATABASE_URL=mysql://' /etc/brewdial/heatwave.env   # expect 1
+   ```
+2. Add `HEATWAVE_ENV=/etc/brewdial/heatwave.env` to `/etc/brewdial/backup.env`.
+3. Install the units, then run each once:
+   ```sh
+   sudo install -m 0644 deploy/oci/brewdial-backup.service deploy/oci/brewdial-verify.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl start brewdial-backup.service && journalctl -u brewdial-backup.service -n 5 --no-pager
+   sudo systemctl start brewdial-verify.service && journalctl -u brewdial-verify.service -n 5 --no-pager   # GATE PASS
+   ls -l /var/backups/brewdial/daily/ | tail -2                       # a new brewdial-*.sql.gz
+   systemctl list-timers 'brewdial-*'
+   ```
+4. Update the Mac's copy of `deploy/mac/pull-backups.sh`. It now accepts
+   `*.sql.gz` as well as `*.dump`, and it checks that a dump is complete.
+
+### 4.7 PostgreSQL retirement (desk)
+
+Retirement ends the §4.5 rollback, so do it only after the desk closes the window
+and §4.6 passes. api-kt keeps its PostgreSQL support in code.
+
+1. **Final dump** to the existing backup path. `final-postgres/` is outside
+   retention, and the Mac pulls it with everything else. It holds the data as
+   of the cutover, because PostgreSQL has been frozen since then. The current
+   data is in the HeatWave dumps from §4.6.
+   ```sh
+   stamp="$(date -u +%Y%m%d-%H%M)"
+   sudo install -d -o opc -g opc -m 0750 /var/backups/brewdial/final-postgres
+   sudo -u postgres pg_dump -Fc brewdial | sudo -u opc tee "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump" > /dev/null
+   sudo -u postgres pg_dumpall --globals-only | sudo -u opc tee "/var/backups/brewdial/final-postgres/globals-$stamp.sql" > /dev/null
+   sudo -u opc /opt/brewdial/deploy/oci/verify-restore.sh "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump"   # GATE PASS
+   ```
+   Do not continue until the Mac's next pull holds the file.
+2. **Stop what still uses PostgreSQL.** Check first that nothing but these
+   connects:
+   ```sql
+   select usename, client_addr, count(*) from pg_stat_activity where datname = 'brewdial' group by 1, 2;
+   ```
+   ```sh
+   sudo docker stop shiftgate-brewdial-api-blue shiftgate-brewdial-api-green shiftgate-brewdial-api-kt-blue
+   sudo systemctl disable --now brewdial-api    # the legacy systemd unit, if it is still installed
+   sudo systemctl disable --now k3s             # if phase 3 left it enabled
+   ```
+3. **Stop and disable PostgreSQL.** The API must not notice:
+   ```sh
+   sudo systemctl disable --now postgresql-17
+   ss -ltn | grep -c ':5432 '                   # expect 0
+   curl -fsS https://<public host>/api/db/health
+   ```
+4. **Keep the data directory for 14 days.** Record the date in the change record.
+   Find the path with `sudo systemctl cat postgresql-17 | grep PGDATA` (usually
+   `/var/lib/pgsql/17/data`). To go back within the 14 days, run `sudo systemctl
+   enable --now postgresql-17` and `sudo docker start
+   shiftgate-brewdial-api-<active colour>`, then §4.5 steps 1–3.
+5. **Remove, after 14 days** (a later, separate change):
+   ```sh
+   sudo dnf remove 'postgresql17*'
+   sudo rm -rf /var/lib/pgsql/17
+   sudo rm -f /etc/shiftgate/brewdial-copy.env /etc/shiftgate/brewdial-rollback.env \
+     /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api.env /etc/brewdial/api.env
+   ```
+   Then remove `/var/lib/brewdial/freeze`. In the repository, delete the
+   `brewdial-api` service from `services.yaml`, `apps/api`, `packages/db`,
+   `backup.sh` and `verify-restore.sh` in one PR, and keep `final-postgres/`.

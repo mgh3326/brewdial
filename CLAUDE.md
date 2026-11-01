@@ -25,4 +25,5 @@ pnpm db:migrate # 마이그레이션 적용
 ## Notes
 
 - 웹 브라우징이 필요하면 claude-in-chrome MCP(`mcp__claude-in-chrome__*`)를 사용한다.
+- `apps/api-kt`는 cutover 후 유일한 API다. 코드에는 JPQL/criteria만 쓰고 네이티브 SQL은 벤더별 Flyway 폴더에 둔다(`NativeSqlGuardTest`).
 - 마이그레이션 추가 전에 프로덕션에 이미 적용된 버전을 `pgmigrations` 테이블에서 확인할 것.

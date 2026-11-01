@@ -2,7 +2,7 @@
 # Daily backup at 03:30 UTC (box is UTC; = 12:30 KST). Persistent=true so a
 # missed run (box was off) fires at next boot.
 [Unit]
-Description=Daily BrewDial Postgres backup
+Description=Daily BrewDial backup
 
 [Timer]
 OnCalendar=*-*-* 03:30:00

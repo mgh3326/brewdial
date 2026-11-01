@@ -1,0 +1,16 @@
+# Files under src/main/kotlin allowed to use native SQL or raw JDBC.
+# Format: <count> <path> <reason>. NativeSqlGuardTest compares the counts exactly.
+# Do not add to this list without a reason that JPQL, criteria or Flyway cannot meet.
+#
+# Permanent: the copy tool works on both schemas at once, below the ORM.
+9 com/brewdial/api/tools/DatabaseCopy.kt cross-vendor data copy (phase 4 and rollback)
+4 com/brewdial/api/tools/DatabaseCopyRunner.kt opens the second connection for the copy
+#
+# Existing debt from the Hono port: move these to JPQL or criteria, then lower the count.
+4 com/brewdial/api/agent/AgentWriteService.kt debt: JdbcTemplate statements next to JPA writes
+4 com/brewdial/api/config/VendorSql.kt debt: per-vendor session flag for the recipes guard trigger
+3 com/brewdial/api/health/HealthController.kt debt: select 1 health probe
+6 com/brewdial/api/identity/IdentityResolver.kt debt: per-vendor resolve_app_user
+18 com/brewdial/api/me/MeRepository.kt debt: /me reads and writes
+3 com/brewdial/api/read/ApiRowMapper.kt debt: maps JDBC rows for ReadRepository and MeRepository
+13 com/brewdial/api/read/ReadRepository.kt debt: public read queries
