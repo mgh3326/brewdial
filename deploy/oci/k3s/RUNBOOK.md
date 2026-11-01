@@ -350,7 +350,7 @@ Implemented workflow: `.github/workflows/deploy-oci-k3s.yml`.
 
 > **Since ROB-1435 this workflow is manual-only.** A push to `production` no
 > longer deploys to k3s: it runs the shiftgate workflow `deploy-oci.yml`, which
-> is a dry run until `vars.SHIFTGATE_DEPLOY_ENABLED=true`. While k3s still
+> was a dry run before the pull-based follower (2026-11-01). While k3s still
 > serves traffic, **release with an explicit dispatch** (§7.4). §7.1–§7.3
 > describe the guards and the fast-forward rule, which still apply; the
 > `production` push no longer triggers this workflow. Rolling traffic back from
