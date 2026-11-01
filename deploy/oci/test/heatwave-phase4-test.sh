@@ -60,6 +60,19 @@ printf 'SEQUENCE\tSOURCE_VALUE\tTARGET_VALUE\tRESULT\nrecipe_code_seq\t42\t42\tO
 echo "COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15 sequences=1"
 EOF
 
+# pg_dump through sudo, and the archive check.
+cat >"$work/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+echo "safety-dump" >>"$STUB_STATE/calls"
+[ "${STUB_FAIL:-}" = pg-dump ] && exit 1
+echo "PGDMP"
+EOF
+cat >"$work/bin/pg_restore" <<'EOF'
+#!/usr/bin/env bash
+[ "${STUB_FAIL:-}" = pg-restore ] && exit 1
+exit 0
+EOF
+
 cat >"$work/bin/shiftgate" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -146,6 +159,7 @@ EOF
   chmod 600 "$scenario"/env/*
   echo "${SCENARIO_COLOR:-blue}" >"$scenario/state/color"
   [ "${SCENARIO_FROZEN:-}" = 1 ] && touch "$scenario/freeze/write-freeze"
+  [ "${SCENARIO_VERIFIED:-}" = 1 ] && touch "$scenario/freeze/write-freeze.cutover-verified"
   printf 'ingress:\n  - service: %s\n' "${SCENARIO_INGRESS:-http://127.0.0.1:8020}" >"$scenario/config.yml"
   [ -n "${SCENARIO_MUTATE:-}" ] && (cd "$scenario" && eval "$SCENARIO_MUTATE")
   : >"$scenario/state/calls"
@@ -156,6 +170,7 @@ EOF
     STUB_ACTIVE_DIGEST="${SCENARIO_ACTIVE_DIGEST:-}" STUB_NOT_ROOT="${SCENARIO_NOT_ROOT:-}" \
     PHASE4_ENV_DIR="$scenario/env" PHASE4_FREEZE_FILE="$scenario/freeze/write-freeze" \
     PHASE4_CLOUDFLARED_CONFIG="$scenario/config.yml" PHASE4_LOG_DIR="$scenario/log" PHASE4_DRAIN_SECONDS=0 \
+    PHASE4_BACKUP_DIR="$scenario/final-postgres" \
     bash "$script" "$@" 2>&1)"
   status=$?
   calls="$(cat "$scenario/state/calls")"
@@ -214,6 +229,7 @@ grep -q "^AGENT_TOKEN=$SECRET" "$scenario/env/brewdial-api-kt.env" || bad "api-k
 grep -q '^DATABASE_URL=postgres://' "$scenario/env/brewdial-api-kt.env.postgres" || bad "the PostgreSQL env must be kept"
 [ "$(stat -c %a "$scenario/env/brewdial-api-kt.env.postgres")" = 600 ] || bad "the kept env must stay 0600"
 expect_frozen
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a finished cutover must allow its rollback"
 expect_no_secret
 if grep -rl "$SECRET" "$scenario/log" >/dev/null; then bad "a tool log holds the fixture password"; fi
 [ "$failures" -gt 0 ] || printf 'ok   %s\n' "$current"
@@ -234,6 +250,8 @@ SCENARIO_NOT_ROOT=1 run_scenario not-root "" cutover --digest "$DIGEST"; expect_
 run_scenario bad-digest "" cutover --digest sha256:abc; expect_stopped preflight ""; expect_not_frozen
 SCENARIO_MUTATE='rm env/brewdial-copy.env' run_scenario missing-env "" cutover --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_MUTATE='rm env/brewdial-rollback.env' run_scenario missing-rollback-env "" cutover --digest "$DIGEST"; expect_stopped preflight ""
+# The shape a wrong sed produces: a key twice, the last value the wrong one.
+SCENARIO_MUTATE='echo "BREWDIAL_COPY_SOURCE_URL=postgres://x:y@h/d" >>env/brewdial-rollback.env' run_scenario duplicate-key "" cutover --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_MUTATE='chmod 644 env/brewdial-copy.env' run_scenario open-env "" cutover --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_MUTATE='sed -i "/^BREWDIAL_COPY_SOURCE_URL=/d" env/brewdial-copy.env' run_scenario missing-key "" cutover --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_MUTATE='rm -r freeze' run_scenario no-freeze-dir "" cutover --digest "$DIGEST"; expect_stopped preflight ""
@@ -271,31 +289,51 @@ expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 
-# --- rollback ---
-ROLLBACK1='docker-replace-brewdial-rollback.env-run1'
-ROLLBACK2='docker-verify-brewdial-rollback.env-run2'
-SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-happy "" rollback --digest "$DIGEST"
-[ "$status" = 0 ] || bad "expected success, got $status"
-[ "$calls" = "$ROLLBACK1
-$ROLLBACK2" ] || bad "calls were [$calls]"
-expect_frozen
+# --- a cutover that failed does not unlock a rollback ---
+run_scenario failed-cutover-marker verify cutover --digest "$DIGEST"
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a failed cutover must not allow a rollback"
 expect_no_secret
-case "$output" in *"unfreeze"*) ;; *) bad "the next step is missing" ;; esac
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 
-SCENARIO_COLOR=green run_scenario rollback-not-frozen "" rollback --digest "$DIGEST"; expect_stopped preflight ""
-SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario rollback-traffic-on-kt "" rollback --digest "$DIGEST"; expect_stopped preflight ""
-SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-replace-fails copy-exit rollback --digest "$DIGEST"; expect_stopped replace "$ROLLBACK1"; expect_frozen
-SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-verify-fails verify rollback --digest "$DIGEST"; expect_stopped verify "$ROLLBACK1
+# --- rollback ---
+SAFETY='safety-dump'
+ROLLBACK1='docker-replace-brewdial-rollback.env-run1'
+ROLLBACK2='docker-verify-brewdial-rollback.env-run2'
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-happy "" rollback --digest "$DIGEST"
+[ "$status" = 0 ] || bad "expected success, got $status"
+[ "$calls" = "$SAFETY
+$ROLLBACK1
+$ROLLBACK2" ] || bad "calls were [$calls]"
+expect_frozen
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a second rollback must be refused"
+ls "$scenario"/final-postgres/pre-rollback-*.dump >/dev/null 2>&1 || bad "the safety dump is missing"
+expect_no_secret
+case "$output" in *"unfreeze"*) ;; *) bad "the next step is missing" ;; esac
+case "$output" in *"brewdial-api-kt.env.postgres"*) ;; *) bad "the env restore is missing" ;; esac
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
+
+SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-not-frozen "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-without-cutover "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario rollback-traffic-on-kt "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-dump-fails pg-dump rollback --digest "$DIGEST"; expect_stopped safety-dump "$SAFETY"
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-archive-unreadable pg-restore rollback --digest "$DIGEST"; expect_stopped safety-dump "$SAFETY"
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-replace-fails copy-exit rollback --digest "$DIGEST"; expect_stopped replace "$SAFETY
+$ROLLBACK1"; expect_frozen
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a failed rollback must stay retryable"
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-verify-fails verify rollback --digest "$DIGEST"; expect_stopped verify "$SAFETY
+$ROLLBACK1
 $ROLLBACK2"; expect_frozen
 
 # --- unfreeze ---
-SCENARIO_FROZEN=1 run_scenario unfreeze "" unfreeze
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze "" unfreeze
 [ "$status" = 0 ] || bad "unfreeze should pass"
 expect_not_frozen
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "after an unfreeze MySQL is stale: rollback must be refused"
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
+SCENARIO_FROZEN=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario unfreeze-traffic-on-kt "" unfreeze; expect_stopped unfreeze ""; expect_frozen
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"

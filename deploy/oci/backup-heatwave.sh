@@ -7,6 +7,7 @@
 # Config: /etc/brewdial/backup.env (see backup.env.example). Credentials stay in
 # the file that HEATWAVE_ENV names (see heatwave.env.example) and are never printed.
 set -Eeuo pipefail
+umask 077
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=heatwave-client.sh
@@ -32,7 +33,11 @@ hc() {
 
 on_err() { log "BACKUP FAILED (line $1)"; hc fail; }
 trap 'on_err "$LINENO"' ERR
-trap heatwave_unload EXIT
+cleanup() {
+  heatwave_unload
+  [ -z "${daily_file:-}" ] || rm -f "$daily_file.partial"
+}
+trap cleanup EXIT
 
 hc start
 

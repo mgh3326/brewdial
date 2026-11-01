@@ -10,7 +10,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.ApplicationContext
 import org.springframework.core.env.Environment
 import org.springframework.stereotype.Component
-import tools.jackson.databind.ObjectMapper
 import java.sql.DriverManager
 import java.util.Properties
 import javax.sql.DataSource
@@ -28,7 +27,6 @@ import kotlin.system.exitProcess
 class DatabaseCopyRunner(
     private val target: DataSource,
     private val vendor: DatabaseVendor,
-    private val objectMapper: ObjectMapper,
     private val environment: Environment,
     private val context: ApplicationContext
 ) : ApplicationRunner {
@@ -66,8 +64,7 @@ class DatabaseCopyRunner(
             target.connection.use { targetConnection ->
                 return DatabaseCopy(
                     CopyEndpoint(sourceConnection, source.vendor),
-                    CopyEndpoint(targetConnection, vendor),
-                    objectMapper
+                    CopyEndpoint(targetConnection, vendor)
                 ).run(mode)
             }
         }

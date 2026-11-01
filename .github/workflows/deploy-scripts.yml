@@ -32,7 +32,7 @@ jobs:
           shellcheck -x -e SC1091 -s bash
           deploy/oci/heatwave-phase4.sh deploy/oci/test/heatwave-phase4-test.sh
           deploy/oci/heatwave-client.sh deploy/oci/backup-heatwave.sh
-          deploy/oci/verify-restore-heatwave.sh
+          deploy/oci/verify-restore-heatwave.sh deploy/mac/pull-backups.sh
 
       - name: Phase-4 script stops at the first failed check and prints no secret
         run: bash deploy/oci/test/heatwave-phase4-test.sh

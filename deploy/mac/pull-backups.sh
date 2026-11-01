@@ -42,9 +42,11 @@ log "newest local dump: $newest ($(du -h "$newest" | cut -f1))"
 # Confirm the pulled archive isn't truncated.
 case "$newest" in
   *.sql.gz)
-    gzip -t "$newest" && gzip -dc "$newest" | tail -n 1 | grep -q '^-- Dump completed' \
-      && log "dump complete (gzip -t, last line)" \
-      || { log "pulled dump is truncated: $newest"; hc fail; exit 1; }
+    if gzip -t "$newest" && gzip -dc "$newest" | tail -n 1 | grep -q '^-- Dump completed'; then
+      log "dump complete (gzip -t, last line)"
+    else
+      log "pulled dump is truncated: $newest"; hc fail; exit 1
+    fi
     ;;
   *)
     # If a Postgres client is installed.

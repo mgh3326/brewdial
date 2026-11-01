@@ -2,8 +2,9 @@ package com.brewdial.api.tools
 
 import com.brewdial.api.config.DatabaseVendor
 import org.slf4j.LoggerFactory
+import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.JsonNode
-import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.sql.Connection
@@ -51,16 +52,21 @@ internal class CopyEndpoint(val connection: Connection, val vendor: DatabaseVend
 internal class DatabaseCopy(
     private val source: CopyEndpoint,
     private val target: CopyEndpoint,
-    private val objectMapper: ObjectMapper,
     private val output: (String) -> Unit = ::println
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    /** Exact JSON numbers: as doubles, two values that differ past 17 digits would compare equal. */
+    private val objectMapper = JsonMapper.builder().enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).build()
 
     init {
         require(source.vendor != target.vendor) { "source and target must be different database vendors" }
     }
 
-    /** Returns true when every table and sequence matches after the run. */
+    /**
+     * Returns true when every table and sequence matches after the run. A write
+     * is compared inside its transaction and commits only if everything matches.
+     */
     fun run(mode: CopyMode): Boolean {
         // One snapshot of the source for the whole copy and verification.
         source.connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
@@ -72,8 +78,7 @@ internal class DatabaseCopy(
             checkTableList(target)
             checkCounterList(source)
             checkCounterList(target)
-            if (mode != CopyMode.VERIFY) write(mode, columns)
-            return report(columns)
+            return if (mode == CopyMode.VERIFY) report(columns) else write(mode, columns)
         } finally {
             source.connection.rollback()
         }
@@ -152,9 +157,12 @@ internal class DatabaseCopy(
         check(tooLong.isEmpty()) { "source values do not fit the MySQL columns: $tooLong" }
     }
 
-    private fun write(mode: CopyMode, columns: Map<String, Map<String, SharedColumn>>) {
+    private fun write(mode: CopyMode, columns: Map<String, Map<String, SharedColumn>>): Boolean {
         checkCapacity(columns)
+        if (mode == CopyMode.REPLACE) checkSourceHasData()
         val connection = target.connection
+        val previousCounter = readCounter(target)
+        var counterWritten = false
         connection.autoCommit = false
         try {
             suspendTriggers()
@@ -167,18 +175,45 @@ internal class DatabaseCopy(
             }
             TABLES.forEach { table -> copyTable(table, columns.getValue(table)) }
             resumeTriggers()
-            // Last before the commit: PostgreSQL setval does not roll back.
             val counter = readCounter(source)
+            counterWritten = true
             writeCounter(counter)
-            connection.commit()
-            log.info("{} {} tables; {}={}", mode, TABLES.size, RECIPE_CODE_SEQUENCE, counter)
-        } catch (exception: Exception) {
-            connection.rollback()
-            throw exception
+            val ok = report(columns)
+            if (ok) {
+                connection.commit()
+                log.info("{} {} tables; {}={}", mode, TABLES.size, RECIPE_CODE_SEQUENCE, counter)
+            } else {
+                undoWrite(previousCounter, counterWritten)
+                output("COPY_ROLLED_BACK the target keeps its previous rows")
+            }
+            return ok
+        } catch (failure: Throwable) {
+            undoWrite(previousCounter, counterWritten)
+            throw failure
         } finally {
             if (target.vendor == DatabaseVendor.MYSQL) execute("set @bd_replication_role = null")
             connection.autoCommit = true
         }
+    }
+
+    private fun undoWrite(previousCounter: Long, counterWritten: Boolean) {
+        target.connection.rollback()
+        // PostgreSQL setval ignores the rollback.
+        if (counterWritten && target.vendor == DatabaseVendor.POSTGRESQL) {
+            writeCounter(previousCounter)
+            target.connection.commit()
+        }
+    }
+
+    /** A replace deletes every target row, so an empty source would erase the data and still verify. */
+    private fun checkSourceHasData() {
+        val hasData = (TABLES - "bd_migration_meta").any { table ->
+            query(source.connection, "select count(*) from ${name(source, table)}") { rows ->
+                rows.next()
+                rows.getLong(1) > 0
+            }
+        }
+        check(hasData) { "the ${source.vendor} source holds no data; refusing to replace the target with it" }
     }
 
     /**

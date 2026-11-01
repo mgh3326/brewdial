@@ -10,8 +10,9 @@
 # cutover:  freeze writes -> copy PostgreSQL to MySQL -> verify -> deploy api-kt
 #           green on MySQL -> parity against the live Node API -> verify again ->
 #           print the cloudflared switch.
-# rollback: copy MySQL to PostgreSQL (full replace) -> verify -> print the choices.
-#           Writes stay frozen until the desk runs `unfreeze`.
+# rollback: dump PostgreSQL -> copy MySQL to PostgreSQL (full replace) -> verify ->
+#           print the choices. Writes stay frozen until the desk runs `unfreeze`.
+#           Refused unless a cutover verified and nothing has ended it since.
 #
 # Credentials stay in the env files. docker receives only their paths, and the
 # tool output goes to a root-only log. The terminal shows the report lines only.
@@ -24,6 +25,9 @@ ROLLBACK_ENV="$ENV_DIR/brewdial-rollback.env"
 KT_ENV="$ENV_DIR/brewdial-api-kt.env"
 FREEZE_FILE="${PHASE4_FREEZE_FILE:-/var/lib/brewdial/freeze/write-freeze}"
 CLOUDFLARED_CONFIG="${PHASE4_CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml}"
+# Exists only between a verified cutover and its rollback, unfreeze or next window.
+CUTOVER_MARKER="$FREEZE_FILE.cutover-verified"
+BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
 DRAIN_SECONDS="${PHASE4_DRAIN_SECONDS:-5}"
 NODE_URL="http://127.0.0.1:8020"
@@ -69,7 +73,7 @@ step() {
 }
 
 usage() {
-  sed -n '6,8p' "$0" | sed 's/^# *//' >&2
+  grep -E '^#   heatwave-phase4.sh ' "$0" | sed 's/^# *//' >&2
   exit 2
 }
 
@@ -106,7 +110,7 @@ check_cloudflared_on_node() {
 
 check_tools() {
   local tool
-  for tool in docker shiftgate curl jq; do
+  for tool in docker shiftgate curl jq sudo pg_restore; do
     command -v "$tool" >/dev/null || fail "$tool is not installed"
   done
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
@@ -203,8 +207,8 @@ cutover() {
   step preflight "read-only checks"
   check_tools
   check_digest
-  check_env_file "$COPY_ENV" '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
-  check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
+  check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
+  check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
   check_env_file "$KT_ENV" '^DATABASE_URL='
   check_cloudflared_on_node
   [ -d "$(dirname "$FREEZE_FILE")" ] || fail "$(dirname "$FREEZE_FILE") is missing (runbook 4.1)"
@@ -229,6 +233,7 @@ cutover() {
 
   RECOVERY="to abort, run: shiftgate rollback $KT_SERVICE (only if green is active), then heatwave-phase4.sh unfreeze. Retry with --replace-target."
   step freeze "stop writes on the Node API"
+  rm -f "$CUTOVER_MARKER"
   touch "$FREEZE_FILE"
   [ "$(freeze_probe)" = 503 ] || fail "the Node API does not honour $FREEZE_FILE (probe did not answer 503)"
   sleep "$DRAIN_SECONDS"
@@ -253,6 +258,7 @@ cutover() {
   step final-verify "nothing wrote to either database during the window"
   run_copy_tool final-verify "$COPY_ENV" verify
 
+  touch "$CUTOVER_MARKER"
   step "done" "ready to switch"
   log "PHASE4_READY: writes stay frozen until you switch traffic. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
@@ -268,16 +274,26 @@ rollback() {
   step preflight "read-only checks"
   check_tools
   check_digest
-  check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
+  check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
   check_cloudflared_on_node
   [ "$(freeze_probe)" = 503 ] || fail "the Node API must stay frozen during the rollback copy: probe did not answer 503"
+  [ -e "$CUTOVER_MARKER" ] || fail "no verified cutover to roll back: MySQL may be empty or stale, and this would replace PostgreSQL with it"
   install -d -m 0700 "$LOG_DIR"
   if [ "$PREFLIGHT" = 1 ]; then
     log "PHASE4_PREFLIGHT_OK rollback (nothing was changed)"
     return 0
   fi
 
-  RECOVERY="PostgreSQL is unchanged if the replace failed. Writes stay frozen; fix the cause and run rollback again."
+  RECOVERY="PostgreSQL keeps its rows unless the replace reported COPY_VERIFY_OK. Writes stay frozen; fix the cause and run rollback again."
+  step safety-dump "PostgreSQL as it is now, before the replace"
+  install -d -m 0750 "$BACKUP_DIR"
+  local dump="$BACKUP_DIR/pre-rollback-$STAMP.dump"
+  # The redirect runs as root on purpose: only root may read the safety dump.
+  # shellcheck disable=SC2024
+  sudo -u postgres pg_dump -Fc brewdial >"$dump" || fail "pg_dump failed"
+  pg_restore -l "$dump" >/dev/null || fail "$dump is not a readable archive"
+  log "dump OK: $dump"
+
   step replace "MySQL to PostgreSQL: full replace, then counts, checksums and sequence"
   sleep "$DRAIN_SECONDS"
   run_copy_tool rollback-replace "$ROLLBACK_ENV" replace
@@ -285,13 +301,16 @@ rollback() {
   step verify "fresh snapshot of both databases"
   run_copy_tool rollback-verify "$ROLLBACK_ENV" verify
 
+  # PostgreSQL may take writes from here on, so a second rollback must not overwrite them.
+  rm -f "$CUTOVER_MARKER"
   step "done" "PostgreSQL holds the MySQL data"
   log "PHASE4_ROLLBACK_READY: writes stay frozen. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
 Choose one:
 
   Node API on PostgreSQL:   sudo $0 unfreeze
-  api-kt on PostgreSQL:     sudo shiftgate rollback $KT_SERVICE
+  api-kt on PostgreSQL:     sudo cp -p $KT_ENV.postgres $KT_ENV
+                            sudo shiftgate rollback $KT_SERVICE
                             sudo sed -i 's#$NODE_URL#$KT_URL#' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
 EOF
 }
@@ -299,7 +318,9 @@ EOF
 unfreeze() {
   step unfreeze "open writes on the Node API"
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
-  rm -f "$FREEZE_FILE"
+  check_cloudflared_on_node
+  # PostgreSQL takes writes again, so MySQL is stale from here on.
+  rm -f "$CUTOVER_MARKER" "$FREEZE_FILE"
   [ "$(freeze_probe)" = 404 ] || fail "the Node API is still frozen (probe did not answer 404)"
   log "PHASE4_UNFROZEN"
 }

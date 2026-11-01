@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
-import tools.jackson.databind.json.JsonMapper
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.Properties
@@ -32,7 +31,6 @@ class DatabaseCopyTest {
     private val pgOwnerPassword = "owner-$id"
     private val pgAdminConfig = DatabaseUrlParser.parse(System.getenv("BREWDIAL_COPY_TEST_POSTGRES_URL"))
     private val mysqlAdminConfig = DatabaseUrlParser.parse(System.getenv("BREWDIAL_COPY_TEST_MYSQL_URL"))
-    private val mapper = JsonMapper.builder().build()
     private val output = mutableListOf<String>()
 
     /** Superuser on the test database: fixtures and assertions. */
@@ -135,6 +133,43 @@ class DatabaseCopyTest {
     }
 
     @Test
+    fun aReplaceThatDoesNotVerifyRollsBackBeforeItCommits() {
+        assertTrue(forward(CopyMode.COPY))
+        val before = pgFingerprints()
+        mysql.update("update recipe_code_seq set value = 99 where id = 1")
+        // Numbers in a JSON array become text in text[], so the checksums differ.
+        mysql.update("update recipes set intent = '[1,2]' where code = 'COF-0041'")
+
+        assertFalse(reverse(CopyMode.REPLACE))
+
+        assertEquals(before, pgFingerprints())
+        assertEquals(42L, pgAdmin.long("select last_value from recipe_code_seq"), "setval must be undone")
+        assertEquals(0L, pgAdmin.long("select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'O'"))
+        assertTrue(outputLines().any { it.startsWith("COPY_ROLLED_BACK") })
+    }
+
+    @Test
+    fun aFirstCopyThatDoesNotVerifyLeavesTheTargetEmpty() {
+        pgAdmin.update("update recipes set params = '{\"precise\":1.00000000000000000001}' where code = 'COF-0041'")
+
+        assertFalse(forward(CopyMode.COPY), "MySQL JSON keeps a double, so the value must not verify")
+
+        assertEquals(0L, mysql.long("select count(*) from recipes"))
+        assertEquals(0L, mysql.long("select value from recipe_code_seq"))
+    }
+
+    @Test
+    fun replaceRefusesAnEmptySource() {
+        val before = pgFingerprints()
+
+        val failure = assertThrows(IllegalStateException::class.java) { reverse(CopyMode.REPLACE) }
+
+        assertTrue(failure.message!!.contains("holds no data"), failure.message)
+        assertEquals(before, pgFingerprints())
+        assertEquals(42L, pgAdmin.long("select last_value from recipe_code_seq"))
+    }
+
+    @Test
     fun copyFailsOnAColumnOnlyPostgresHas() {
         pgAdmin.update("alter table beans add column drift_note text")
 
@@ -230,7 +265,6 @@ class DatabaseCopyTest {
     private fun forward(mode: CopyMode): Boolean = DatabaseCopy(
         CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL),
         CopyEndpoint(mysql, DatabaseVendor.MYSQL),
-        mapper,
         output::add
     ).run(mode)
 
@@ -238,7 +272,6 @@ class DatabaseCopyTest {
         DatabaseCopy(
             CopyEndpoint(source, DatabaseVendor.MYSQL),
             CopyEndpoint(pg, DatabaseVendor.POSTGRESQL),
-            mapper,
             output::add
         ).run(mode)
     }

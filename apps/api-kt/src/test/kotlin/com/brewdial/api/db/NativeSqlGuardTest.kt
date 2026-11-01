@@ -14,8 +14,8 @@ import java.io.File
 class NativeSqlGuardTest {
     @Test
     fun mainCodeMatchesTheAllowlist() {
-        val root = File("src/main/kotlin")
-        val found = root.walkTopDown().filter { it.extension == "kt" || it.extension == "java" }
+        val root = File("src/main")
+        val found = root.walkTopDown().filter { it.extension in setOf("kt", "java", "xml") }
             .associate { it.relativeTo(root).invariantSeparatorsPath to nativeSqlUses(it.readText()).size }
             .filterValues { it > 0 }
             .toSortedMap()
@@ -39,7 +39,19 @@ class NativeSqlGuardTest {
         val samples = listOf(
             """entityManager.createNativeQuery("select 1")""",
             """session.createNativeMutationQuery("delete from x")""",
+            """entityManager.createStoredProcedureQuery("x")""",
+            """@Procedure("x")""",
             """jdbcTemplate.update("delete from x")""",
+            """private val jdbc: JdbcOperations""",
+            """SimpleJdbcInsert(dataSource)""",
+            """@JoinFormula("lower(name)")""",
+            """@ColumnTransformer(read = "lower(name)")""",
+            """@Subselect("select 1")""",
+            """@Filter(name = "x")""",
+            """createQuery("select function('lower', b.name) from Bean b")""",
+            """createQuery("select sql('lower(?)', b.name) from Bean b")""",
+            """<named-native-query name="x"/>""",
+            """val url = "https://x" ; jdbcTemplate""",
             """@Query(value = "select 1", nativeQuery = true)""",
             """@NativeQuery("select 1")""",
             """@NamedNativeQuery(name = "x", query = "select 1")""",
@@ -55,7 +67,8 @@ class NativeSqlGuardTest {
             """connection.prepareStatement("select 1")""",
             """connection.prepareCall("call x()")""",
             """@Formula("lower(name)")""",
-            """@SQLRestriction("deleted = false")"""
+            """@SQLRestriction("deleted = false")""",
+            """val glob = "/*" ; jdbcTemplate ; val end = "*/" """
         )
         samples.forEach { sample -> assertEquals(1, nativeSqlUses(sample).size) { sample } }
     }
@@ -74,23 +87,23 @@ class NativeSqlGuardTest {
     }
 
     private fun nativeSqlUses(source: String): List<String> {
-        val code = source.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "")
+        val code = STRING_OR_COMMENT.replace(source) { match -> if (match.value.startsWith("\"")) match.value else "" }
         return NATIVE_ACCESS.findAll(code).map { it.value }.toList()
     }
 
     private companion object {
-        val BLOCK_COMMENT = Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL)
-        val LINE_COMMENT = Regex("(^|\\s)//[^\\n]*")
+        // Strings first, so that a `//` or `/*` inside one does not hide the code after it.
+        val STRING_OR_COMMENT = Regex("\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\\\n])*\"|/\\*[\\s\\S]*?\\*/|//[^\\n]*")
         val NATIVE_ACCESS = Regex(
             listOf(
                 "createNative\\w*",
+                "createStoredProcedureQuery",
                 "nativeQuery\\s*=",
                 "@NativeQuery",
                 "@NamedNativeQuer(y|ies)",
-                "\\b\\w*JdbcTemplate\\b",
-                // Each call on an injected template, so one more statement raises the count.
-                "\\b\\w*[jJ]dbc\\w*\\.\\w+\\(",
-                "\\bJdbcClient\\b",
+                "@Procedure\\b",
+                "\\b\\w*[jJ]dbc(Template|Client|Operations)\\b",
+                "\\bSimpleJdbc\\w+",
                 "\\bjavax\\.sql\\.",
                 "\\bjava\\.sql\\.",
                 "\\bDriverManager\\b",
@@ -100,7 +113,15 @@ class NativeSqlGuardTest {
                 "\\.prepareStatement\\(",
                 "\\.prepareCall\\(",
                 "@Formula\\b",
-                "@SQL[A-Z]\\w*"
+                "@JoinFormula\\b",
+                "@ColumnTransformer\\b",
+                "@Subselect\\b",
+                "@Filter(Def)?\\b",
+                "@SQL[A-Z]\\w*",
+                // JPQL escape hatches into database functions and fragments.
+                "\\bfunction\\s*\\(\\s*'",
+                "\\bsql\\s*\\(\\s*'",
+                "<(named-)?native-query\\b"
             ).joinToString("|")
         )
     }

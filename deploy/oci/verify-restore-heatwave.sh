@@ -87,6 +87,15 @@ for table in $tables; do
   if [ "$live" = "$restored" ]; then log "  ok $table ($live)"; else note_fail "$table live=[$live] restored=[$restored]"; fi
 done
 
+# Every API write path relies on these. A dump user without the TRIGGER grant
+# silently drops the triggers from the dump and from its own view of the live schema.
+for kind in triggers views; do
+  column=trigger_schema
+  [ "$kind" = views ] && column=table_schema
+  restored="$(q_restored "select count(*) from information_schema.$kind where $column = database()")"
+  if [ "$restored" -gt 0 ]; then log "  ok $kind=$restored"; else note_fail "the restored schema has no $kind"; fi
+done
+
 seq_value="$(q_restored 'select value from recipe_code_seq where id = 1')"
 max_code="$(q_restored "select coalesce(max(cast(substr(code, 5) as unsigned)), 0) from recipes where code regexp '^COF-[0-9]+$'")"
 if [ "$seq_value" -ge "$max_code" ]; then
