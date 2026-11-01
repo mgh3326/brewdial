@@ -267,7 +267,8 @@ Finally, each table is verified:
 - **row count**: PostgreSQL vs MySQL;
 - **checksum**: SHA-256 over every row in a vendor-neutral canonical form
   (UUIDs as text, JSON with sorted keys and normalised numbers, `text[]` as
-  JSON arrays, timestamps as UTC instants), rows sorted.
+  JSON arrays, timestamps as UTC instants, every value length-prefixed), rows
+  sorted.
 
 1. **Freeze writes.** Point cloudflared at a maintenance response
    (`service: http_status:503`) and restart it. The data is small, so the

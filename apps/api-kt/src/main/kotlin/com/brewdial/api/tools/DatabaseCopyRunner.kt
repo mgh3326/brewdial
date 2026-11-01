@@ -23,6 +23,14 @@ import javax.sql.DataSource
 import kotlin.system.exitProcess
 
 /**
+ * Encodes one row for the checksum. A value is `<length>:<value>` and SQL NULL is
+ * `-:`, so no value can imitate a column boundary, a row boundary or NULL: two
+ * rows encode the same only when every value is the same.
+ */
+internal fun checksumRow(values: List<String?>): String =
+    values.joinToString("") { value -> if (value == null) "-:" else "${value.length}:$value" }
+
+/**
  * One-shot PostgreSQL → MySQL data copy with verification (runbook
  * docs/runbooks/oci-heatwave-cutover.md). It runs inside the normal api-kt
  * image: DATABASE_URL is the MySQL target (Flyway creates the schema first),
@@ -32,7 +40,8 @@ import kotlin.system.exitProcess
  *
  * Checksum: SHA-256 over each table's rows, every value in a vendor-neutral
  * canonical form (UUIDs as text, JSON with sorted keys and normalised numbers,
- * text[] as JSON arrays, timestamps as UTC instants), rows sorted.
+ * text[] as JSON arrays, timestamps as UTC instants), each row encoded by
+ * [checksumRow], rows sorted.
  */
 @Component
 @ConditionalOnProperty("brewdial.copy.source-url")
@@ -195,22 +204,22 @@ class DatabaseCopyRunner(
         connection.createStatement().use { statement ->
             statement.executeQuery(sql).use { rows ->
                 while (rows.next()) {
-                    lines += columns.indices.joinToString("\u001f") { index -> canonical(rows, index + 1, columns[index]) }
+                    lines += checksumRow(columns.indices.map { index -> canonical(rows, index + 1, columns[index]) })
                 }
             }
         }
         lines.sort()
         val sha = MessageDigest.getInstance("SHA-256")
-        lines.forEach { line -> sha.update(line.toByteArray(Charsets.UTF_8)); sha.update('\n'.code.toByte()) }
+        lines.forEach { line -> sha.update(line.toByteArray(Charsets.UTF_8)) }
         return lines.size.toLong() to sha.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun canonical(rows: ResultSet, index: Int, column: Column): String {
+    private fun canonical(rows: ResultSet, index: Int, column: Column): String? {
         val raw = when (rows.metaData.getColumnTypeName(index).lowercase()) {
             "timestamptz" -> rows.getObject(index, OffsetDateTime::class.java)
             "datetime" -> rows.getObject(index, LocalDateTime::class.java)
             else -> rows.getObject(index)
-        } ?: return "∅"
+        } ?: return null
         return when {
             raw is OffsetDateTime -> raw.toInstant().toString()
             raw is LocalDateTime -> raw.toInstant(ZoneOffset.UTC).toString()
