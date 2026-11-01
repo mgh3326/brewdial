@@ -15,21 +15,19 @@ class Preference {
     @Column(name = "id", nullable = false)
     var id: String = "global"
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "likes", nullable = false, columnDefinition = "text[]")
+    @Column(name = "likes", nullable = false)
     var likes: List<String> = emptyList()
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "dislikes", nullable = false, columnDefinition = "text[]")
+    @Column(name = "dislikes", nullable = false)
     var dislikes: List<String> = emptyList()
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "default_params", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "default_params", nullable = false)
     var defaultParams: String = "{}"
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

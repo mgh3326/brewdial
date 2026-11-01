@@ -35,7 +35,7 @@ class GrinderCalibration {
     var anchorMethod: String? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "samples", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "samples", nullable = false)
     var samples: String = "[]"
 
     @Column(name = "source", nullable = false)
@@ -44,9 +44,9 @@ class GrinderCalibration {
     @Column(name = "notes")
     var notes: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

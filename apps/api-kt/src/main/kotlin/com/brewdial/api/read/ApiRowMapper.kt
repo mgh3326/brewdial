@@ -1,5 +1,6 @@
 package com.brewdial.api.read
 
+import com.brewdial.api.config.DatabaseVendor
 import org.springframework.stereotype.Component
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -7,11 +8,14 @@ import java.math.BigDecimal
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 
 @Component
 class ApiRowMapper(
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val vendor: DatabaseVendor
 ) {
     fun recipe(resultSet: ResultSet): LinkedHashMap<String, Any?> = ApiResponseShape.linkedRow(
         ApiResponseShape.recipeColumns,
@@ -135,21 +139,37 @@ class ApiRowMapper(
 
     private fun uuid(resultSet: ResultSet, column: String): String? = resultSet.getObject(column)?.toString()
 
-    private fun boolean(resultSet: ResultSet, column: String): Boolean? = resultSet.getObject(column) as? Boolean
+    // MySQL has no boolean type: computed columns (bean_summaries.has_ai) arrive as 0/1.
+    private fun boolean(resultSet: ResultSet, column: String): Boolean? = when (val raw = resultSet.getObject(column)) {
+        is Boolean -> raw
+        is Number -> raw.toInt() != 0
+        else -> null
+    }
 
     private fun number(resultSet: ResultSet, column: String): Number? = resultSet.getObject(column) as? Number
 
     private fun long(resultSet: ResultSet, column: String): Long? = (resultSet.getObject(column) as? Number)?.toLong()
 
-    private fun decimal(resultSet: ResultSet, column: String): BigDecimal? = resultSet.getBigDecimal(column)
+    // PostgreSQL numeric keeps the scale it was given; MySQL DECIMAL(38,10) pads
+    // every value to ten places, so drop that padding there (0.5, not 0.5000000000).
+    private fun decimal(resultSet: ResultSet, column: String): BigDecimal? {
+        val value = resultSet.getBigDecimal(column) ?: return null
+        if (vendor != DatabaseVendor.MYSQL) return value
+        val stripped = value.stripTrailingZeros()
+        return if (stripped.scale() < 0) stripped.setScale(0) else stripped
+    }
 
-    private fun textArray(resultSet: ResultSet, column: String): List<String>? {
-        val array = resultSet.getArray(column) ?: return null
-        return try {
-            (array.array as? Array<*>)?.map { value -> value?.toString().orEmpty() } ?: emptyList()
+    fun textArray(resultSet: ResultSet, column: String): List<String>? = textArray(resultSet.getObject(column))
+
+    /** PostgreSQL text[] arrives as java.sql.Array; MySQL stores the same list as a JSON array. */
+    fun textArray(raw: Any?): List<String>? = when (raw) {
+        null -> null
+        is java.sql.Array -> try {
+            (raw.array as? Array<*>)?.map { value -> value?.toString().orEmpty() } ?: emptyList()
         } finally {
-            array.free()
+            raw.free()
         }
+        else -> objectMapper.readTree(raw.toString()).values().map { value -> value.asText() }
     }
 
     private fun json(resultSet: ResultSet, column: String): JsonNode? {
@@ -167,6 +187,8 @@ class ApiRowMapper(
             is Instant -> raw.toString()
             is OffsetDateTime -> raw.toInstant().toString()
             is Timestamp -> raw.toInstant().toString()
+            // MySQL DATETIME(6) columns hold UTC (session time zone is pinned to UTC).
+            is LocalDateTime -> raw.toInstant(ZoneOffset.UTC).toString()
             else -> resultSet.getObject(column, OffsetDateTime::class.java).toInstant().toString()
         }
     }

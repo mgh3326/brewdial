@@ -1,6 +1,8 @@
 package com.brewdial.api.agent
 
 import com.brewdial.api.bean.Bean
+import com.brewdial.api.config.DatabaseVendor
+import com.brewdial.api.config.VendorSql
 import com.brewdial.api.feedback.Feedback
 import com.brewdial.api.purchase.BeanPurchaseLink
 import com.brewdial.api.read.ReadRepository
@@ -28,7 +30,8 @@ class AgentWriteService(
     private val recipeWrites: AgentRecipeWriteRepository,
     private val readRepository: ReadRepository,
     private val jdbcTemplate: JdbcTemplate,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val sql: VendorSql
 ) {
     fun findRecipeAnyStatus(code: String): LinkedHashMap<String, Any?>? = readRepository.findRecipeAnyStatus(code)
 
@@ -111,18 +114,32 @@ class AgentWriteService(
 
     @Transactional
     fun updateGlobalPreferences(input: UpdatePreferencesInput): LinkedHashMap<String, Any?> {
-        jdbcTemplate.update(
-            """
-            insert into preferences (id, likes, dislikes)
-            values ('global', cast(? as text[]), cast(? as text[]))
-            on conflict (id) do update set
-              likes = excluded.likes,
-              dislikes = excluded.dislikes,
-              updated_at = now()
-            """.trimIndent(),
-            input.likes.toTypedArray(),
-            input.dislikes.toTypedArray()
-        )
+        when (sql.vendor) {
+            DatabaseVendor.POSTGRESQL -> jdbcTemplate.update(
+                """
+                insert into preferences (id, likes, dislikes)
+                values ('global', cast(? as text[]), cast(? as text[]))
+                on conflict (id) do update set
+                  likes = excluded.likes,
+                  dislikes = excluded.dislikes,
+                  updated_at = now()
+                """.trimIndent(),
+                input.likes.toTypedArray(),
+                input.dislikes.toTypedArray()
+            )
+            // text[] is a JSON array; the update trigger stamps updated_at.
+            DatabaseVendor.MYSQL -> jdbcTemplate.update(
+                """
+                insert into preferences (id, likes, dislikes)
+                values ('global', cast(? as json), cast(? as json)) as incoming
+                on duplicate key update
+                  likes = incoming.likes,
+                  dislikes = incoming.dislikes
+                """.trimIndent(),
+                objectMapper.writeValueAsString(input.likes),
+                objectMapper.writeValueAsString(input.dislikes)
+            )
+        }
         return readRepository.findGlobalPreference() ?: error("global preferences could not be read")
     }
 

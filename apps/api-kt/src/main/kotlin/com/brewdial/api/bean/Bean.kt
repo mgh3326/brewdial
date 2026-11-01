@@ -5,8 +5,6 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import org.hibernate.annotations.DynamicUpdate
-import org.hibernate.annotations.JdbcTypeCode
-import org.hibernate.type.SqlTypes
 import java.time.OffsetDateTime
 
 @Entity
@@ -14,7 +12,7 @@ import java.time.OffsetDateTime
 @Table(name = "beans")
 class Bean {
     @Id
-    @Column(name = "id", nullable = false, columnDefinition = "text")
+    @Column(name = "id", nullable = false)
     var id: String? = null
 
     @Column(name = "name", nullable = false, updatable = false)
@@ -35,19 +33,19 @@ class Bean {
     @Column(name = "notes")
     var notes: String? = null
 
-    @Column(name = "created_at", nullable = false, insertable = false, updatable = false, columnDefinition = "timestamptz")
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     lateinit var createdAt: OffsetDateTime
 
-    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false, columnDefinition = "timestamptz")
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     lateinit var updatedAt: OffsetDateTime
 
-    @Column(name = "roast_level_ord", columnDefinition = "smallint")
+    @Column(name = "roast_level_ord")
     var roastLevelOrd: Short? = null
 
-    @Column(name = "acidity", columnDefinition = "smallint")
+    @Column(name = "acidity")
     var acidity: Short? = null
 
-    @Column(name = "body", columnDefinition = "smallint")
+    @Column(name = "body")
     var body: Short? = null
 
     @Column(name = "agtron_min")
@@ -59,8 +57,7 @@ class Bean {
     @Column(name = "decaf")
     var decaf: Boolean? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "flavor_categories", columnDefinition = "text[]")
+    @Column(name = "flavor_categories")
     var flavorCategories: List<String>? = null
 
     @Column(name = "attrs_source")

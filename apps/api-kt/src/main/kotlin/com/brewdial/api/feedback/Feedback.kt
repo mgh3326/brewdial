@@ -28,11 +28,11 @@ class Feedback {
     var ownerId: UUID? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "ratings", columnDefinition = "jsonb")
+    @Column(name = "ratings")
     var ratings: String? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "actual", columnDefinition = "jsonb")
+    @Column(name = "actual")
     var actual: String? = null
 
     @Column(name = "comment")
@@ -41,24 +41,21 @@ class Feedback {
     @Column(name = "raw_comment")
     var rawComment: String? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "quick_tags", columnDefinition = "text[]")
+    @Column(name = "quick_tags")
     var quickTags: List<String>? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "desired_direction", columnDefinition = "text[]")
+    @Column(name = "desired_direction")
     var desiredDirection: List<String>? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "next_hint", columnDefinition = "text[]")
+    @Column(name = "next_hint")
     var nextHint: List<String>? = null
 
     @Column(name = "source", nullable = false, updatable = false)
     var source: String = "web"
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

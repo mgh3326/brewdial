@@ -32,15 +32,15 @@ class UserGear {
     var label: String = ""
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "details", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "details", nullable = false)
     var details: String = "{}"
 
     @Column(name = "is_default", nullable = false)
     var isDefault: Boolean = false
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

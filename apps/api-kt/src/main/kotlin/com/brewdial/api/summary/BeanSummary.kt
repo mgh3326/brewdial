@@ -4,9 +4,7 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import org.hibernate.annotations.Immutable
-import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.annotations.Subselect
-import org.hibernate.type.SqlTypes
 import java.time.Instant
 
 @Entity
@@ -46,13 +44,13 @@ class BeanSummary {
     @Column(name = "recipe_count", nullable = false)
     var recipeCount: Long = 0
 
-    @Column(name = "latest_recipe_at", columnDefinition = "timestamptz")
+    @Column(name = "latest_recipe_at")
     var latestRecipeAt: Instant? = null
 
     @Column(name = "has_ai", nullable = false)
     var hasAi: Boolean = false
 
-    @Column(name = "roast_level_ord", columnDefinition = "smallint")
+    @Column(name = "roast_level_ord")
     var roastLevelOrd: Short? = null
 
     @Column(name = "agtron_min")
@@ -61,17 +59,16 @@ class BeanSummary {
     @Column(name = "agtron_max")
     var agtronMax: Int? = null
 
-    @Column(name = "acidity", columnDefinition = "smallint")
+    @Column(name = "acidity")
     var acidity: Short? = null
 
-    @Column(name = "body", columnDefinition = "smallint")
+    @Column(name = "body")
     var body: Short? = null
 
     @Column(name = "decaf")
     var decaf: Boolean? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "flavor_categories", columnDefinition = "text[]")
+    @Column(name = "flavor_categories")
     var flavorCategories: List<String>? = null
 
     @Column(name = "attrs_source")

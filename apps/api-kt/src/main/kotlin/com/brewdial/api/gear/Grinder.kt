@@ -35,19 +35,19 @@ class Grinder {
     var stepless: Boolean = false
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "brew_method_ranges", nullable = false, columnDefinition = "jsonb", insertable = false, updatable = false)
+    @Column(name = "brew_method_ranges", nullable = false, insertable = false, updatable = false)
     var brewMethodRanges: String = "{}"
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "anchor_point", columnDefinition = "jsonb")
+    @Column(name = "anchor_point")
     var anchorPoint: String? = null
 
     @Column(name = "notes")
     var notes: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

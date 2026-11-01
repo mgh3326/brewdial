@@ -1,22 +1,33 @@
 # BrewDial Kotlin API
 
-Run locally with a migrated PostgreSQL database:
+The API runs on **PostgreSQL or MySQL** through JPA/Hibernate. One setting
+selects the database: the `DATABASE_URL` scheme (`postgres://…` or
+`mysql://…`). It picks the JDBC driver, the Hibernate types and the Flyway
+folder (`src/main/resources/db/migration/{postgresql,mysql}`, see the README
+there). Flyway migrates on startup and Hibernate validates the result.
+
+Run locally with PostgreSQL (an empty database is migrated by Flyway; a
+node-pg-migrate database is baselined):
 
 ```sh
 DATABASE_URL=postgres://user:password@localhost:5432/brewdial_test ./gradlew bootRun
 ```
 
-Run the test suite with:
+Run the test suite with either database. CI runs both (`ci-kt.yml`):
 
 ```sh
 DATABASE_URL=postgres://user:password@localhost:5432/brewdial_test ./gradlew test
+DATABASE_URL=mysql://user:password@127.0.0.1:3306/brewdial_test ./gradlew test
 ```
+
+The PostgreSQL → MySQL data copy (copy mode of this app) is described in
+`docs/runbooks/oci-heatwave-cutover.md`.
 
 Run Spring against the existing contract tests with `DATABASE_URL=postgres://mgh3326@localhost:5432/brewdial_test scripts/contract-test.sh apps/api/src/routes/health.test.ts`.
 Pass any Vitest file paths or selectors after `scripts/contract-test.sh`; no Hono server is started.
 The runner starts Spring on `127.0.0.1:3021`, polls `/api/db/health`, and always stops it on exit.
 
-This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate 7.4.5.Final. The versions come from the Spring Initializr GA-generated project. Hibernate is configured with `ddl-auto: validate` because the PostgreSQL schema is owned by the repository migrations.
+This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate 7.4.5.Final. The versions come from the Spring Initializr GA-generated project. Hibernate is configured with `ddl-auto: validate` because the schema is owned by the Flyway migrations.
 
 ## Intentional differences from Hono
 
@@ -34,7 +45,7 @@ The arm64 OCI image is built only in CI by `image-kt.yml` using `bootBuildImage`
 | --- | --- | --- |
 | `PORT` | `3021` | HTTP listener port. |
 | `SPRING_PROFILES_ACTIVE` | ConfigMap: `prod` | Enables production runtime settings. |
-| `DATABASE_URL` | Secret, required | PostgreSQL connection URL. |
+| `DATABASE_URL` | Secret / env file, required | `postgres://…` or `mysql://…`; selects the database vendor. |
 | `AGENT_TOKEN` | Secret, required | Agent endpoint authentication token. |
 | `JAVA_TOOL_OPTIONS` | ConfigMap | JVM memory, GC, and thread-stack tuning. |
 | `GIT_SHA` | ConfigMap | Release identifier passed to Sentry. |
