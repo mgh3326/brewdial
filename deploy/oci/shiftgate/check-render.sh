@@ -24,6 +24,8 @@ fi
 
 allowed_binds="$(grep -E '^  allowed_binds:' "$services")"
 [[ -n "$allowed_binds" ]] || { echo "no haproxy.allowed_binds in $services" >&2; exit 1; }
+# Keep the production log and timeout settings (single-line keys).
+passthrough="$(grep -E '^  (log|timeouts|allow_wildcard_bind):' "$services" || true)"
 
 # Host-level settings point into $work; the services section is used verbatim.
 {
@@ -34,6 +36,7 @@ allowed_binds="$(grep -E '^  allowed_binds:' "$services")"
   echo "  check: $check"
   echo "  reload: [\"false\"]"
   echo "$allowed_binds"
+  [[ -z "$passthrough" ]] || echo "$passthrough"
   sed -n '/^services:/,$p' "$services"
 } > "$work/services.yaml"
 mkdir -p "$work/state"

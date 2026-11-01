@@ -1,6 +1,7 @@
 package com.brewdial.api.config
 
 import jakarta.persistence.EntityManager
+import org.hibernate.Session
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.Environment
@@ -45,11 +46,14 @@ class VendorSql(val vendor: DatabaseVendor) {
             block()
         }
         DatabaseVendor.MYSQL -> {
-            entityManager.createNativeQuery("set @bd_owner_write_ok = 'on'").executeUpdate()
+            // Plain JDBC on the transaction's connection: the reset must still run
+            // when a failed flush has left the Hibernate session unusable.
+            val connection = entityManager.unwrap(Session::class.java).doReturningWork { it }
+            connection.createStatement().use { it.execute("set @bd_owner_write_ok = 'on'") }
             try {
                 block()
             } finally {
-                entityManager.createNativeQuery("set @bd_owner_write_ok = null").executeUpdate()
+                connection.createStatement().use { it.execute("set @bd_owner_write_ok = null") }
             }
         }
     }

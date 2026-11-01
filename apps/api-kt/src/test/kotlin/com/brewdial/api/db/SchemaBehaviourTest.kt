@@ -2,6 +2,7 @@ package com.brewdial.api.db
 
 import com.brewdial.api.config.DatabaseVendor
 import com.brewdial.api.identity.IdentityResolver
+import com.brewdial.api.me.MeRepository
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -14,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
+import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 
 /**
@@ -30,6 +32,12 @@ class SchemaBehaviourTest {
 
     @Autowired
     private lateinit var identities: IdentityResolver
+
+    @Autowired
+    private lateinit var me: MeRepository
+
+    @Autowired
+    private lateinit var objectMapper: ObjectMapper
 
     private val tag = UUID.randomUUID().toString().take(8)
     private val appUsers = mutableListOf<String>()
@@ -160,6 +168,28 @@ class SchemaBehaviourTest {
         assertEquals(first, second)
         assertNotNull(jdbc.queryForObject("select count(*) from app_users where id = $uuid", Long::class.java, first))
         assertThrows(Exception::class.java) { identities.resolve("toss_login", "sb-$tag-identity-key") }
+    }
+
+    /** PostgreSQL snapshots with to_jsonb(r); MySQL lists the columns, so a new column must be added there too. */
+    @Test
+    fun savedRecipeSnapshotCoversEveryRecipeColumn() {
+        val user = identities.resolve("web_local", "sb-$tag-snapshot-user")
+        appUsers += user
+        val code = insertRecipe("sb-$tag-snap")
+        me.saveRecipe(user, code)
+        val snapshot = objectMapper.readTree(
+            jdbc.queryForObject("select snapshot from saved_recipes where recipe_code = ?", String::class.java, code)
+        )
+        val columns = jdbc.dataSource!!.connection.use { connection ->
+            val names = sortedSetOf<String>()
+            connection.metaData.getColumns(connection.catalog, connection.schema, "recipes", "%").use { rows ->
+                while (rows.next()) names += rows.getString("COLUMN_NAME")
+            }
+            names
+        }
+        assertEquals(columns, snapshot.propertyNames().asSequence().toSortedSet())
+        assertTrue(snapshot.get("is_official").isBoolean, "is_official must be a JSON boolean: $snapshot")
+        jdbc.update("delete from saved_recipes where recipe_code = ?", code)
     }
 
     private fun truthy(value: Any?): Boolean? = when (value) {
