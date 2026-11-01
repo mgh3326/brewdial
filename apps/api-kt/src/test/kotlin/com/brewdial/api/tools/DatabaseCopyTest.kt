@@ -241,6 +241,16 @@ class DatabaseCopyTest {
     }
 
     @Test
+    fun aTableThePostgresRoleDoesNotOwnStopsTheCutover() {
+        pgAdmin.update("alter table bean_photos owner to postgres")
+
+        val failure = assertThrows(IllegalStateException::class.java) { forward(CopyMode.COPY) }
+
+        assertTrue(failure.message!!.contains("bean_photos"), failure.message)
+        assertEquals(0L, mysql.long("select count(*) from beans"), "nothing may be written")
+    }
+
+    @Test
     fun copyFailsOnAColumnOnlyPostgresHas() {
         pgAdmin.update("alter table beans add column drift_note text")
 

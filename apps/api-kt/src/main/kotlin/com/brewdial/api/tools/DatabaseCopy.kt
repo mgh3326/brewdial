@@ -71,6 +71,7 @@ internal class DatabaseCopy(
      */
     fun run(mode: CopyMode): Boolean {
         waitForQuietSource()
+        checkPostgresOwnership()
         // One snapshot of the source for the whole copy and verification.
         source.connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
         source.connection.autoCommit = false
@@ -107,6 +108,21 @@ internal class DatabaseCopy(
             log.info("waiting for {} session(s) on the {} source", active, source.vendor)
             Thread.sleep(QUIET_POLL_MILLIS)
         }
+    }
+
+    /**
+     * The copy into PostgreSQL disables user triggers, which only the table owner may
+     * do. Checked in both directions, so that the cutover fails rather than the rollback.
+     */
+    private fun checkPostgresOwnership() {
+        val postgres = if (source.vendor == DatabaseVendor.POSTGRESQL) source else target
+        val tables = TABLES.joinToString(", ") { "'$it'" }
+        val foreign = mutableListOf<String>()
+        query(
+            postgres.connection,
+            "select tablename from pg_tables where schemaname = current_schema() and tablename in ($tables) and tableowner <> current_user"
+        ) { rows -> while (rows.next()) foreign += rows.getString(1) }
+        check(foreign.isEmpty()) { "the PostgreSQL role does not own $foreign, so a rollback could not load them" }
     }
 
     private fun activeSessionsSql(): String = when (source.vendor) {

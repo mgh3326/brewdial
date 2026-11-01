@@ -33,6 +33,16 @@ case "$1" in
     exit 0
     ;;
   inspect)
+    case "$*" in
+      *Config.Env*)
+        [ "${STUB_FAIL:-}" = blue-missing ] && exit 1
+        # What a leak would print: this must only ever be counted.
+        if [ "${STUB_FAIL:-}" = blue-on-mysql ]; then echo "DATABASE_URL=mysql://app:$STUB_SECRET@10.0.0.5:3306/brewdial"
+        else echo "DATABASE_URL=postgres://brewdial_app:$STUB_SECRET@127.0.0.1:5432/brewdial"
+        fi
+        exit 0
+        ;;
+    esac
     [ "${STUB_FAIL:-}" = kt-container-missing ] && exit 1
     if [ "${STUB_FAIL:-}" != kt-keeps-running ] && [ -e "$STUB_STATE/kt_stopped" ]; then echo false; else echo true; fi
     exit 0
@@ -177,6 +187,7 @@ case "$url" in
   */api/write-freeze-probe)
     if [ "${STUB_FAIL:-}" = no-switch ]; then printf '404'
     elif [ "${STUB_FAIL:-}" = old-node ]; then printf '401'
+    elif [ "${STUB_FAIL:-}" = freeze-lost ] && [ "$(cat "$STUB_STATE/copy_runs" 2>/dev/null || echo 0)" -ge 3 ]; then printf '404'
     elif [ "${STUB_FAIL:-}" = stuck-frozen ]; then printf '503'
     elif [ "${STUB_FAIL:-}" = probe-500 ]; then printf '500'
     elif [ "${STUB_FAIL:-}" = probe-500-when-open ]; then
@@ -207,12 +218,14 @@ case "$url" in
     ;;
   *:802[01]/api/recipes\?limit=1) echo '[{"code":"COF-0001"}]' ;;
   *:8020/api/recipes\?limit=100)
-    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0001"},{"code":"COF-0002"}]'
+    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0001","created_at":"2026-03-02T00:00:00.000Z"},{"code":"COF-0002","created_at":"2026-03-01T00:00:00.000Z"}]'
+    elif [ "${STUB_FAIL:-}" = recipe-tie ]; then echo '[{"code":"COF-0001","created_at":"2026-03-01T00:00:00.000Z"},{"code":"COF-0002","created_at":"2026-03-01T00:00:00.000Z"}]'
     else echo '[{"code":"COF-0001"}]'
     fi
     ;;
   *:8021/api/recipes\?limit=100)
-    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0002"},{"code":"COF-0001"}]'
+    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0002","created_at":"2026-03-01T00:00:00.000Z"},{"code":"COF-0001","created_at":"2026-03-02T00:00:00.000Z"}]'
+    elif [ "${STUB_FAIL:-}" = recipe-tie ]; then echo '[{"code":"COF-0002","created_at":"2026-03-01T00:00:00.000Z"},{"code":"COF-0001","created_at":"2026-03-01T00:00:00.000Z"}]'
     else echo '[{"code":"COF-0001"}]'
     fi
     ;;
@@ -256,7 +269,7 @@ EOF
   chmod 600 "$scenario"/env/*
   echo "$color" >"$scenario/state/color"
   [ "$frozen" = 1 ] && touch "$scenario/freeze/write-freeze"
-  [ "$verified" = 1 ] && touch "$scenario/freeze/write-freeze.cutover-verified"
+  [ "$verified" = 1 ] && printf '%s\n' "$DIGEST" >"$scenario/freeze/write-freeze.cutover-verified"
   printf 'tunnel: test\ningress:\n  - hostname: api.example.test\n    service: %s\n  - service: http_status:404\n' "$ingress" >"$scenario/config.yml"
   [ -n "$mutate" ] && (cd "$scenario" && eval "$mutate")
   : >"$scenario/state/calls"
@@ -326,7 +339,7 @@ grep -q "^AGENT_TOKEN=$SECRET" "$scenario/env/brewdial-api-kt.env" || bad "api-k
 grep -q '^DATABASE_URL=postgres://' "$scenario/env/brewdial-api-kt.env.postgres" || bad "the PostgreSQL env must be kept"
 [ "$(stat -c %a "$scenario/env/brewdial-api-kt.env.postgres")" = 600 ] || bad "the kept env must stay 0600"
 expect_frozen
-[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a finished cutover must allow its rollback"
+[ "$(cat "$scenario/freeze/write-freeze.cutover-verified" 2>/dev/null)" = "$DIGEST" ] || bad "a finished cutover must record the digest it verified"
 expect_no_secret
 if grep -rl "$SECRET" "$scenario/log" >/dev/null; then bad "a tool log holds the fixture password"; fi
 [ "$failures" -gt 0 ] || printf 'ok   %s\n' "$current"
@@ -556,6 +569,21 @@ before=$failures
 run_scenario node-redeployed node-redeployed cutover --digest "$DIGEST"; expect_stopped final-verify "$c4"; expect_frozen
 [ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a window with a deploy in it must not unlock a rollback"
 
+# Each of these looks fine from the text or the status code alone.
+run_scenario blue-on-mysql blue-on-mysql cutover --digest "$DIGEST"; expect_stopped preflight ""; expect_not_frozen
+run_scenario blue-container-missing blue-missing cutover --digest "$DIGEST"; expect_stopped preflight ""; expect_not_frozen
+run_scenario cutover-503-without-a-freeze stuck-frozen cutover --digest "$DIGEST"; expect_stopped preflight ""; expect_not_frozen
+run_scenario freeze-lost-during-the-window freeze-lost cutover --digest "$DIGEST"; expect_stopped final-verify "$c4"
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a window that lost its freeze must not unlock a rollback"
+
+# Only one run at a time. The holder is this test's own process, stopped by its PID.
+# shellcheck disable=SC2016
+SCENARIO_MUTATE='mkdir -p log; ( exec 9>log/phase4.lock; flock 9; echo "$BASHPID" >lock.pid; exec sleep 30 ) >/dev/null 2>&1 & until [ -s lock.pid ]; do sleep 0.1; done' \
+  run_scenario second-run "" cutover --digest "$DIGEST"
+kill "$(cat "$scenario/lock.pid")" 2>/dev/null
+expect_stopped preflight ""; expect_not_frozen
+case "$output" in *"another heatwave-phase4.sh is running"*) ;; *) bad "the message must name the other run" ;; esac
+
 # A verified cutover ends through rollback or unfreeze, never through a new window:
 # MySQL may hold the newest data, and the freeze step would delete the marker.
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario cutover-over-verified "" cutover --digest "$DIGEST"; expect_stopped preflight ""
@@ -586,6 +614,14 @@ run_scenario content-with-accept parity cutover --digest "$DIGEST" --accept-orde
 run_scenario steps-order-with-accept steps-order cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
 run_scenario nested-in-list-with-accept nested-in-list cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
 run_scenario recipe-list-with-accept recipe-order cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
+# Equal timestamps have no defined order, so only --accept-order lets those through.
+run_scenario recipe-tie-without-accept recipe-tie cutover --digest "$DIGEST"; expect_stopped parity "$c3"; expect_frozen
+run_scenario recipe-tie-with-accept recipe-tie cutover --digest "$DIGEST" --accept-order
+[ "$status" = 0 ] || bad "rows with equal created_at should pass with --accept-order"
+case "$output" in *"same apart from rows with equal created_at"*) ;; *) bad "the accepted tie must be reported" ;; esac
+expect_no_secret
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
 
 # --- --replace-target is the only way to overwrite the target ---
 run_scenario replace-target "" cutover --digest "$DIGEST" --replace-target
@@ -624,6 +660,15 @@ before=$failures
 SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-not-frozen "" rollback --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-without-cutover "" rollback --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario rollback-traffic-on-kt "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+# On blue, api-kt writes to PostgreSQL itself: the replace would delete those writes.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-with-blue-active "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+case "$output" in *"not active on green"*) ;; *) bad "the message must say why" ;; esac
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-blue-on-mysql blue-on-mysql rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-other-image "" rollback --digest "$OTHER_DIGEST"; expect_stopped preflight ""
+# A 503 alone is not a freeze.
+SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-503-without-the-file stuck-frozen rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-503-without-the-header no-inflight-header rollback --digest "$DIGEST"; expect_stopped preflight ""
+
 # r4436353156: nothing is read from MySQL unless its writer is provably gone.
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-kt-keeps-running kt-keeps-running rollback --digest "$DIGEST"; expect_stopped stop-api-kt "stop-api-kt"; expect_frozen
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-kt-container-missing kt-container-missing rollback --digest "$DIGEST"; expect_stopped stop-api-kt "stop-api-kt"; expect_frozen
@@ -666,6 +711,11 @@ expect_rollback_state() {
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-mysql-differs copy-exit unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
 case "$output" in *"Run rollback to carry them over"*) ;; *) bad "the next step is missing" ;; esac
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-without-digest "" unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-other-image "" unfreeze --digest "$OTHER_DIGEST"; expect_stopped unfreeze ""; expect_rollback_state
+# Unhealthy with the file gone must not claim that writes are frozen.
+SCENARIO_VERIFIED=1 run_scenario unfreeze-unhealthy-file-gone probe-500 unfreeze; expect_stopped unfreeze ""
+case "$output" in *"the freeze file is absent"*) ;; *) bad "the message must say the file is absent" ;; esac
+case "$output" in *"writes stay frozen"*) bad "the message must not claim writes are frozen" ;; esac
 
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
 case "$output" in *"the freeze is back"*) ;; *) bad "the message must say the freeze is back" ;; esac

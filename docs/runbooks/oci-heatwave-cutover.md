@@ -179,6 +179,7 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   `create trigger` in a scratch schema.
 - **PostgreSQL role.** The application role owns the tables. The rollback copy
   needs that: an owner may disable user triggers, and no superuser is involved.
+  The copy checks this at cutover and refuses otherwise.
 - **Scripts on the host.** `/opt/brewdial` holds a checkout of a commit that
   contains `deploy/oci/heatwave-phase4.sh` (rsync as in `deploy/oci/README.md`).
 - **Write-freeze switch on the Node API.** Deploy a Node image built from a
@@ -334,7 +335,7 @@ sequences=1`. Any `MISMATCH` exits non-zero.
 | `freeze` | If the switch does not work, run `unfreeze` and fix §4.1. If writes are still running, find out why (`pg_stat_activity`) and run it again: nothing has been copied. |
 | `copy` | The copy rolled back, including on `MISMATCH`, and the target is still empty. Fix the cause and run it again. |
 | `verify` | The target holds rows, and something changed after the copy. Investigate, then run it again with `--replace-target`. |
-| `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. |
+| `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. If the fix needs a new api-kt digest, restore the env file first (below) and deploy that digest to blue on PostgreSQL. The script refuses a blue that is not on PostgreSQL. |
 
 To abandon the window, also restore the env file and open writes again. This also
 disables `rollback`, because MySQL is stale from then on:
@@ -360,9 +361,11 @@ overwrite live MySQL by accident. Only `--replace-target` replaces it.
 `name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation), and
 they place a NULL `continuum_position` differently. Decide whether that is
 acceptable. To accept it, retry as above and add `--accept-order`. It covers only
-the order of the rows in `/api/beans`, `/api/grinders` and `/api/drippers`. The
-script still stops on any other order difference, such as recipe steps or the
-recipe list, and on any difference in content. It reports each accepted path.
+the order of the rows in `/api/beans`, `/api/grinders` and `/api/drippers`, and of
+recipes with an equal `created_at`, which have no defined order on either database.
+The script still stops on any other order difference, such as recipe steps or a
+recipe list sorted differently, and on any difference in content. It reports each
+accepted path.
 
 ### 4.4 Switch traffic (desk)
 
@@ -381,8 +384,9 @@ recipe list, and on any difference in content. It reports each accepted path.
    and the timers do not cover the live data until you do.
 5. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
    move its `production` tag, and change the Dagu job to follow `brewdial-api-kt`.
-   Do this in a follow-up PR, after the window. Do not run any follower for
-   api-kt until then, because a deploy replaces the blue rollback colour.
+   Do this in a follow-up PR, after the rollback window closes. Do not run any
+   follower or deploy for api-kt until then, because a deploy changes the colours:
+   it replaces blue, the PostgreSQL rollback colour, and `rollback` then refuses.
 
 ### 4.5 Rollback: full copy MySQL → PostgreSQL
 
@@ -411,8 +415,10 @@ after the cutover all arrive, and the sequence continues where MySQL stopped.
    ```sh
    sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
    ```
-   On failure, PostgreSQL keeps its previous rows and writes stay frozen. Fix the
-   cause and run it again. MySQL stays as it was. To stay on MySQL instead, run `sudo
+   On failure, PostgreSQL keeps its previous rows and writes stay frozen. Read the
+   tool log the script names: a value PostgreSQL cannot store, such as one that
+   exceeds a size limit there, is named by its database error. Fix the row on MySQL,
+   then run it again. MySQL stays as it was. To stay on MySQL instead, run `sudo
    docker start shiftgate-brewdial-api-kt-green` and point cloudflared back at `:8021`.
 3. **Choose the runtime.** The script prints both commands:
    - **Node API on PostgreSQL** (the phase-2 state): run `sudo
@@ -511,7 +517,9 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    Find the path with `sudo systemctl cat postgresql-17 | grep PGDATA` (usually
    `/var/lib/pgsql/17/data`). To go back within the 14 days, run `sudo systemctl
    enable --now postgresql-17` and `sudo docker start
-   shiftgate-brewdial-api-<active colour>`, then §4.5 steps 1–3.
+   shiftgate-brewdial-api-<active colour>`, then §4.5 steps 1–3. That works only
+   while no api-kt deploy has changed the colours. Otherwise `rollback` refuses:
+   decide by hand, using the HeatWave dumps from §4.6.
 5. **Remove, after 14 days** (a later, separate change):
    ```sh
    sudo dnf remove 'postgresql17*'

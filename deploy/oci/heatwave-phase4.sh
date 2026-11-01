@@ -37,6 +37,7 @@ KT_URL="http://127.0.0.1:$KT_PORT"
 IMAGE="ghcr.io/mgh3326/brewdial-api-kt"
 KT_SERVICE="brewdial-api-kt"
 KT_MYSQL_CONTAINER="shiftgate-$KT_SERVICE-green"
+KT_POSTGRES_CONTAINER="shiftgate-$KT_SERVICE-blue"
 NODE_SERVICE="brewdial-api"
 PROBE_PATH="/api/write-freeze-probe"
 
@@ -145,7 +146,7 @@ check_cloudflared_on_node() {
 
 check_tools() {
   local tool
-  for tool in docker shiftgate curl jq sudo pg_restore; do
+  for tool in docker shiftgate curl jq sudo pg_restore flock; do
     command -v "$tool" >/dev/null || fail "$tool is not installed"
   done
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
@@ -157,12 +158,41 @@ check_digest() {
 
 freeze_probe() { http_code -X POST "$NODE_URL$PROBE_PATH"; }
 
+inflight_header() {
+  curl -s -m 10 -o /dev/null -D - -X POST "$NODE_URL$PROBE_PATH" \
+    | tr -d '\r' | sed -n 's/^[Xx]-[Ww]rites-[Ii]n-[Ff]light:[[:space:]]*//p' || true
+}
+
+# A 503 alone proves nothing: HAProxy answers 503 when no server is up. Only the
+# freeze file and the app's own header, together, show the freeze is really on.
+node_is_frozen() {
+  [ -e "$FREEZE_FILE" ] && [ "$(freeze_probe)" = 503 ] && [[ "$(inflight_header)" =~ ^[0-9]+$ ]]
+}
+
+# A second run would change the state this one is relying on.
+take_lock() {
+  install -d -m 0700 "$LOG_DIR"
+  exec 9>"$LOG_DIR/phase4.lock"
+  flock -n 9 || fail "another heatwave-phase4.sh is running"
+}
+
+# shiftgate rollback returns to this container, whatever the env file says now.
+check_blue_on_postgres() {
+  [ "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$KT_POSTGRES_CONTAINER" 2>/dev/null | grep -c '^DATABASE_URL=postgres' || true)" = 1 ] \
+    || fail "$KT_POSTGRES_CONTAINER is not on PostgreSQL, so it is no rollback colour; restore $KT_ENV.postgres and redeploy it (runbook 4.3)"
+}
+
+# A rollback or unfreeze must use the image the cutover verified: it migrates at startup.
+check_marker_digest() {
+  [ "$(cat "$CUTOVER_MARKER")" = "$DIGEST" ] \
+    || fail "the cutover verified another image; pass the digest it was run with"
+}
+
 # Writes the Node API admitted before the freeze must finish before the copy reads.
 wait_for_admitted_writes() {
   local deadline=$((SECONDS + DRAIN_TIMEOUT)) count
   while :; do
-    count="$(curl -s -m 10 -o /dev/null -D - -X POST "$NODE_URL$PROBE_PATH" \
-      | tr -d '\r' | sed -n 's/^[Xx]-[Ww]rites-[Ii]n-[Ff]light:[[:space:]]*//p' || true)"
+    count="$(inflight_header)"
     [[ "$count" =~ ^[0-9]+$ ]] || fail "the Node API reports no in-flight writes; it needs an image with the current switch (runbook 4.1)"
     [ "$count" = 0 ] && return 0
     [ "$SECONDS" -lt "$deadline" ] || fail "$count admitted write(s) still running after ${DRAIN_TIMEOUT}s; writes stay frozen, so investigate and run this again"
@@ -208,6 +238,16 @@ order_may_differ() {
   esac
 }
 
+# Rows with one created_at have no defined order on either database. Every other
+# position must still agree, so a list sorted the wrong way does not pass.
+differs_only_in_ties() {
+  case "$1" in
+    '/api/recipes?'*) ;;
+    *) return 1 ;;
+  esac
+  same_when_sorted "$2" "$3" && [ "$(jq -c 'map(.created_at)' "$2")" = "$(jq -c 'map(.created_at)' "$3")" ]
+}
+
 # Sorts the endpoint's own list only. Arrays inside a row keep their order.
 same_when_sorted() {
   local sort_list='if type == "array" then sort else . end'
@@ -224,6 +264,8 @@ compare_path() {
     log "same: $path"
   elif [ "$ACCEPT_ORDER" = 1 ] && order_may_differ "$path" && same_when_sorted "$node_out" "$kt_out"; then
     log "same apart from order (--accept-order): $path"
+  elif [ "$ACCEPT_ORDER" = 1 ] && differs_only_in_ties "$path" "$node_out" "$kt_out"; then
+    log "same apart from rows with equal created_at (--accept-order): $path"
   else
     diff -u "$node_out" "$kt_out" | head -40 || true
     fail "parity: $path differs between the Node API and api-kt"
@@ -265,6 +307,7 @@ cutover() {
   step preflight "read-only checks"
   check_tools
   check_digest
+  take_lock
   check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
   check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
   check_env_file "$KT_ENV" '^DATABASE_URL='
@@ -278,11 +321,15 @@ cutover() {
     || fail "$KT_SERVICE must be active on blue (runbook 4.2 step 3)"
   [ "$(shiftgate_state "$KT_SERVICE" '.state.active.digest // "none"')" = "$DIGEST" ] \
     || fail "$KT_SERVICE blue must run --digest, so that the same image moves to MySQL"
+  check_blue_on_postgres
   local probe
   probe="$(freeze_probe)"
   case "$probe" in
     404) ;;
-    503) log "writes are already frozen (a repeated run)" ;;
+    503)
+      node_is_frozen || fail "the probe answers 503, but not from a frozen Node API: is HAProxy without a server?"
+      log "writes are already frozen (a repeated run)"
+      ;;
     *) fail "the Node API has no write-freeze switch: probe answered $probe, expected 404 (runbook 4.1)" ;;
   esac
   local node_digest
@@ -322,8 +369,9 @@ cutover() {
   # A deploy starts a new colour and can migrate; the count only saw the colour it asked.
   [ "$(shiftgate_state "$NODE_SERVICE" '.state.active.digest // "none"')" = "$node_digest" ] \
     || fail "$NODE_SERVICE was deployed during the window; pause its follower (runbook 4.1) and retry"
+  node_is_frozen || fail "the freeze was lost during the window, so PostgreSQL may have moved on; retry"
 
-  touch "$CUTOVER_MARKER"
+  printf '%s\n' "$DIGEST" >"$CUTOVER_MARKER"
   step "done" "ready to switch"
   log "PHASE4_READY: writes stay frozen until you switch traffic. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
@@ -339,10 +387,16 @@ rollback() {
   step preflight "read-only checks"
   check_tools
   check_digest
+  take_lock
   check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
   check_cloudflared_on_node
-  [ "$(freeze_probe)" = 503 ] || fail "the Node API must stay frozen during the rollback copy: probe did not answer 503"
+  node_is_frozen || fail "the Node API must stay frozen during the rollback copy, and it does not show that it is"
   [ -e "$CUTOVER_MARKER" ] || fail "no verified cutover to roll back: MySQL may be empty or stale, and this would replace PostgreSQL with it"
+  check_marker_digest
+  # On blue, api-kt writes to PostgreSQL itself, and the replace would delete those writes.
+  [ "$(shiftgate_state "$KT_SERVICE" '.state.active.color // "none"')" = green ] \
+    || fail "$KT_SERVICE is not active on green, so its PostgreSQL colour may be live; this would overwrite what it wrote"
+  check_blue_on_postgres
   install -d -m 0700 "$LOG_DIR"
   if [ "$PREFLIGHT" = 1 ]; then
     log "PHASE4_PREFLIGHT_OK rollback (nothing was changed)"
@@ -356,7 +410,7 @@ rollback() {
   docker stop -t 40 "$KT_MYSQL_CONTAINER" >/dev/null 2>&1 || true
   [ "$(docker inspect -f '{{.State.Running}}' "$KT_MYSQL_CONTAINER" 2>/dev/null || true)" = false ] \
     || fail "cannot prove that $KT_MYSQL_CONTAINER is stopped; check it with docker ps -a"
-  [ "$(freeze_probe)" = 503 ] || fail "the Node API stopped answering 503: PostgreSQL may be taking writes"
+  node_is_frozen || fail "the Node API no longer shows that it is frozen: PostgreSQL may be taking writes"
 
   step safety-dump "PostgreSQL as it is now, before the replace"
   install -d -m 0750 "$BACKUP_DIR"
@@ -390,21 +444,26 @@ EOF
 unfreeze() {
   step unfreeze "open writes on the Node API"
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
+  take_lock
   check_cloudflared_on_node
   # 503 is frozen, 404 is a repeated run. Anything else cannot prove writes reopened.
   local probe
   probe="$(freeze_probe)"
   case "$probe" in
     503 | 404) ;;
-    *) fail "the Node API is not healthy (probe answered $probe); writes stay frozen and rollback stays available" ;;
+    *)
+      local freeze_state=absent
+      [ -e "$FREEZE_FILE" ] && freeze_state=present
+      fail "the Node API is not healthy (probe answered $probe); nothing was changed, and the freeze file is $freeze_state"
+      ;;
   esac
   # Reopening a stale PostgreSQL would strand whatever MySQL took after the cutover.
   if [ -e "$CUTOVER_MARKER" ]; then
     check_tools
     [ -n "$DIGEST" ] || fail "a cutover has verified, so this must compare the databases first: pass --digest"
     check_digest
+    check_marker_digest
     check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
-    install -d -m 0700 "$LOG_DIR"
     RECOVERY="MySQL may hold writes that PostgreSQL lacks, so writes stay frozen. Run rollback to carry them over."
     run_copy_tool unfreeze-verify "$COPY_ENV" verify
     RECOVERY=""
@@ -413,7 +472,7 @@ unfreeze() {
   probe="$(freeze_probe)"
   if [ "$probe" != 404 ]; then
     touch "$FREEZE_FILE"
-    [ "$(freeze_probe)" = 503 ] \
+    node_is_frozen \
       || fail "probe answered $probe after the freeze was removed, and does not answer 503 now that it is back: writes may be open, so check the Node API before a rollback"
     fail "probe answered $probe, expected 404; the freeze is back, the probe answers 503, and rollback stays available"
   fi
