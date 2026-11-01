@@ -20,8 +20,17 @@ DATABASE_URL=postgres://user:password@localhost:5432/brewdial_test ./gradlew tes
 DATABASE_URL=mysql://user:password@127.0.0.1:3306/brewdial_test ./gradlew test
 ```
 
-The PostgreSQL → MySQL data copy (copy mode of this app) is described in
-`docs/runbooks/oci-heatwave-cutover.md`.
+The data copy between PostgreSQL and MySQL, in either direction (copy mode of
+this app), is described in `docs/runbooks/oci-heatwave-cutover.md`.
+
+## Dialect-neutral code
+
+This is the only API after the HeatWave cutover, and it must be able to change
+database through the ORM. Application code uses JPQL or criteria. Native SQL
+belongs in the per-vendor Flyway folders. `NativeSqlGuardTest` fails on native
+queries or raw JDBC in main code, unless `src/test/resources/native-sql-allowlist.txt`
+lists the file with its exact count. The list marks what is existing debt, so
+lower a count when you remove a use, and do not add to it without a reason.
 
 Run Spring against the existing contract tests with `DATABASE_URL=postgres://mgh3326@localhost:5432/brewdial_test scripts/contract-test.sh apps/api/src/routes/health.test.ts`.
 Pass any Vitest file paths or selectors after `scripts/contract-test.sh`; no Hono server is started.
@@ -34,6 +43,7 @@ This scaffold uses Spring Boot 4.1.1, Kotlin 2.3.21, Gradle 9.7.1, and Hibernate
 - PostgreSQL timestamps retain microsecond precision here; Hono serializes them at millisecond precision.
 - PostgreSQL `int8` and `numeric` values are JSON numbers here, rather than Hono's strings.
 - Array request bodies on agent write routes return `400 {"error":"invalid body"}`.
+- A write whose body holds a NUL character returns `400 {"error":"invalid body"}` on both databases. MySQL would store it and PostgreSQL refuses it, so the data could not move between them. A write body over 1 MiB returns `413 {"error":"body too large"}`.
 
 Follow-up work is tracked in ROB-1316.
 

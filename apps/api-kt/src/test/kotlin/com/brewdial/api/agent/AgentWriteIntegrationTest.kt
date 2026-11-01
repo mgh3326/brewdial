@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.context.annotation.Import
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.node.JsonNodeFactory
@@ -150,6 +151,26 @@ class AgentWriteIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"agtronMax\":40}")
         ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun aBodyIsNotInspectedBeforeAgentAuth() {
+        val nul = """{"method":"v60","title":"a\u0000b"}"""
+        val tooLarge = ByteArray(1024 * 1024 + 1) { 'x'.code.toByte() }
+
+        mockMvc.perform(post("/api/agent/recipes").contentType(MediaType.APPLICATION_JSON).content(nul))
+            .andExpect(status().isUnauthorized)
+        mockMvc.perform(post("/api/agent/recipes").contentType(MediaType.APPLICATION_JSON).content(tooLarge))
+            .andExpect(status().isUnauthorized)
+
+        mockMvc.perform(
+            post("/api/agent/recipes").header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON).content(nul)
+        ).andExpect(status().isBadRequest)
+        mockMvc.perform(
+            post("/api/agent/recipes").header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON).content(tooLarge)
+        ).andExpect(status().isPayloadTooLarge)
     }
 
     @TestConfiguration

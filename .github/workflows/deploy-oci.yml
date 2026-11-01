@@ -2,28 +2,25 @@ name: Deploy OCI (shiftgate)
 
 # ROB-1435 — production deploy through shiftgate (https://github.com/mgh3326/shiftgate).
 #
-# build:  docker build (arm64, the OCI box is aarch64) → push to GHCR → read the
-#         pushed digest.
-# plan:   print the exact host command `shiftgate deploy brewdial-api --digest <digest>`.
-# deploy: join the tailnet and run that command over SSH. The deploy key is
-#         restricted on the host by shiftgate's forced-command wrapper
-#         (examples/ssh-forced-command.sh), which accepts only that command shape.
+# build:   docker build (arm64, the OCI box is aarch64) → push to GHCR → read the
+#          pushed digest.
+# release: on a production release, move the `production` tag to that digest
+#          (separate job behind the `oci-production` environment).
+# plan:    print the digest and the host command the follower will run.
+#
+# Deploys are pull-based (operator 2026-11-01): CI never reaches the host and
+# needs no host credentials. On the OCI host, Dagu runs
+# `shiftgate follow brewdial-api --tag production` every few minutes; it
+# resolves the tag through the registry API and runs a normal blue-green deploy
+# when the digest changed. A digest that was rolled back on the host is held
+# until a newer one is tagged.
 #
 # Modes:
-#   pull_request                      → dry run (build + push + plan; no host)
+#   pull_request                      → dry run (build + push + plan; tag untouched)
 #   workflow_dispatch dry_run=true    → dry run
-#   workflow_dispatch dry_run=false   → deploy
-#   push to `production`              → deploy
-# Every deploy also needs the repository variable SHIFTGATE_DEPLOY_ENABLED=true,
-# set by the desk once the host runs shiftgate (runbook phase 2). Until then
-# every run is a dry run, so merging this file cannot touch the host.
-# A deploy fails unless the commit is on main's history, whatever the ref.
-#
-# Host, user and keys come from repository variables/secrets; nothing about the
-# host lives in this file:
-#   vars.OCI_TAILNET_HOST, vars.OCI_DEPLOY_USER (default: deploy)
-#   secrets.TS_OAUTH_CLIENT_ID, secrets.TS_OAUTH_SECRET (Tailscale OAuth client, tag:ci)
-#   secrets.SHIFTGATE_DEPLOY_SSH_KEY, secrets.SHIFTGATE_KNOWN_HOSTS
+#   workflow_dispatch dry_run=false   → release (only when run on the production tip)
+#   push to `production`              → release
+# A release fails unless the commit is on main's history, whatever the ref.
 #
 # Rollback is a host command, not a rebuild: `shiftgate rollback brewdial-api`
 # (see docs/runbooks/oci-heatwave-cutover.md).
@@ -88,7 +85,6 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
-          DEPLOY_ENABLED: ${{ vars.SHIFTGATE_DEPLOY_ENABLED }}
         run: |
           set -euo pipefail
           mode=deploy
@@ -97,8 +93,6 @@ jobs:
             mode=dry-run; reason="pull requests never deploy"
           elif [ "${EVENT_NAME}" = workflow_dispatch ] && [ "${DRY_RUN_INPUT}" != false ]; then
             mode=dry-run; reason="workflow_dispatch dry_run=${DRY_RUN_INPUT}"
-          elif [ "${DEPLOY_ENABLED}" != true ]; then
-            mode=dry-run; reason="vars.SHIFTGATE_DEPLOY_ENABLED is not 'true' (host not cut over yet)"
           fi
           if [ "${mode}" = deploy ]; then
             git fetch --no-tags origin main
@@ -150,7 +144,9 @@ jobs:
           cmd="shiftgate deploy ${SERVICE} --digest ${DIGEST}"
           echo "SHIFTGATE_COMMAND: ${cmd}"
           if [ "${MODE}" = dry-run ]; then
-            echo "DRY RUN: no tailnet join, no SSH, no host touched."
+            echo "DRY RUN: production tag untouched; the host follower sees nothing new."
+          else
+            echo "RELEASE: production tag moved; the host follower deploys it within minutes."
           fi
           {
             echo "## Deploy OCI (shiftgate) — ${MODE}"
@@ -163,48 +159,57 @@ jobs:
             echo "| mode | \`${MODE}\` |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-  deploy:
-    name: Deploy on the OCI host (shiftgate over SSH)
+  release:
+    name: Release (move the production tag)
     needs: [build, plan]
     if: needs.build.outputs.mode == 'deploy'
     runs-on: ubuntu-latest
+    # Keeps the environment gate (required reviewers, branch rules) on the step
+    # that now triggers the host deploy.
     environment: oci-production
+    # One release at a time; a queued older run is replaced by the newer one.
+    concurrency:
+      group: oci-release-production-tag
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Validate inputs
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a stale release
+        id: fresh
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin production
+          tip="$(git rev-parse origin/production)"
+          if [ "$(git rev-parse HEAD)" != "${tip}" ]; then
+            echo "HEAD $(git rev-parse --short HEAD) is not the production tip $(git rev-parse --short "${tip}"); a newer release owns the tag. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Point production at the pushed digest (exact manifest bytes)
+        if: steps.fresh.outputs.skip == 'false'
         env:
           DIGEST: ${{ needs.build.outputs.digest }}
-          HOST: ${{ vars.OCI_TAILNET_HOST }}
-          DEPLOY_USER: ${{ vars.OCI_DEPLOY_USER || 'deploy' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "bad digest"; exit 1; }
-          [[ "${HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || { echo "vars.OCI_TAILNET_HOST is missing or invalid"; exit 1; }
-          [[ "${DEPLOY_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "bad deploy user"; exit 1; }
-
-      - name: Join the tailnet
-        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      - name: shiftgate deploy
-        env:
-          DIGEST: ${{ needs.build.outputs.digest }}
-          HOST: ${{ vars.OCI_TAILNET_HOST }}
-          DEPLOY_USER: ${{ vars.OCI_DEPLOY_USER || 'deploy' }}
-          SSH_KEY: ${{ secrets.SHIFTGATE_DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.SHIFTGATE_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
-          # Exit codes: 0 ok, 1 failed (old colour still serving), 3 recovery
-          # required (`shiftgate recover brewdial-api` on the host), 75 locked.
-          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            "${DEPLOY_USER}@${HOST}" "shiftgate deploy ${SERVICE} --digest ${DIGEST}"
-
-      - name: Remove the key
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
+          repo="${IMAGE#ghcr.io/}"
+          tok="$(curl -fsS -u "${GITHUB_ACTOR}:${GH_TOKEN}" "https://ghcr.io/token?scope=repository:${repo}:pull,push" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+          # Fetch the pushed object by digest (manifest or index) and PUT the same
+          # bytes under the tag, so the tag's digest is exactly the built one.
+          curl -fsS -H "Authorization: Bearer ${tok}" -H "Accept: ${accept}" -D headers.txt -o manifest.bin "https://ghcr.io/v2/${repo}/manifests/${DIGEST}"
+          ctype="$(awk -F': ' 'tolower($1)=="content-type"{print $2}' headers.txt | tr -d '\r' | tail -1)"
+          [ "sha256:$(sha256sum manifest.bin | cut -d' ' -f1)" = "${DIGEST}" ] || { echo "fetched bytes do not match ${DIGEST}"; exit 1; }
+          curl -fsS -X PUT -H "Authorization: Bearer ${tok}" -H "Content-Type: ${ctype}" --data-binary @manifest.bin "https://ghcr.io/v2/${repo}/manifests/production"
+          got="$(curl -fsS -I -H "Authorization: Bearer ${tok}" -H "Accept: ${accept}" "https://ghcr.io/v2/${repo}/manifests/production" | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' | tr -d '\r')"
+          [ "${got}" = "${DIGEST}" ] || { echo "production tag points at ${got}, expected ${DIGEST}"; exit 1; }
+          echo "production → ${DIGEST}"

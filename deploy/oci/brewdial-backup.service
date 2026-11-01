@@ -1,14 +1,19 @@
 # /etc/systemd/system/brewdial-backup.service
-# Runs the daily pg_dump backup. Triggered by brewdial-backup.timer.
+# Runs the daily HeatWave backup. Triggered by brewdial-backup.timer.
+# Install at the PostgreSQL retirement step of docs/runbooks/oci-heatwave-cutover.md;
+# until then the host keeps the unit that runs backup.sh against PostgreSQL.
 [Unit]
-Description=BrewDial Postgres backup (pg_dump -Fc + globals, retention)
-After=postgresql-17.service network-online.target
-Wants=postgresql-17.service network-online.target
+Description=BrewDial HeatWave backup (mysqldump --single-transaction, retention)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=oneshot
 User=opc
+# The MySQL client runs from a pinned image.
+SupplementaryGroups=docker
 # Script ships with the repo (rsynced to /opt/brewdial); config + secrets are on the box.
-ExecStart=/opt/brewdial/deploy/oci/backup.sh
+ExecStart=/opt/brewdial/deploy/oci/backup-heatwave.sh
 Nice=10
 IOSchedulingClass=idle
