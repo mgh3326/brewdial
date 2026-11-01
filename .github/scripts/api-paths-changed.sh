@@ -7,7 +7,12 @@
 set -uo pipefail
 
 base="${1:-}"
-paths='^(apps/api-kt/|packages/db/|\.github/workflows/ci-kt\.yml$|\.github/scripts/api-paths-changed\.sh$)'
+# The API itself, what its tests build from or run (the TypeScript engine they compare
+# with, the contract suite), root build inputs, and this check.
+paths='^(apps/api-kt/|apps/api/|packages/db/|packages/shared/|gradle/'
+paths+='|(settings\.gradle|build\.gradle)(\.kts)?$|gradle\.properties$|gradlew(\.bat)?$'
+paths+='|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$'
+paths+='|\.github/workflows/ci-kt\.yml$|\.github/scripts/api-paths-changed(-test)?\.sh$)'
 
 # --no-renames lists both sides, so moving a file out of a covered path still counts.
 if ! changed="$(git diff --no-renames --name-only "$base" HEAD 2>/dev/null)"; then
