@@ -429,11 +429,11 @@ begin
                                      else json_unquote(json_extract(new.bean_snapshot, '$.roaster')) end), '');
     if v_name is not null then
       if new.owner_id is not null then
-        -- find_bean_match: link to an existing bean only.
-        select id into v_bean_id from beans
+        -- find_bean_match: link to an existing bean only; no match leaves bean_id NULL.
+        set v_bean_id = (select id from beans
           where lower(name) = lower(v_name)
             and coalesce(lower(roaster), '') = coalesce(lower(v_roaster), '')
-          limit 1;
+          limit 1);
       else
         -- find_or_create_bean: insert, or enrich the existing bean.
         set v_origin = case when json_type(json_extract(new.bean_snapshot, '$.origin')) = 'NULL' then null
@@ -452,10 +452,10 @@ begin
             roast_level = coalesce(incoming.roast_level, beans.roast_level),
             notes       = coalesce(incoming.notes, beans.notes),
             updated_at  = utc_timestamp(6);
-        select id into v_bean_id from beans
+        set v_bean_id = (select id from beans
           where lower(name) = lower(v_name)
             and coalesce(lower(roaster), '') = coalesce(lower(v_roaster), '')
-          limit 1;
+          limit 1);
       end if;
       set new.bean_id = v_bean_id;
     end if;

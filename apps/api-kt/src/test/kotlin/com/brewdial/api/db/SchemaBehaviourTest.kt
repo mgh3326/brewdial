@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 
@@ -37,6 +38,9 @@ class SchemaBehaviourTest {
 
     @Autowired
     private lateinit var objectMapper: ObjectMapper
+
+    @Autowired
+    private lateinit var transaction: TransactionTemplate
 
     private val tag = UUID.randomUUID().toString().take(8)
     private val appUsers = mutableListOf<String>()
@@ -97,6 +101,54 @@ class SchemaBehaviourTest {
         assertEquals("Panama", beans[0]["origin"])
         assertEquals("washed", beans[0]["process"])
         assertNull(beans[0]["notes"])
+    }
+
+    /** An owned write links to an existing bean at most (find_bean_match); it never creates one. */
+    private fun insertOwnedRecipe(title: String, owner: String, snapshot: String): String? = transaction.execute {
+        when (vendor) {
+            DatabaseVendor.POSTGRESQL -> jdbc.queryForObject("select set_config('bd.owner_write_ok','on',true)", String::class.java)
+            DatabaseVendor.MYSQL -> jdbc.execute("set @bd_owner_write_ok = 'on'")
+        }
+        try {
+            jdbc.update(
+                "insert into recipes (method, title, owner_id, bean_snapshot) values ('v60', ?, $uuid, $json)",
+                title,
+                owner,
+                snapshot
+            )
+        } finally {
+            if (vendor == DatabaseVendor.MYSQL) jdbc.execute("set @bd_owner_write_ok = null")
+        }
+        jdbc.queryForObject("select bean_id from recipes where title = ?", String::class.java, title)
+    }
+
+    @Test
+    fun ownedRecipeWithNoMatchingBeanIsInsertedUnlinkedAndCreatesNoBean() {
+        val owner = identities.resolve("web_local", "sb-$tag-owned-unmatched")
+        appUsers += owner
+        val name = "sb-$tag Owned only"
+
+        val beanId = insertOwnedRecipe("sb-$tag-owned-unmatched", owner, """{"name":"$name","roaster":"R"}""")
+
+        assertNull(beanId)
+        assertEquals(0L, jdbc.queryForObject("select count(*) from beans where name = ?", Long::class.java, name))
+    }
+
+    @Test
+    fun ownedRecipeLinksToAMatchingBeanWithoutEnrichingIt() {
+        val owner = identities.resolve("web_local", "sb-$tag-owned-matched")
+        appUsers += owner
+        val code = insertRecipe("sb-$tag-public", """{"name":"sb-$tag Shared","roaster":"R"}""")
+        val publicBean = jdbc.queryForObject("select bean_id from recipes where code = ?", String::class.java, code)
+
+        val beanId = insertOwnedRecipe(
+            "sb-$tag-owned-matched",
+            owner,
+            """{"name":"SB-$tag shared","roaster":"r","origin":"Owner private"}"""
+        )
+
+        assertEquals(publicBean, beanId)
+        assertNull(jdbc.queryForObject("select origin from beans where id = ?", String::class.java, publicBean))
     }
 
     @Test
