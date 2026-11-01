@@ -328,8 +328,21 @@ unfreeze() {
   step unfreeze "open writes on the Node API"
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
   check_cloudflared_on_node
+  # 503 is frozen, 404 is a repeated run. Anything else cannot prove writes reopened.
+  local probe
+  probe="$(freeze_probe)"
+  case "$probe" in
+    503 | 404) ;;
+    *) fail "the Node API is not healthy (probe answered $probe); writes stay frozen and rollback stays available" ;;
+  esac
   rm -f "$FREEZE_FILE"
-  [ "$(freeze_probe)" = 404 ] || fail "the Node API is still frozen (probe did not answer 404); rollback stays available"
+  probe="$(freeze_probe)"
+  if [ "$probe" != 404 ]; then
+    touch "$FREEZE_FILE"
+    [ "$(freeze_probe)" = 503 ] \
+      || fail "probe answered $probe after the freeze was removed, and does not answer 503 now that it is back: writes may be open, so check the Node API before a rollback"
+    fail "probe answered $probe, expected 404; the freeze is back, the probe answers 503, and rollback stays available"
+  fi
   # PostgreSQL takes writes again, so MySQL is stale from here on.
   rm -f "$CUTOVER_MARKER"
   log "PHASE4_UNFROZEN"

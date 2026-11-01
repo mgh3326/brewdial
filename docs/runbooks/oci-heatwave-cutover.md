@@ -339,6 +339,10 @@ sudo cp -p /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-a
 sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze
 ```
 
+If `unfreeze` cannot prove that writes reopened, it puts the freeze back and keeps
+`rollback` available. If it also reports `writes may be open`, check the Node API
+before you run a rollback.
+
 `copy` always refuses a target that holds rows, so a repeated run can never
 overwrite live MySQL by accident. Only `--replace-target` replaces it.
 

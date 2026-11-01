@@ -112,6 +112,12 @@ case "$url" in
     if [ "${STUB_FAIL:-}" = no-switch ]; then printf '404'
     elif [ "${STUB_FAIL:-}" = old-node ]; then printf '401'
     elif [ "${STUB_FAIL:-}" = stuck-frozen ]; then printf '503'
+    elif [ "${STUB_FAIL:-}" = probe-500 ]; then printf '500'
+    elif [ "${STUB_FAIL:-}" = probe-500-when-open ]; then
+      [ -e "$STUB_FREEZE" ] && printf '503' || printf '500'
+    elif [ "${STUB_FAIL:-}" = probe-breaks ]; then
+      # 503 once, then 500 for good, whatever the file says.
+      if [ -e "$STUB_STATE/probed" ]; then printf '500'; else touch "$STUB_STATE/probed"; printf '503'; fi
     elif [ -e "$STUB_FREEZE" ]; then printf '503'
     else printf '404'
     fi
@@ -159,6 +165,11 @@ chmod +x "$work"/bin/*
 run_scenario() {
   local name="$1" fail="$2"
   shift 2
+  # Taken in and cleared here, so that no shell or mode can carry one into the next scenario.
+  local color="${SCENARIO_COLOR:-blue}" frozen="${SCENARIO_FROZEN:-}" verified="${SCENARIO_VERIFIED:-}"
+  local ingress="${SCENARIO_INGRESS:-http://127.0.0.1:8020}" mutate="${SCENARIO_MUTATE:-}"
+  local active_digest="${SCENARIO_ACTIVE_DIGEST:-}" not_root="${SCENARIO_NOT_ROOT:-}"
+  unset SCENARIO_COLOR SCENARIO_FROZEN SCENARIO_VERIFIED SCENARIO_INGRESS SCENARIO_MUTATE SCENARIO_ACTIVE_DIGEST SCENARIO_NOT_ROOT
   scenario="$work/$name"
   rm -rf "$scenario"
   mkdir -p "$scenario/env" "$scenario/state" "$scenario/freeze" "$scenario/log"
@@ -175,17 +186,17 @@ AGENT_TOKEN=$SECRET
 DATABASE_URL=postgres://brewdial_app:$SECRET@127.0.0.1:5432/brewdial
 EOF
   chmod 600 "$scenario"/env/*
-  echo "${SCENARIO_COLOR:-blue}" >"$scenario/state/color"
-  [ "${SCENARIO_FROZEN:-}" = 1 ] && touch "$scenario/freeze/write-freeze"
-  [ "${SCENARIO_VERIFIED:-}" = 1 ] && touch "$scenario/freeze/write-freeze.cutover-verified"
-  printf 'ingress:\n  - service: %s\n' "${SCENARIO_INGRESS:-http://127.0.0.1:8020}" >"$scenario/config.yml"
-  [ -n "${SCENARIO_MUTATE:-}" ] && (cd "$scenario" && eval "$SCENARIO_MUTATE")
+  echo "$color" >"$scenario/state/color"
+  [ "$frozen" = 1 ] && touch "$scenario/freeze/write-freeze"
+  [ "$verified" = 1 ] && touch "$scenario/freeze/write-freeze.cutover-verified"
+  printf 'ingress:\n  - service: %s\n' "$ingress" >"$scenario/config.yml"
+  [ -n "$mutate" ] && (cd "$scenario" && eval "$mutate")
   : >"$scenario/state/calls"
 
   output="$(PATH="$work/bin:$PATH" \
     STUB_STATE="$scenario/state" STUB_SECRET="$SECRET" STUB_FAIL="$fail" STUB_DIGEST="$DIGEST" \
     STUB_FREEZE="$scenario/freeze/write-freeze" STUB_KT_ENV="$scenario/env/brewdial-api-kt.env" \
-    STUB_ACTIVE_DIGEST="${SCENARIO_ACTIVE_DIGEST:-}" STUB_NOT_ROOT="${SCENARIO_NOT_ROOT:-}" \
+    STUB_ACTIVE_DIGEST="$active_digest" STUB_NOT_ROOT="$not_root" \
     PHASE4_ENV_DIR="$scenario/env" PHASE4_FREEZE_FILE="$scenario/freeze/write-freeze" \
     PHASE4_CLOUDFLARED_CONFIG="$scenario/config.yml" PHASE4_LOG_DIR="$scenario/log" PHASE4_DRAIN_SECONDS=0 \
     PHASE4_BACKUP_DIR="$scenario/final-postgres" \
@@ -251,6 +262,27 @@ expect_frozen
 expect_no_secret
 if grep -rl "$SECRET" "$scenario/log" >/dev/null; then bad "a tool log holds the fixture password"; fi
 [ "$failures" -gt 0 ] || printf 'ok   %s\n' "$current"
+before=$failures
+
+# --- a scenario's inputs do not reach the next one, even as plain assignments, which persist in every shell ---
+SCENARIO_NOT_ROOT=1
+SCENARIO_COLOR=green
+SCENARIO_FROZEN=1
+SCENARIO_VERIFIED=1
+SCENARIO_INGRESS=http://127.0.0.1:8021
+SCENARIO_ACTIVE_DIGEST="$OTHER_DIGEST"
+SCENARIO_MUTATE='rm env/brewdial-copy.env'
+export SCENARIO_NOT_ROOT SCENARIO_COLOR SCENARIO_FROZEN SCENARIO_VERIFIED SCENARIO_INGRESS SCENARIO_ACTIVE_DIGEST SCENARIO_MUTATE
+run_scenario isolation-first "" cutover --digest "$DIGEST" --preflight
+[ "$status" -ne 0 ] || bad "the inputs of the first scenario were ignored"
+leftover="$(compgen -v SCENARIO_ || true)"
+[ -z "$leftover" ] || bad "still set after the scenario: $leftover"
+run_scenario isolation-second "" cutover --digest "$DIGEST" --preflight
+[ "$status" = 0 ] || bad "the next scenario inherited the inputs"
+expect_not_frozen
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the next scenario inherited the marker"
+[ -e "$scenario/env/brewdial-copy.env" ] || bad "the next scenario inherited the mutation"
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 
 # --- preflight changes nothing ---
@@ -357,11 +389,44 @@ expect_not_frozen
 before=$failures
 SCENARIO_FROZEN=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario unfreeze-traffic-on-kt "" unfreeze; expect_stopped unfreeze ""; expect_frozen
 
-# A failed unfreeze must not take the rollback away: PostgreSQL never reopened.
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze; expect_stopped unfreeze ""
-[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the cutover marker must survive a failed unfreeze"
-SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-after-failed-unfreeze stuck-frozen rollback --digest "$DIGEST" --preflight
+# A failed unfreeze must leave a state that rollback accepts: PostgreSQL never reopened.
+expect_rollback_state() {
+  [ -e "$scenario/freeze/write-freeze" ] || bad "the freeze must be back after a failed unfreeze"
+  [ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the cutover marker must survive a failed unfreeze"
+}
+
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+case "$output" in *"the freeze is back"*) ;; *) bad "the message must say the freeze is back" ;; esac
+
+# r4436182728: a 500 once writes are open puts the freeze back.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-500-when-open probe-500-when-open unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+case "$output" in *"probe answered 500, expected 404; the freeze is back"*) ;; *) bad "the message must name the 500" ;; esac
+
+# Unhealthy before it starts: nothing is touched.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-node-unhealthy probe-500 unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+case "$output" in *"not healthy (probe answered 500)"*) ;; *) bad "the message must say the Node API is unhealthy" ;; esac
+
+# The probe breaks part-way: the freeze is back, and the desk is told it cannot be proven.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-probe-breaks probe-breaks unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+case "$output" in *"writes may be open"*) ;; *) bad "the message must warn that writes may be open" ;; esac
+
+# What each failed unfreeze leaves behind passes the rollback preflight.
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-after-stuck-unfreeze stuck-frozen rollback --digest "$DIGEST" --preflight
 [ "$status" = 0 ] || bad "rollback must stay available after a failed unfreeze"
+expect_no_secret
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-after-500-unfreeze probe-500-when-open rollback --digest "$DIGEST" --preflight
+[ "$status" = 0 ] || bad "rollback must stay available after a 500"
+expect_no_secret
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
+
+# A repeated unfreeze still finishes.
+SCENARIO_VERIFIED=1 run_scenario unfreeze-repeated "" unfreeze
+[ "$status" = 0 ] || bad "a repeated unfreeze should pass"
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a repeated unfreeze must clear the marker"
+expect_not_frozen
 expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures

@@ -80,6 +80,25 @@ if [ -n "$HEATWAVE_TMP" ]; then
   failures=$((failures + 1))
 fi
 
+# r4436181195: these would break or truncate an option-file line, or pass as an option.
+expect_refused 'host with a space' 'mysql://app:not-for-output@ba d:3306/brewdial'
+expect_refused 'host with a comment character' 'mysql://app:not-for-output@bad#host:3306/brewdial'
+expect_refused 'host with a semicolon' 'mysql://app:not-for-output@bad;host:3306/brewdial'
+expect_refused 'host with a quote' 'mysql://app:not-for-output@bad"host:3306/brewdial'
+expect_refused 'database that reads as an option' "mysql://app:not-for-output@$host/--all-databases"
+expect_refused 'database with a space' "mysql://app:not-for-output@$host/bad name"
+
+# A real private DNS name and port arrive unchanged.
+load_url 'mysql://app:pw@heatwave-1.sub.vcn.oraclevcn.com:3307/brew_dial-1'
+if grep -qx 'host=heatwave-1.sub.vcn.oraclevcn.com' "$HEATWAVE_TMP/client.cnf" \
+  && grep -qx 'port=3307' "$HEATWAVE_TMP/client.cnf" && [ "$HEATWAVE_DB" = brew_dial-1 ]; then
+  printf 'ok   host, port and database\n'
+else
+  printf 'FAIL host, port and database\n'
+  failures=$((failures + 1))
+fi
+heatwave_unload
+
 # A user is decoded and quoted the same way.
 load_url "mysql://a%22b:pw@$host/brewdial"
 if grep -qxF 'user="a\"b"' "$HEATWAVE_TMP/client.cnf"; then

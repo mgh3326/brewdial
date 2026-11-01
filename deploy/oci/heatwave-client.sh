@@ -39,6 +39,11 @@ heatwave_load() {
   HEATWAVE_DB="${BASH_REMATCH[7]}"
   query="${BASH_REMATCH[9]}"
   [[ "&$query" =~ \&sslMode=([A-Za-z_]+) ]] && ssl_mode="${BASH_REMATCH[1]}"
+  # The option file holds the host unquoted, and the database is a positional argument.
+  if ! [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || ! [[ "$HEATWAVE_DB" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]; then
+    echo "DATABASE_URL in $env_file has an unsafe host or database name" >&2
+    return 1
+  fi
   if ! percent_encoding_ok "$user" || ! percent_encoding_ok "$password"; then
     echo "DATABASE_URL in $env_file has an invalid percent-encoded credential" >&2
     return 1
