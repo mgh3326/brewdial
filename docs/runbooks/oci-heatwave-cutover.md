@@ -89,29 +89,13 @@ Conventions:
    services.yaml sets `HOST`, and the image bakes in `GIT_SHA`.
 6. **Registry login.** If the GHCR packages are private, log in once as the
    user that runs shiftgate. Use a token with `read:packages` only.
-7. **Deploy user and forced command.** Create a `deploy` user in the `docker`
-   group, with write access to `/var/lib/shiftgate` and
-   `/etc/shiftgate/haproxy` and access to the admin socket. Alternatively,
-   run shiftgate through `sudo` with an entry restricted to
-   `/usr/local/bin/shiftgate deploy *`. Install shiftgate's
-   `examples/ssh-forced-command.sh` as `/usr/local/bin/shiftgate-ssh`, then add
-   the CI public key to `authorized_keys`:
-   `command="/usr/local/bin/shiftgate-ssh",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 … ci-deploy`.
-   That key can then run only `shiftgate deploy <svc> --digest sha256:<64 hex>`.
-8. **Tailnet.** The host joins the tailnet. CI joins with the `tag:ci` OAuth
-   client, and the tailnet ACL allows `tag:ci` to reach port 22 on this host
-   only.
-9. **GitHub settings.** These are repository settings, not files:
-   - Variables: `OCI_TAILNET_HOST` (MagicDNS name) and `OCI_DEPLOY_USER`. Set
-     `SHIFTGATE_DEPLOY_ENABLED=true` last, in phase 2 step 2.
-   - Secrets: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`,
-     `SHIFTGATE_DEPLOY_SSH_KEY` and `SHIFTGATE_KNOWN_HOSTS`.
-   - Environment: `oci-production`. Add required reviewers if you want an
-     approval step.
-
-Until `SHIFTGATE_DEPLOY_ENABLED=true` is set, every `deploy-oci.yml` run is a
-dry run. It builds, pushes and prints `SHIFTGATE_COMMAND: shiftgate deploy
-brewdial-api --digest sha256:…`, and it contacts no host.
+7. **Pull-based deploys (no CI access to the host).** CI only builds, pushes
+   and, on a release, moves the `production` tag. The host follows it:
+   Dagu on this host runs every few minutes
+   `sudo shiftgate follow brewdial-api --tag production`. No deploy user, SSH
+   key, tailnet OAuth client or repository secret is needed. The image is a
+   public GHCR package; if it ever becomes private, log in once on the host
+   with a `read:packages` token.
 
 ## 2. Cutover: k3s → shiftgate (Node API, PostgreSQL)
 
@@ -129,20 +113,13 @@ k3s keeps serving on `127.0.0.1:30020` throughout. shiftgate serves on
    The container runs `node-pg-migrate up` before the server starts, as the
    k3s initContainer did. Against the current database it is a no-op, because
    `pgmigrations` already lists every migration.
-2. **Enable CI deploys.** CI builds its own image, so its digest differs from
-   the k3s digest even for the same commit. Compare the commit instead:
-   1. Fast-forward `production` to the `main` commit you intend to ship (`git
-      push origin main:production`). This commit must contain this workflow.
-      The push only produces a dry run while the variable is unset.
-   2. Read that run's `plan` job, and check that the commit is the one you want
-      and that it printed `SHIFTGATE_COMMAND: … --digest sha256:…`.
-   3. Set `SHIFTGATE_DEPLOY_ENABLED=true`, then run `gh workflow run
-      deploy-oci.yml --ref production -f dry_run=false`.
-   4. Check that the digest in that run's `plan` job is the one now active in
-      `shiftgate status`.
-
-   This second deploy fills the other colour, which makes `shiftgate rollback`
-   available.
+2. **Releases from CI.** Fast-forward `production` to the `main` commit you
+   intend to ship (`git push origin main:production`). The workflow builds it,
+   pushes it and moves `ghcr.io/mgh3326/brewdial:production` to that digest.
+   Within a few minutes the host follower deploys it into the idle colour,
+   which also makes `shiftgate rollback` available. Check `shiftgate status`
+   for the new digest. A rolled-back digest is held by the follower until a
+   newer one is tagged.
 3. **Switch traffic.** In `/etc/cloudflared/config.yml`, change the ingress
    from `http://127.0.0.1:30020` to `http://127.0.0.1:8020`. Then run `sudo
    systemctl restart cloudflared` and check the public `/api/health` and
