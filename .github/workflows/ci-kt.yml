@@ -3,28 +3,57 @@ name: Kotlin API CI
 # The Kotlin API supports PostgreSQL and MySQL through JPA/Hibernate; the
 # vendor is picked by the DATABASE_URL scheme. Both test jobs run the same
 # Gradle suite, each against its own service container, and the final job
-# links them into one required check.
+# links them into one required check (.mergewake/policy.yaml).
+#
+# A path filter under `on:` would stop the required check from reporting on
+# unrelated PRs and strand them. So this always runs: `changes` compares the
+# paths, the database jobs skip when nothing they cover changed, and the final
+# job passes right away.
 
 on:
   push:
     branches: [main]
-    paths:
-      - "apps/api-kt/**"
-      - "packages/db/migrations/**"
-      - ".github/workflows/ci-kt.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "apps/api-kt/**"
-      - "packages/db/migrations/**"
-      - ".github/workflows/ci-kt.yml"
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: API paths changed
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.paths.outputs.relevant }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A pull_request checkout is the merge commit: HEAD^1 is the base branch.
+          fetch-depth: 2
+
+      - name: Test the path check
+        run: bash .github/scripts/api-paths-changed-test.sh
+
+      - name: Compare with the base
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base=HEAD^1
+          else
+            base="$BEFORE"
+            # A push can carry several commits. A failed fetch makes the script run the tests.
+            git fetch --quiet --depth=1 origin "$base" || true
+          fi
+          echo "relevant=$(.github/scripts/api-paths-changed.sh "$base")" >> "$GITHUB_OUTPUT"
+
   postgresql:
     name: API tests (PostgreSQL 17)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -95,6 +124,8 @@ jobs:
 
   mysql:
     name: API tests (MySQL 8.4)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -149,6 +180,8 @@ jobs:
   # The one job with both databases: the data copy runs between them.
   copy:
     name: Data copy (PostgreSQL <-> MySQL)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -205,15 +238,19 @@ jobs:
 
   api-tests:
     name: API tests (PostgreSQL + MySQL)
-    needs: [postgresql, mysql, copy]
+    needs: [changes, postgresql, mysql, copy]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Both database jobs passed
+      - name: All database jobs passed, or nothing they cover changed
         env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
           POSTGRESQL: ${{ needs.postgresql.result }}
           MYSQL: ${{ needs.mysql.result }}
           COPY: ${{ needs.copy.result }}
         run: |
-          echo "postgresql=${POSTGRESQL} mysql=${MYSQL} copy=${COPY}"
+          echo "changes=${CHANGES} relevant=${RELEVANT} postgresql=${POSTGRESQL} mysql=${MYSQL} copy=${COPY}"
+          [ "${CHANGES}" = success ] || exit 1
+          [ "${RELEVANT}" = false ] && exit 0
           [ "${POSTGRESQL}" = success ] && [ "${MYSQL}" = success ] && [ "${COPY}" = success ]
