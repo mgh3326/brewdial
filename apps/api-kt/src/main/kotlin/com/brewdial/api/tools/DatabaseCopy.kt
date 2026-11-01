@@ -9,6 +9,7 @@ import java.math.BigDecimal
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.ResultSet
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -52,7 +53,8 @@ internal class CopyEndpoint(val connection: Connection, val vendor: DatabaseVend
 internal class DatabaseCopy(
     private val source: CopyEndpoint,
     private val target: CopyEndpoint,
-    private val output: (String) -> Unit = ::println
+    private val output: (String) -> Unit = ::println,
+    private val quietTimeout: Duration = Duration.ofSeconds(120)
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -68,6 +70,7 @@ internal class DatabaseCopy(
      * is compared inside its transaction and commits only if everything matches.
      */
     fun run(mode: CopyMode): Boolean {
+        waitForQuietSource()
         // One snapshot of the source for the whole copy and verification.
         source.connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
         source.connection.autoCommit = false
@@ -82,6 +85,40 @@ internal class DatabaseCopy(
         } finally {
             source.connection.rollback()
         }
+    }
+
+    /**
+     * A snapshot cannot see a write that commits after it starts, so the source must
+     * be quiet first. This runs before the snapshot: PostgreSQL caches its activity
+     * view for a whole transaction. It cannot see sessions of another non-superuser
+     * role; the verify steps catch those once they commit.
+     */
+    private fun waitForQuietSource() {
+        val deadline = System.nanoTime() + quietTimeout.toNanos()
+        while (true) {
+            val active = query(source.connection, activeSessionsSql()) { rows ->
+                rows.next()
+                rows.getLong(1)
+            }
+            if (active == 0L) return
+            check(System.nanoTime() < deadline) {
+                "the ${source.vendor} source still has $active session(s) that could write after waiting $quietTimeout; refusing to read it"
+            }
+            log.info("waiting for {} session(s) on the {} source", active, source.vendor)
+            Thread.sleep(QUIET_POLL_MILLIS)
+        }
+    }
+
+    private fun activeSessionsSql(): String = when (source.vendor) {
+        // Sessions holding a transaction ID have written or are writing.
+        DatabaseVendor.POSTGRESQL ->
+            "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() " +
+                "and backend_type = 'client backend' and backend_xid is not null"
+        // MySQL is the source only for a rollback, with api-kt stopped. The application
+        // user then has no reason to be connected, and an open transaction looks idle
+        // without the PROCESS privilege, so any other session of this user counts.
+        DatabaseVendor.MYSQL ->
+            "select count(*) from information_schema.processlist where user = substring_index(current_user(), '@', 1) and id <> connection_id()"
     }
 
     /**
@@ -425,6 +462,7 @@ internal class DatabaseCopy(
 
     internal companion object {
         private const val BATCH = 500
+        private const val QUIET_POLL_MILLIS = 500L
         private const val PG_TEXT_ARRAY = "_text"
         const val RECIPE_CODE_SEQUENCE = "recipe_code_seq"
 

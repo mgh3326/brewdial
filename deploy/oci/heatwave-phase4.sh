@@ -5,12 +5,12 @@
 #
 #   heatwave-phase4.sh cutover  --digest sha256:<64 hex> [--preflight] [--replace-target] [--accept-order]
 #   heatwave-phase4.sh rollback --digest sha256:<64 hex> [--preflight]
-#   heatwave-phase4.sh unfreeze
+#   heatwave-phase4.sh unfreeze [--digest sha256:<64 hex>]   (--digest once a cutover has verified)
 #
 # cutover:  freeze writes -> copy PostgreSQL to MySQL -> verify -> deploy api-kt
 #           green on MySQL -> parity against the live Node API -> verify again ->
 #           print the cloudflared switch.
-# rollback: dump PostgreSQL -> copy MySQL to PostgreSQL (full replace) -> verify ->
+# rollback: stop api-kt green -> dump PostgreSQL -> copy MySQL to PostgreSQL (full replace) -> verify ->
 #           print the choices. Writes stay frozen until the desk runs `unfreeze`.
 #           Refused unless a cutover verified and nothing has ended it since.
 #
@@ -29,7 +29,6 @@ CLOUDFLARED_CONFIG="${PHASE4_CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml}"
 CUTOVER_MARKER="$FREEZE_FILE.cutover-verified"
 BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
-DRAIN_SECONDS="${PHASE4_DRAIN_SECONDS:-5}"
 DRAIN_TIMEOUT="${PHASE4_DRAIN_TIMEOUT:-120}"
 NODE_PORT=8020
 KT_PORT=8021
@@ -37,6 +36,8 @@ NODE_URL="http://127.0.0.1:$NODE_PORT"
 KT_URL="http://127.0.0.1:$KT_PORT"
 IMAGE="ghcr.io/mgh3326/brewdial-api-kt"
 KT_SERVICE="brewdial-api-kt"
+KT_MYSQL_CONTAINER="shiftgate-$KT_SERVICE-green"
+NODE_SERVICE="brewdial-api"
 PROBE_PATH="/api/write-freeze-probe"
 
 STEP="arguments"
@@ -267,6 +268,8 @@ cutover() {
   check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
   check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
   check_env_file "$KT_ENV" '^DATABASE_URL='
+  [ ! -e "$CUTOVER_MARKER" ] \
+    || fail "a verified cutover still stands, so MySQL may hold the newest data: run rollback, or unfreeze to abandon it, first"
   check_cloudflared_on_node
   [ -d "$(dirname "$FREEZE_FILE")" ] || fail "$(dirname "$FREEZE_FILE") is missing (runbook 4.1)"
   expect_healthy "Node API" "$NODE_URL"
@@ -282,6 +285,8 @@ cutover() {
     503) log "writes are already frozen (a repeated run)" ;;
     *) fail "the Node API has no write-freeze switch: probe answered $probe, expected 404 (runbook 4.1)" ;;
   esac
+  local node_digest
+  node_digest="$(shiftgate_state "$NODE_SERVICE" '.state.active.digest // "none"')"
   install -d -m 0700 "$LOG_DIR"
   if [ "$PREFLIGHT" = 1 ]; then
     log "PHASE4_PREFLIGHT_OK cutover (nothing was changed)"
@@ -314,6 +319,9 @@ cutover() {
 
   step final-verify "nothing wrote to either database during the window"
   run_copy_tool final-verify "$COPY_ENV" verify
+  # A deploy starts a new colour and can migrate; the count only saw the colour it asked.
+  [ "$(shiftgate_state "$NODE_SERVICE" '.state.active.digest // "none"')" = "$node_digest" ] \
+    || fail "$NODE_SERVICE was deployed during the window; pause its follower (runbook 4.1) and retry"
 
   touch "$CUTOVER_MARKER"
   step "done" "ready to switch"
@@ -341,7 +349,15 @@ rollback() {
     return 0
   fi
 
-  RECOVERY="PostgreSQL keeps its rows unless the replace reported COPY_VERIFY_OK. Writes stay frozen; fix the cause and run rollback again."
+  RECOVERY="PostgreSQL keeps its rows unless the replace reported COPY_VERIFY_OK. Writes stay frozen; fix the cause and run rollback again. To stay on MySQL instead, run: docker start $KT_MYSQL_CONTAINER, then point cloudflared back at $KT_URL."
+  # Nothing may write to MySQL once the copy reads it. Stopping the process proves
+  # more than counting its writes, and the copy tool then waits for its sessions to end.
+  step stop-api-kt "stop the MySQL colour, so that nothing can write to the source"
+  docker stop -t 40 "$KT_MYSQL_CONTAINER" >/dev/null 2>&1 || true
+  [ "$(docker inspect -f '{{.State.Running}}' "$KT_MYSQL_CONTAINER" 2>/dev/null || true)" = false ] \
+    || fail "cannot prove that $KT_MYSQL_CONTAINER is stopped; check it with docker ps -a"
+  [ "$(freeze_probe)" = 503 ] || fail "the Node API stopped answering 503: PostgreSQL may be taking writes"
+
   step safety-dump "PostgreSQL as it is now, before the replace"
   install -d -m 0750 "$BACKUP_DIR"
   local dump="$BACKUP_DIR/pre-rollback-$STAMP.dump"
@@ -352,7 +368,6 @@ rollback() {
   log "dump OK: $dump"
 
   step replace "MySQL to PostgreSQL: full replace, then counts, checksums and sequence"
-  sleep "$DRAIN_SECONDS"
   run_copy_tool rollback-replace "$ROLLBACK_ENV" replace
 
   step verify "fresh snapshot of both databases"
@@ -383,6 +398,17 @@ unfreeze() {
     503 | 404) ;;
     *) fail "the Node API is not healthy (probe answered $probe); writes stay frozen and rollback stays available" ;;
   esac
+  # Reopening a stale PostgreSQL would strand whatever MySQL took after the cutover.
+  if [ -e "$CUTOVER_MARKER" ]; then
+    check_tools
+    [ -n "$DIGEST" ] || fail "a cutover has verified, so this must compare the databases first: pass --digest"
+    check_digest
+    check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
+    install -d -m 0700 "$LOG_DIR"
+    RECOVERY="MySQL may hold writes that PostgreSQL lacks, so writes stay frozen. Run rollback to carry them over."
+    run_copy_tool unfreeze-verify "$COPY_ENV" verify
+    RECOVERY=""
+  fi
   rm -f "$FREEZE_FILE"
   probe="$(freeze_probe)"
   if [ "$probe" != 404 ]; then

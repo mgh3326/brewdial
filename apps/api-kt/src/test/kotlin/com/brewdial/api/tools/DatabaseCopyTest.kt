@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import java.sql.Connection
 import java.sql.DriverManager
+import java.time.Duration
 import java.util.Properties
 import java.util.UUID
 
@@ -29,6 +30,7 @@ class DatabaseCopyTest {
     private val database = "copy_$id"
     private val pgOwner = "copy_owner_$id"
     private val pgOwnerPassword = "owner-$id"
+    private val mysqlCopyUser = "copy_src_$id"
     private val pgAdminConfig = DatabaseUrlParser.parse(System.getenv("BREWDIAL_COPY_TEST_POSTGRES_URL"))
     private val mysqlAdminConfig = DatabaseUrlParser.parse(System.getenv("BREWDIAL_COPY_TEST_MYSQL_URL"))
     private val output = mutableListOf<String>()
@@ -46,7 +48,12 @@ class DatabaseCopyTest {
             admin.update("create role $pgOwner login nosuperuser password '$pgOwnerPassword'")
             admin.update("create database $database owner $pgOwner")
         }
-        connect(mysqlAdminConfig).use { admin -> admin.update("create database $database") }
+        connect(mysqlAdminConfig).use { admin ->
+            admin.update("create database $database")
+            // Like production: the rollback source connects as a user only the API shares.
+            admin.update("create user '$mysqlCopyUser'@'%' identified by '$pgOwnerPassword'")
+            admin.update("grant all on $database.* to '$mysqlCopyUser'@'%'")
+        }
         val pgUrl = databaseUrl(pgAdminConfig)
         Flyway.configure().dataSource(pgUrl, pgOwner, pgOwnerPassword)
             .locations("classpath:db/migration/postgresql").placeholderReplacement(false).load().migrate()
@@ -65,7 +72,10 @@ class DatabaseCopyTest {
             admin.update("drop database $database with (force)")
             admin.update("drop role $pgOwner")
         }
-        connect(mysqlAdminConfig).use { admin -> admin.update("drop database $database") }
+        connect(mysqlAdminConfig).use { admin ->
+            admin.update("drop database $database")
+            admin.update("drop user '$mysqlCopyUser'@'%'")
+        }
     }
 
     @Test
@@ -170,6 +180,67 @@ class DatabaseCopyTest {
     }
 
     @Test
+    fun anOpenWriteOnThePostgresSourceStopsTheCopyBeforeItWrites() {
+        DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword).use { writer ->
+            writer.autoCommit = false
+            writer.update("update beans set origin = 'in flight' where id = 'bean-1'")
+
+            val failure = assertThrows(IllegalStateException::class.java) { forward(CopyMode.COPY) }
+
+            assertTrue(failure.message!!.contains("could write"), failure.message)
+            assertEquals(0L, mysql.long("select count(*) from beans"), "nothing may be written")
+            writer.rollback()
+        }
+
+        assertTrue(forward(CopyMode.COPY), output.joinToString("\n"))
+    }
+
+    @Test
+    fun theCopyWaitsForAWriteThatFinishesAndThenSeesIt() {
+        val writer = DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword)
+        writer.autoCommit = false
+        writer.update("update beans set origin = 'committed while waiting' where id = 'bean-1'")
+        val committer = Thread {
+            Thread.sleep(700)
+            writer.commit()
+            writer.close()
+        }
+        committer.start()
+
+        assertTrue(forward(CopyMode.COPY, Duration.ofSeconds(30)), output.joinToString("\n"))
+
+        committer.join()
+        assertEquals("committed while waiting", mysql.string("select origin from beans where id = 'bean-1'"))
+    }
+
+    @Test
+    fun anIdlePostgresSessionDoesNotStopTheCopy() {
+        DriverManager.getConnection(databaseUrl(pgAdminConfig), pgOwner, pgOwnerPassword).use { reader ->
+            reader.autoCommit = false
+            reader.string("select origin from beans where id = 'bean-1'")
+
+            assertTrue(forward(CopyMode.COPY), output.joinToString("\n"))
+        }
+    }
+
+    @Test
+    fun anotherSessionOfTheApiUserStopsTheRollback() {
+        assertTrue(forward(CopyMode.COPY))
+        val before = pgFingerprints()
+
+        mysqlAsCopyUser().use { stillConnected ->
+            stillConnected.string("select 1")
+
+            val failure = assertThrows(IllegalStateException::class.java) { reverse(CopyMode.REPLACE) }
+
+            assertTrue(failure.message!!.contains("could write"), failure.message)
+            assertEquals(before, pgFingerprints())
+        }
+
+        assertTrue(reverse(CopyMode.REPLACE), output.joinToString("\n"))
+    }
+
+    @Test
     fun copyFailsOnAColumnOnlyPostgresHas() {
         pgAdmin.update("alter table beans add column drift_note text")
 
@@ -262,18 +333,29 @@ class DatabaseCopyTest {
 
     private fun outputLines() = output.flatMap { it.lines() }
 
-    private fun forward(mode: CopyMode): Boolean = DatabaseCopy(
+    private fun forward(mode: CopyMode, quietTimeout: Duration = Duration.ofSeconds(1)): Boolean = DatabaseCopy(
         CopyEndpoint(freshPg(), DatabaseVendor.POSTGRESQL),
         CopyEndpoint(mysql, DatabaseVendor.MYSQL),
-        output::add
+        output::add,
+        quietTimeout
     ).run(mode)
 
-    private fun reverse(mode: CopyMode): Boolean = connect(mysqlAdminConfig, database).use { source ->
+    private fun reverse(mode: CopyMode, quietTimeout: Duration = Duration.ofSeconds(1)): Boolean = mysqlAsCopyUser().use { source ->
         DatabaseCopy(
             CopyEndpoint(source, DatabaseVendor.MYSQL),
             CopyEndpoint(pg, DatabaseVendor.POSTGRESQL),
-            output::add
+            output::add,
+            quietTimeout
         ).run(mode)
+    }
+
+    private fun mysqlAsCopyUser(): Connection {
+        val properties = Properties()
+        properties["user"] = mysqlCopyUser
+        properties["password"] = pgOwnerPassword
+        properties["connectionTimeZone"] = "UTC"
+        properties["forceConnectionTimeZoneToSession"] = "true"
+        return DriverManager.getConnection(databaseUrl(mysqlAdminConfig), properties)
     }
 
     /** The runner gives every run its own source connection and snapshot. */

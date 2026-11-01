@@ -293,11 +293,11 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 |---|---|---|
 | `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared routes to `:8020` and nothing to `:8021`, api-kt is on blue with this digest, and the freeze probe answers |
 | `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze`, then waits up to 120 s for writes admitted before it to finish | `POST /api/write-freeze-probe` on `:8020` answers 503, and its `X-Writes-In-Flight` header reads 0 |
-| `copy` | Copies PostgreSQL → MySQL in one PostgreSQL snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
+| `copy` | Waits for PostgreSQL to have no other write transaction (up to 120 s), copies in one snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
 | `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
 | `deploy` | Moves the HeatWave `DATABASE_URL` into the api-kt env file, runs `shiftgate deploy` | Green is active, blue is the rollback colour, `/api/db/health` on `:8021` answers 200 |
 | `parity` | Compares the §4.2 reads and one bean and recipe, Node on PostgreSQL against api-kt on MySQL | Same after the README's allowed differences |
-| `final-verify` | Compares both databases again | `COPY_VERIFY_OK`: nothing wrote to either side during the window |
+| `final-verify` | Compares both databases again | `COPY_VERIFY_OK`: nothing wrote to either side during the window, and `brewdial-api` has the digest it had at preflight |
 | `done` | Prints the cloudflared command | The desk runs it (§4.4) |
 
 **How the script reads cloudflared.** It asks `cloudflared tunnel ingress rule`
@@ -341,8 +341,13 @@ disables `rollback`, because MySQL is stale from then on:
 
 ```sh
 sudo cp -p /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api-kt.env
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze --digest sha256:<api-kt digest>
 ```
+
+After a cutover has verified, `unfreeze` first compares both databases and refuses if
+they differ, because MySQL may then hold writes that PostgreSQL lacks. Run `rollback`
+in that case. A new `cutover` is refused until `rollback` or `unfreeze` ends the
+verified one, so `--replace-target` cannot overwrite live data either.
 
 If `unfreeze` cannot prove that writes reopened, it puts the freeze back and keeps
 `rollback` available. If it also reports `writes may be open`, check the Node API
@@ -392,15 +397,23 @@ after the cutover all arrive, and the sequence continues where MySQL stopped.
    ```
 2. **Copy back.** The script requires cloudflared on `:8020`, the freeze still on,
    and a cutover that verified and that no `rollback` or `unfreeze` has ended, so
-   an empty or stale MySQL can never replace PostgreSQL. It first dumps PostgreSQL
-   to `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`. Then it
-   replaces every row in one transaction, compares before it commits, and compares
-   again in a new snapshot:
+   an empty or stale MySQL can never replace PostgreSQL. It then:
+   1. Stops the api-kt green container, so that nothing can write to MySQL. A stop
+      waits up to 40 s for requests to finish.
+   2. Dumps PostgreSQL to
+      `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`.
+   3. Waits up to 120 s until no other session of the MySQL application user remains,
+      then replaces every row in one transaction, compares before it commits, and
+      compares again in a new snapshot.
+
+   Close any session of your own that uses that MySQL user first, or the copy
+   refuses to read.
    ```sh
    sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
    ```
    On failure, PostgreSQL keeps its previous rows and writes stay frozen. Fix the
-   cause and run it again. MySQL stays as it was.
+   cause and run it again. MySQL stays as it was. To stay on MySQL instead, run `sudo
+   docker start shiftgate-brewdial-api-kt-green` and point cloudflared back at `:8021`.
 3. **Choose the runtime.** The script prints both commands:
    - **Node API on PostgreSQL** (the phase-2 state): run `sudo
      /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze`. Traffic is already on

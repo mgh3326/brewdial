@@ -66,6 +66,21 @@ test.each(['POST', 'PUT', 'PATCH', 'DELETE'])('%s answers 503 while frozen, on b
   }
 })
 
+test('a real mutating route reached through the app is refused and writes nothing', async () => {
+  const label = `frozen-${seed}`
+  freeze()
+
+  const response = await app.request('/api/me/gear', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'X-BrewDial-Identity': `toss_anon:${knownKey}` },
+    body: JSON.stringify({ kind: 'grinder', label }),
+  })
+
+  expect(response.status).toBe(503)
+  const rows = await getDb().selectFrom('user_gear').select('id').where('label', '=', label).execute()
+  expect(rows).toHaveLength(0)
+})
+
 test('the probe path answers 503 frozen and 404 otherwise, so it can never write', async () => {
   expect((await app.request('/api/write-freeze-probe', { method: 'POST' })).status).toBe(404)
   freeze()

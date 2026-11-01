@@ -25,6 +25,19 @@ EOF
 # Copy tool: report lines plus a credential in the log, as a driver error might print it.
 cat >"$work/bin/docker" <<'EOF'
 #!/usr/bin/env bash
+case "$1" in
+  stop)
+    echo "stop-api-kt" >>"$STUB_STATE/calls"
+    [ "${STUB_FAIL:-}" = kt-keeps-running ] && exit 1
+    touch "$STUB_STATE/kt_stopped"
+    exit 0
+    ;;
+  inspect)
+    [ "${STUB_FAIL:-}" = kt-container-missing ] && exit 1
+    if [ "${STUB_FAIL:-}" != kt-keeps-running ] && [ -e "$STUB_STATE/kt_stopped" ]; then echo false; else echo true; fi
+    exit 0
+    ;;
+esac
 mode=""; env_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -114,9 +127,12 @@ case "$1" in
   status)
     color="$(cat "$STUB_STATE/color")"
     digest="${STUB_ACTIVE_DIGEST:-$STUB_DIGEST}"
+    # The follower redeploys the Node API once the window has reached the second copy run.
+    node=node-digest-1
+    if [ "${STUB_FAIL:-}" = node-redeployed ] && [ "$(cat "$STUB_STATE/copy_runs" 2>/dev/null || echo 0)" -ge 2 ]; then node=node-digest-2; fi
     case "$color" in
-      blue) printf '[{"name":"brewdial-api-kt","state":{"active":{"color":"blue","digest":"%s"},"rollback_available":false}}]\n' "$digest" ;;
-      green) printf '[{"name":"brewdial-api-kt","state":{"active":{"color":"green","digest":"%s"},"previous":{"color":"blue","digest":"%s"},"rollback_available":true}}]\n' "$digest" "$digest" ;;
+      blue) printf '[{"name":"brewdial-api","state":{"active":{"digest":"%s"}}},{"name":"brewdial-api-kt","state":{"active":{"color":"blue","digest":"%s"},"rollback_available":false}}]\n' "$node" "$digest" ;;
+      green) printf '[{"name":"brewdial-api","state":{"active":{"digest":"%s"}}},{"name":"brewdial-api-kt","state":{"active":{"color":"green","digest":"%s"},"previous":{"color":"blue","digest":"%s"},"rollback_available":true}}]\n' "$node" "$digest" "$digest" ;;
     esac
     ;;
   deploy)
@@ -250,7 +266,7 @@ EOF
     STUB_FREEZE="$scenario/freeze/write-freeze" STUB_KT_ENV="$scenario/env/brewdial-api-kt.env" \
     STUB_ACTIVE_DIGEST="$active_digest" STUB_NOT_ROOT="$not_root" \
     PHASE4_ENV_DIR="$scenario/env" PHASE4_FREEZE_FILE="$scenario/freeze/write-freeze" \
-    PHASE4_CLOUDFLARED_CONFIG="$scenario/config.yml" PHASE4_LOG_DIR="$scenario/log" PHASE4_DRAIN_SECONDS=0 \
+    PHASE4_CLOUDFLARED_CONFIG="$scenario/config.yml" PHASE4_LOG_DIR="$scenario/log" \
     PHASE4_BACKUP_DIR="$scenario/final-postgres" PHASE4_DRAIN_TIMEOUT=1 \
     bash "$script" "$@" 2>&1)"
   status=$?
@@ -536,6 +552,17 @@ case "$output" in *"waiting for 1 admitted write(s)"*) ;; *) bad "the wait must 
 expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
+# A deploy during the window started a colour the count never asked.
+run_scenario node-redeployed node-redeployed cutover --digest "$DIGEST"; expect_stopped final-verify "$c4"; expect_frozen
+[ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a window with a deploy in it must not unlock a rollback"
+
+# A verified cutover ends through rollback or unfreeze, never through a new window:
+# MySQL may hold the newest data, and the freeze step would delete the marker.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario cutover-over-verified "" cutover --digest "$DIGEST"; expect_stopped preflight ""
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the marker must survive a refused cutover"
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario replace-over-verified "" cutover --digest "$DIGEST" --replace-target; expect_stopped preflight ""
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the marker must survive a refused replace"
+
 run_scenario copy-exit copy-exit cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen
 case "$output" in *"COPY_CHECK_FAILED schema drift"*) ;; *) bad "the drift message is missing" ;; esac
 run_scenario copy-mismatch copy-mismatch cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen
@@ -576,7 +603,8 @@ expect_no_secret
 before=$failures
 
 # --- rollback ---
-SAFETY='safety-dump'
+SAFETY='stop-api-kt
+safety-dump'
 ROLLBACK1='docker-replace-brewdial-rollback.env-run1'
 ROLLBACK2='docker-verify-brewdial-rollback.env-run2'
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-happy "" rollback --digest "$DIGEST"
@@ -596,6 +624,10 @@ before=$failures
 SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-not-frozen "" rollback --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 run_scenario rollback-without-cutover "" rollback --digest "$DIGEST"; expect_stopped preflight ""
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario rollback-traffic-on-kt "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+# r4436353156: nothing is read from MySQL unless its writer is provably gone.
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-kt-keeps-running kt-keeps-running rollback --digest "$DIGEST"; expect_stopped stop-api-kt "stop-api-kt"; expect_frozen
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-kt-container-missing kt-container-missing rollback --digest "$DIGEST"; expect_stopped stop-api-kt "stop-api-kt"; expect_frozen
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a stopped rollback must stay retryable"
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-dump-fails pg-dump rollback --digest "$DIGEST"; expect_stopped safety-dump "$SAFETY"
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-archive-unreadable pg-restore rollback --digest "$DIGEST"; expect_stopped safety-dump "$SAFETY"
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-replace-fails copy-exit rollback --digest "$DIGEST"; expect_stopped replace "$SAFETY
@@ -606,8 +638,18 @@ $ROLLBACK1
 $ROLLBACK2"; expect_frozen
 
 # --- unfreeze ---
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze "" unfreeze
+UNFREEZE_VERIFY='docker-verify-brewdial-copy.env-run1'
+# Nothing to compare before a cutover has verified.
+SCENARIO_FROZEN=1 run_scenario unfreeze-no-cutover "" unfreeze
 [ "$status" = 0 ] || bad "unfreeze should pass"
+[ -z "$calls" ] || bad "no cutover, so nothing to compare: [$calls]"
+expect_not_frozen
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
+
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze "" unfreeze --digest "$DIGEST"
+[ "$status" = 0 ] || bad "unfreeze should pass"
+[ "$calls" = "$UNFREEZE_VERIFY" ] || bad "calls were [$calls]"
 expect_not_frozen
 [ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "after an unfreeze MySQL is stale: rollback must be refused"
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
@@ -620,11 +662,16 @@ expect_rollback_state() {
   [ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the cutover marker must survive a failed unfreeze"
 }
 
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+# MySQL differs from PostgreSQL, so it may hold writes: reopening PostgreSQL would strand them.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-mysql-differs copy-exit unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
+case "$output" in *"Run rollback to carry them over"*) ;; *) bad "the next step is missing" ;; esac
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-without-digest "" unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
 case "$output" in *"the freeze is back"*) ;; *) bad "the message must say the freeze is back" ;; esac
 
 # r4436182728: a 500 once writes are open puts the freeze back.
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-500-when-open probe-500-when-open unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-500-when-open probe-500-when-open unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
 case "$output" in *"probe answered 500, expected 404; the freeze is back"*) ;; *) bad "the message must name the 500" ;; esac
 
 # Unhealthy before it starts: nothing is touched.
@@ -632,7 +679,7 @@ SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-node-unhealthy probe
 case "$output" in *"not healthy (probe answered 500)"*) ;; *) bad "the message must say the Node API is unhealthy" ;; esac
 
 # The probe breaks part-way: the freeze is back, and the desk is told it cannot be proven.
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-probe-breaks probe-breaks unfreeze; expect_stopped unfreeze ""; expect_rollback_state
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-probe-breaks probe-breaks unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
 case "$output" in *"writes may be open"*) ;; *) bad "the message must warn that writes may be open" ;; esac
 
 # What each failed unfreeze leaves behind passes the rollback preflight.
@@ -648,7 +695,7 @@ expect_no_secret
 before=$failures
 
 # A repeated unfreeze still finishes.
-SCENARIO_VERIFIED=1 run_scenario unfreeze-repeated "" unfreeze
+SCENARIO_VERIFIED=1 run_scenario unfreeze-repeated "" unfreeze --digest "$DIGEST"
 [ "$status" = 0 ] || bad "a repeated unfreeze should pass"
 [ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a repeated unfreeze must clear the marker"
 expect_not_frozen
