@@ -30,8 +30,10 @@ CUTOVER_MARKER="$FREEZE_FILE.cutover-verified"
 BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
 DRAIN_SECONDS="${PHASE4_DRAIN_SECONDS:-5}"
-NODE_URL="http://127.0.0.1:8020"
-KT_URL="http://127.0.0.1:8021"
+NODE_PORT=8020
+KT_PORT=8021
+NODE_URL="http://127.0.0.1:$NODE_PORT"
+KT_URL="http://127.0.0.1:$KT_PORT"
 IMAGE="ghcr.io/mgh3326/brewdial-api-kt"
 KT_SERVICE="brewdial-api-kt"
 PROBE_PATH="/api/write-freeze-probe"
@@ -100,12 +102,43 @@ check_env_file() {
   done
 }
 
+# The service cloudflared itself resolves for a URL, from the file it loads.
+cloudflared_service() {
+  cloudflared tunnel --config "$CLOUDFLARED_CONFIG" ingress rule "$1" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*service:[[:space:]]*//p' | head -n 1 || true
+}
+
+# Public traffic must reach the Node API and nothing may reach api-kt. Text in the
+# file proves neither, so cloudflared resolves every host in an active rule and the
+# catch-all, and the running process must have loaded this version of the file.
 check_cloudflared_on_node() {
+  local active host path service on_node=0 started
   [ -r "$CLOUDFLARED_CONFIG" ] || fail "$CLOUDFLARED_CONFIG is missing"
-  grep -q "$NODE_URL" "$CLOUDFLARED_CONFIG" || fail "cloudflared must point at the Node API ($NODE_URL)"
-  if grep -q "$KT_URL" "$CLOUDFLARED_CONFIG"; then
-    fail "cloudflared still points at api-kt ($KT_URL); point it at $NODE_URL first"
+  command -v cloudflared >/dev/null || fail "cloudflared is not installed"
+
+  active="$(sed -E 's/(^|[[:space:]])#.*$//' "$CLOUDFLARED_CONFIG")"
+  # Also covers a rule limited by path, which resolving a URL could miss.
+  if grep -qE "service:.*:$KT_PORT([/[:space:]\"']|\$)" <<<"$active"; then
+    fail "an active cloudflared rule points at api-kt (:$KT_PORT); point it at $NODE_URL first"
   fi
+  for host in $(sed -nE "s/^[[:space:]-]*hostname:[[:space:]]*[\"']?([^\"'[:space:]]+).*/\\1/p" <<<"$active") phase4-no-such-host.invalid; do
+    host="${host/#\*./phase4.}"
+    for path in / /api/health; do
+      service="$(cloudflared_service "https://$host$path")"
+      [ -n "$service" ] || fail "cloudflared resolved no rule for $host$path (is $CLOUDFLARED_CONFIG valid?)"
+      case "$service" in
+        *:"$KT_PORT" | *:"$KT_PORT"/*) fail "cloudflared sends $host$path to api-kt ($service); point it at $NODE_URL first" ;;
+        *:"$NODE_PORT" | *:"$NODE_PORT"/*) on_node=1 ;;
+      esac
+    done
+  done
+  [ "$on_node" = 1 ] || fail "no cloudflared rule sends traffic to the Node API ($NODE_URL)"
+
+  systemctl is-active --quiet cloudflared || fail "cloudflared is not running"
+  started="$(systemctl show cloudflared --property=ActiveEnterTimestamp --value)"
+  started="$(date -d "$started" +%s 2>/dev/null)" || fail "cannot read when cloudflared started"
+  [ "$started" -ge "$(stat -c %Y "$CLOUDFLARED_CONFIG")" ] \
+    || fail "$CLOUDFLARED_CONFIG changed after cloudflared started: restart it, or it still routes by the old file"
 }
 
 check_tools() {

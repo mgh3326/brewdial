@@ -291,7 +291,7 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 
 | Step | What it does | Passes when |
 |---|---|---|
-| `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared points at `:8020`, api-kt is on blue with this digest, and the freeze probe answers |
+| `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared routes to `:8020` and nothing to `:8021`, api-kt is on blue with this digest, and the freeze probe answers |
 | `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze` | `POST /api/write-freeze-probe` on `:8020` answers 503 |
 | `copy` | Copies PostgreSQL → MySQL in one PostgreSQL snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
 | `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
@@ -299,6 +299,11 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 | `parity` | Compares the §4.2 reads and one bean and recipe, Node on PostgreSQL against api-kt on MySQL | Same after the README's allowed differences |
 | `final-verify` | Compares both databases again | `COPY_VERIFY_OK`: nothing wrote to either side during the window |
 | `done` | Prints the cloudflared command | The desk runs it (§4.4) |
+
+**How the script reads cloudflared.** It asks `cloudflared tunnel ingress rule`
+to resolve every host in an active rule and the catch-all, so comments and unused
+keys do not count. A rule limited by path that points at `:8021` also stops it.
+`cloudflared` must be running and must have started after the file last changed.
 
 **What the freeze does.** While the file exists, the Node API answers 503 with
 `Retry-After` to every method except `GET`, `HEAD` and `OPTIONS`. Reads keep

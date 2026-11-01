@@ -60,6 +60,41 @@ printf 'SEQUENCE\tSOURCE_VALUE\tTARGET_VALUE\tRESULT\nrecipe_code_seq\t42\t42\tO
 echo "COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15 sequences=1"
 EOF
 
+# A small stand-in for cloudflared's rule matching; the matrix below also runs the real one.
+cat >"$work/bin/cloudflared" <<'EOF'
+#!/usr/bin/env bash
+config=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) config="$2"; shift ;;
+    rule) url="$2"; shift ;;
+  esac
+  shift
+done
+rules="$(sed -E 's/(^|[[:space:]])#.*$//' "$config" | awk '
+  /^[^[:space:]]/ { in_ingress = ($0 ~ /^ingress:/); next }
+  !in_ingress { next }
+  /hostname:/ { sub(/.*hostname:[[:space:]]*/, ""); gsub(/["\047]/, ""); host = $0; next }
+  /service:/ { sub(/.*service:[[:space:]]*/, ""); print (host == "" ? "*" : host) " " $0; host = "" }
+')"
+target="${url#https://}"; target="${target%%/*}"
+printf '%s\n' "$rules" | while read -r host service; do
+  if [ "$host" = '*' ] || [ "$host" = "$target" ]; then
+    printf 'Matched rule\n\tservice: %s\n' "$service"
+    break
+  fi
+done
+EOF
+
+cat >"$work/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[ "${STUB_CF_STATE:-}" = stopped ] && [ "$1" = is-active ] && exit 3
+[ "$1" = is-active ] && exit 0
+offset=60
+[ "${STUB_CF_STATE:-}" = stale ] && offset=-3600
+date -d "@$(($(date +%s) + offset))" '+%a %Y-%m-%d %H:%M:%S %Z'
+EOF
+
 # pg_dump through sudo, and the archive check.
 cat >"$work/bin/sudo" <<'EOF'
 #!/usr/bin/env bash
@@ -161,6 +196,8 @@ esac
 EOF
 chmod +x "$work"/bin/*
 
+bin_path="$work/bin"
+
 # Each scenario gets fresh state. Sets: output, status, calls.
 run_scenario() {
   local name="$1" fail="$2"
@@ -168,8 +205,8 @@ run_scenario() {
   # Taken in and cleared here, so that no shell or mode can carry one into the next scenario.
   local color="${SCENARIO_COLOR:-blue}" frozen="${SCENARIO_FROZEN:-}" verified="${SCENARIO_VERIFIED:-}"
   local ingress="${SCENARIO_INGRESS:-http://127.0.0.1:8020}" mutate="${SCENARIO_MUTATE:-}"
-  local active_digest="${SCENARIO_ACTIVE_DIGEST:-}" not_root="${SCENARIO_NOT_ROOT:-}"
-  unset SCENARIO_COLOR SCENARIO_FROZEN SCENARIO_VERIFIED SCENARIO_INGRESS SCENARIO_MUTATE SCENARIO_ACTIVE_DIGEST SCENARIO_NOT_ROOT
+  local active_digest="${SCENARIO_ACTIVE_DIGEST:-}" not_root="${SCENARIO_NOT_ROOT:-}" cf_state="${SCENARIO_CF_STATE:-}"
+  unset SCENARIO_COLOR SCENARIO_FROZEN SCENARIO_VERIFIED SCENARIO_INGRESS SCENARIO_MUTATE SCENARIO_ACTIVE_DIGEST SCENARIO_NOT_ROOT SCENARIO_CF_STATE
   scenario="$work/$name"
   rm -rf "$scenario"
   mkdir -p "$scenario/env" "$scenario/state" "$scenario/freeze" "$scenario/log"
@@ -189,11 +226,11 @@ EOF
   echo "$color" >"$scenario/state/color"
   [ "$frozen" = 1 ] && touch "$scenario/freeze/write-freeze"
   [ "$verified" = 1 ] && touch "$scenario/freeze/write-freeze.cutover-verified"
-  printf 'ingress:\n  - service: %s\n' "$ingress" >"$scenario/config.yml"
+  printf 'tunnel: test\ningress:\n  - hostname: api.example.test\n    service: %s\n  - service: http_status:404\n' "$ingress" >"$scenario/config.yml"
   [ -n "$mutate" ] && (cd "$scenario" && eval "$mutate")
   : >"$scenario/state/calls"
 
-  output="$(PATH="$work/bin:$PATH" \
+  output="$(PATH="$bin_path:$PATH" STUB_CF_STATE="$cf_state" \
     STUB_STATE="$scenario/state" STUB_SECRET="$SECRET" STUB_FAIL="$fail" STUB_DIGEST="$DIGEST" \
     STUB_FREEZE="$scenario/freeze/write-freeze" STUB_KT_ENV="$scenario/env/brewdial-api-kt.env" \
     STUB_ACTIVE_DIGEST="$active_digest" STUB_NOT_ROOT="$not_root" \
@@ -284,6 +321,149 @@ expect_not_frozen
 [ -e "$scenario/env/brewdial-copy.env" ] || bad "the next scenario inherited the mutation"
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
+
+# --- what cloudflared really routes, not what the file happens to mention ---
+mkdir -p "$work/configs"
+write_config() { cat >"$work/configs/$1.yml"; }
+write_config comment-decoy <<'EOF'
+tunnel: test
+ingress:
+  # - hostname: api.example.test
+  #   service: http://127.0.0.1:8020
+  - hostname: api.example.test
+    service: http://127.0.0.1:8021
+  - service: http_status:404
+EOF
+write_config inline-decoy <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8021 # http://127.0.0.1:8020
+  - service: http_status:404
+EOF
+write_config old-key-decoy <<'EOF'
+tunnel: test
+old_ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8021
+  - service: http_status:404
+EOF
+write_config second-host-on-kt <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - hostname: old-api.example.test
+    service: http://127.0.0.1:8021
+  - service: http_status:404
+EOF
+write_config catch-all-on-kt <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - service: http://127.0.0.1:8021
+EOF
+write_config path-rule-on-kt <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    path: /agent/.*
+    service: http://127.0.0.1:8021
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - service: http_status:404
+EOF
+write_config localhost-on-kt <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://localhost:8021
+  - service: http_status:404
+EOF
+write_config nothing-on-node <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:30020
+  - service: http_status:404
+EOF
+write_config invalid-no-catch-all <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+EOF
+write_config kt-only-in-a-comment <<'EOF'
+tunnel: test
+ingress:
+  # - hostname: api.example.test
+  #   service: http://127.0.0.1:8021
+  - hostname: "api.example.test" # the API
+    service: http://127.0.0.1:8020
+  - service: http_status:404
+EOF
+write_config other-service-too <<'EOF'
+tunnel: test
+ingress:
+  - hostname: api.example.test
+    service: http://127.0.0.1:8020
+  - hostname: other.example.test
+    service: http://127.0.0.1:9000
+  - hostname: "*.example.test"
+    service: http://127.0.0.1:8020
+  - service: http_status:404
+EOF
+
+ingress_matrix() {
+  local kind="$1" config
+  for config in comment-decoy inline-decoy old-key-decoy second-host-on-kt catch-all-on-kt path-rule-on-kt localhost-on-kt nothing-on-node invalid-no-catch-all; do
+    SCENARIO_MUTATE="cp '$work/configs/$config.yml' config.yml" run_scenario "$kind-$config" "" cutover --digest "$DIGEST" --preflight
+    expect_stopped preflight ""
+    expect_not_frozen
+  done
+  # r4436210966: the reviewer's case, on the command that replaces PostgreSQL.
+  SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_MUTATE="cp '$work/configs/comment-decoy.yml' config.yml" \
+    run_scenario "$kind-rollback-comment-decoy" "" rollback --digest "$DIGEST"
+  expect_stopped preflight ""
+  for config in kt-only-in-a-comment other-service-too; do
+    SCENARIO_MUTATE="cp '$work/configs/$config.yml' config.yml" run_scenario "$kind-$config" "" cutover --digest "$DIGEST" --preflight
+    [ "$status" = 0 ] || bad "this config sends traffic to the Node API"
+    [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+    before=$failures
+  done
+}
+
+ingress_matrix stub
+
+# The same matrix through the real cloudflared, so the stand-in cannot hide a wrong assumption.
+CLOUDFLARED_IMAGE='docker.io/cloudflare/cloudflared:2024.12.2@sha256:cb38f3f30910a7d51545118a179b8516eb7066eac61855d62ce6ed733c54ce70'
+if command -v docker >/dev/null && docker image inspect "$CLOUDFLARED_IMAGE" >/dev/null 2>&1 || docker pull -q "$CLOUDFLARED_IMAGE" >/dev/null 2>&1; then
+  mkdir -p "$work/real-bin"
+  cat >"$work/real-bin/cloudflared" <<EOF
+#!/usr/bin/env bash
+exec "$(command -v docker)" run --rm --network none --user "$(id -u)" -v "\$(dirname "\$PHASE4_CLOUDFLARED_CONFIG"):\$(dirname "\$PHASE4_CLOUDFLARED_CONFIG"):ro" "$CLOUDFLARED_IMAGE" "\$@"
+EOF
+  chmod +x "$work/real-bin/cloudflared"
+  bin_path="$work/real-bin:$work/bin"
+  ingress_matrix real
+  bin_path="$work/bin"
+elif [ "${PHASE4_REQUIRE_REAL_CLOUDFLARED:-}" = 1 ]; then
+  echo "FAIL the real cloudflared is required but docker cannot run it"
+  failures=$((failures + 1))
+else
+  echo "skip the real cloudflared matrix: docker cannot run it"
+fi
+
+# The running process must have loaded this file.
+SCENARIO_CF_STATE=stale run_scenario cloudflared-not-restarted "" cutover --digest "$DIGEST" --preflight; expect_stopped preflight ""
+case "$output" in *"restart it"*) ;; *) bad "the message must say to restart cloudflared" ;; esac
+SCENARIO_CF_STATE=stopped run_scenario cloudflared-stopped "" cutover --digest "$DIGEST" --preflight; expect_stopped preflight ""
+SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_CF_STATE=stale run_scenario rollback-cloudflared-not-restarted "" rollback --digest "$DIGEST"; expect_stopped preflight ""
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 SCENARIO_CF_STATE=stale run_scenario unfreeze-cloudflared-not-restarted "" unfreeze; expect_stopped unfreeze ""; expect_frozen
 
 # --- preflight changes nothing ---
 run_scenario preflight "" cutover --digest "$DIGEST" --preflight
