@@ -111,6 +111,7 @@ case "$url" in
   */api/write-freeze-probe)
     if [ "${STUB_FAIL:-}" = no-switch ]; then printf '404'
     elif [ "${STUB_FAIL:-}" = old-node ]; then printf '401'
+    elif [ "${STUB_FAIL:-}" = stuck-frozen ]; then printf '503'
     elif [ -e "$STUB_FREEZE" ]; then printf '503'
     else printf '404'
     fi
@@ -121,17 +122,34 @@ case "$url" in
     ;;
   *:8020/api/beans)
     if [ "${STUB_FAIL:-}" = order ]; then echo '[{"id":"b1"},{"id":"b2"}]'
+    elif [ "${STUB_FAIL:-}" = nested-in-list ]; then echo '[{"id":"b1","flavors":["a","b"]}]'
     else echo '[{"id":"b1","recipe_count":"2","created_at":"2026-03-01T01:02:03.654Z"}]'
     fi
     ;;
   *:8021/api/beans)
     if [ "${STUB_FAIL:-}" = order ]; then echo '[{"id":"b2"},{"id":"b1"}]'
+    elif [ "${STUB_FAIL:-}" = nested-in-list ]; then echo '[{"id":"b1","flavors":["b","a"]}]'
     elif [ "${STUB_FAIL:-}" = parity ]; then echo '[{"id":"b1","recipe_count":3,"created_at":"2026-03-01T01:02:03.654321Z"}]'
     else echo '[{"id":"b1","recipe_count":2,"created_at":"2026-03-01T01:02:03.654321Z"}]'
     fi
     ;;
   *:802[01]/api/recipes\?limit=1) echo '[{"code":"COF-0001"}]' ;;
-  *:802[01]/api/recipes\?limit=100) echo '[{"code":"COF-0001"}]' ;;
+  *:8020/api/recipes\?limit=100)
+    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0001"},{"code":"COF-0002"}]'
+    else echo '[{"code":"COF-0001"}]'
+    fi
+    ;;
+  *:8021/api/recipes\?limit=100)
+    if [ "${STUB_FAIL:-}" = recipe-order ]; then echo '[{"code":"COF-0002"},{"code":"COF-0001"}]'
+    else echo '[{"code":"COF-0001"}]'
+    fi
+    ;;
+  *:8020/api/recipes/COF-0001) echo '{"code":"COF-0001","steps":[{"t":0},{"t":45}]}' ;;
+  *:8021/api/recipes/COF-0001)
+    if [ "${STUB_FAIL:-}" = steps-order ]; then echo '{"code":"COF-0001","steps":[{"t":45},{"t":0}]}'
+    else echo '{"code":"COF-0001","steps":[{"t":0},{"t":45}]}'
+    fi
+    ;;
   *) echo '[]' ;;
 esac
 EOF
@@ -280,6 +298,10 @@ expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 run_scenario content-with-accept parity cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
+# --accept-order covers the order of a name-sorted list and nothing else.
+run_scenario steps-order-with-accept steps-order cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
+run_scenario nested-in-list-with-accept nested-in-list cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
+run_scenario recipe-list-with-accept recipe-order cutover --digest "$DIGEST" --accept-order; expect_stopped parity "$c3"; expect_frozen
 
 # --- --replace-target is the only way to overwrite the target ---
 run_scenario replace-target "" cutover --digest "$DIGEST" --replace-target
@@ -334,6 +356,15 @@ expect_not_frozen
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 SCENARIO_FROZEN=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario unfreeze-traffic-on-kt "" unfreeze; expect_stopped unfreeze ""; expect_frozen
+
+# A failed unfreeze must not take the rollback away: PostgreSQL never reopened.
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze; expect_stopped unfreeze ""
+[ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the cutover marker must survive a failed unfreeze"
+SCENARIO_COLOR=green SCENARIO_VERIFIED=1 run_scenario rollback-after-failed-unfreeze stuck-frozen rollback --digest "$DIGEST" --preflight
+[ "$status" = 0 ] || bad "rollback must stay available after a failed unfreeze"
+expect_no_secret
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"

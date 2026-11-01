@@ -150,10 +150,19 @@ fetch_normalised() {
   curl -fsS -m 20 "$1" | jq -S "$PARITY_FILTER"
 }
 
-# PostgreSQL and MySQL may sort names differently (runbook 4.3).
+# The lists that sort by a value the two databases can order differently: names
+# by collation, and continuum_position by where NULL goes (runbook 4.3).
+order_may_differ() {
+  case "$1" in
+    /api/beans | /api/grinders | /api/drippers) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Sorts the endpoint's own list only. Arrays inside a row keep their order.
 same_when_sorted() {
-  local sort_arrays='walk(if type == "array" then sort else . end)'
-  [ "$(jq -S "$sort_arrays" "$1")" = "$(jq -S "$sort_arrays" "$2")" ]
+  local sort_list='if type == "array" then sort else . end'
+  [ "$(jq -S "$sort_list" "$1")" = "$(jq -S "$sort_list" "$2")" ]
 }
 
 compare_path() {
@@ -164,7 +173,7 @@ compare_path() {
   fetch_normalised "$KT_URL$path" >"$kt_out" || fail "api-kt did not answer $path"
   if cmp -s "$node_out" "$kt_out"; then
     log "same: $path"
-  elif [ "$ACCEPT_ORDER" = 1 ] && same_when_sorted "$node_out" "$kt_out"; then
+  elif [ "$ACCEPT_ORDER" = 1 ] && order_may_differ "$path" && same_when_sorted "$node_out" "$kt_out"; then
     log "same apart from order (--accept-order): $path"
   else
     diff -u "$node_out" "$kt_out" | head -40 || true
@@ -319,9 +328,10 @@ unfreeze() {
   step unfreeze "open writes on the Node API"
   [ "$(id -u)" = 0 ] || fail "run this with sudo"
   check_cloudflared_on_node
+  rm -f "$FREEZE_FILE"
+  [ "$(freeze_probe)" = 404 ] || fail "the Node API is still frozen (probe did not answer 404); rollback stays available"
   # PostgreSQL takes writes again, so MySQL is stale from here on.
-  rm -f "$CUTOVER_MARKER" "$FREEZE_FILE"
-  [ "$(freeze_probe)" = 404 ] || fail "the Node API is still frozen (probe did not answer 404)"
+  rm -f "$CUTOVER_MARKER"
   log "PHASE4_UNFROZEN"
 }
 

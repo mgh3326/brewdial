@@ -188,9 +188,14 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   ```sh
   sudo install -d -m 0755 /var/lib/brewdial /var/lib/brewdial/freeze
   sudo install -m 0644 deploy/oci/shiftgate/services.yaml /etc/shiftgate/services.yaml
-  sudo shiftgate deploy brewdial-api --digest sha256:<node digest>
+  git push origin main:production     # the follower deploys it within a few minutes
+  sudo shiftgate status               # brewdial-api runs the new digest
   curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8020/api/write-freeze-probe   # expect 404
   ```
+- **No deploys during the window.** Pause the Dagu job that runs `shiftgate follow
+  brewdial-api --tag production`, and do not move `production`, from the start of
+  the window until the rollback window closes. A deploy starts a new Node image,
+  which runs `node-pg-migrate up` against PostgreSQL before it serves.
 - **Env file for `brewdial-api-kt`.** Create
   `/etc/shiftgate/brewdial-api-kt.env` (`0600`) with `AGENT_TOKEN`,
   `SENTRY_DSN` and, first, the **PostgreSQL** `DATABASE_URL`
@@ -338,10 +343,12 @@ sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh unfreeze
 overwrite live MySQL by accident. Only `--replace-target` replaces it.
 
 **If `parity` shows only a different order.** PostgreSQL and MySQL may sort
-`name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation).
-Decide whether that is acceptable. To accept it, retry as above and add
-`--accept-order`. The script still stops on any difference in content, and it
-reports each accepted path.
+`name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation), and
+they place a NULL `continuum_position` differently. Decide whether that is
+acceptable. To accept it, retry as above and add `--accept-order`. It covers only
+the order of the rows in `/api/beans`, `/api/grinders` and `/api/drippers`. The
+script still stops on any other order difference, such as recipe steps or the
+recipe list, and on any difference in content. It reports each accepted path.
 
 ### 4.4 Switch traffic (desk)
 
@@ -358,8 +365,10 @@ reports each accepted path.
    can diverge there while it is the rollback target.
 4. Move the backup timers to HeatWave now (§4.6). PostgreSQL no longer changes,
    and the timers do not cover the live data until you do.
-5. Point CI at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
-   deploy `brewdial-api-kt`. Do this in a follow-up PR, after the window.
+5. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
+   move its `production` tag, and change the Dagu job to follow `brewdial-api-kt`.
+   Do this in a follow-up PR, after the window. Do not run any follower for
+   api-kt until then, because a deploy replaces the blue rollback colour.
 
 ### 4.5 Rollback: full copy MySQL → PostgreSQL
 
@@ -391,6 +400,8 @@ after the cutover all arrive, and the sequence continues where MySQL stopped.
      because the next deploy reads it. Then run `sudo shiftgate rollback
      brewdial-api-kt`, which starts the kept blue container with its PostgreSQL
      env, and point cloudflared at `:8021`. The Node API stays frozen.
+
+   If the Node API serves again, resume the Dagu follower.
 4. **Point the backup timers back at PostgreSQL** if §4.6 already ran:
    ```sh
    sudo sed -i 's#backup-heatwave.sh#backup.sh#' /etc/systemd/system/brewdial-backup.service
@@ -461,6 +472,7 @@ and §4.6 has run for at least one backup and one verify. api-kt keeps its Postg
    select usename, client_addr, count(*) from pg_stat_activity where datname = 'brewdial' group by 1, 2;
    ```
    ```sh
+   # First remove the Dagu job that follows brewdial-api, or it restarts a colour.
    sudo docker stop shiftgate-brewdial-api-blue shiftgate-brewdial-api-green shiftgate-brewdial-api-kt-blue
    sudo systemctl disable --now brewdial-api    # the legacy systemd unit, if it is still installed
    sudo systemctl disable --now k3s             # if phase 3 left it enabled

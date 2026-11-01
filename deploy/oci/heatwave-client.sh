@@ -7,6 +7,25 @@ MYSQL_CLIENT_IMAGE="${MYSQL_CLIENT_IMAGE:-docker.io/library/mysql:8.4@sha256:a02
 HEATWAVE_TMP=""
 HEATWAVE_DB=""
 
+# True for well-formed %XX pairs with no control character that an option file
+# line could not hold.
+percent_encoding_ok() {
+  local malformed='%($|.$|[^0-9A-Fa-f]|.[^0-9A-Fa-f])' control='%0[0aAdD]'
+  [[ ! "$1" =~ $malformed ]] && [[ ! "$1" =~ $control ]]
+}
+
+# Decodes %XX pairs and nothing else: a backslash in the value stays a backslash.
+percent_decode() {
+  local value="${1//\\/\\\\}"
+  printf '%b' "${value//%/\\x}"
+}
+
+# Double-quotes a value for the option file.
+option_value() {
+  local value="${1//\\/\\\\}"
+  printf '"%s"' "${value//\"/\\\"}"
+}
+
 # Writes the option file from the DATABASE_URL line of an env file.
 heatwave_load() {
   local env_file="$1" url user password host port query ssl_mode=""
@@ -20,18 +39,20 @@ heatwave_load() {
   HEATWAVE_DB="${BASH_REMATCH[7]}"
   query="${BASH_REMATCH[9]}"
   [[ "&$query" =~ \&sslMode=([A-Za-z_]+) ]] && ssl_mode="${BASH_REMATCH[1]}"
+  if ! percent_encoding_ok "$user" || ! percent_encoding_ok "$password"; then
+    echo "DATABASE_URL in $env_file has an invalid percent-encoded credential" >&2
+    return 1
+  fi
   # A URL percent-encodes reserved characters; the option file needs them plain.
-  user="$(printf '%b' "${user//%/\\x}")"
-  password="$(printf '%b' "${password//%/\\x}")"
-  password="${password//\\/\\\\}"
-  password="${password//\"/\\\"}"
+  user="$(percent_decode "$user")"
+  password="$(percent_decode "$password")"
   HEATWAVE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/heatwave-client.XXXXXX")"
   (
     umask 077
     {
       echo '[client]'
-      printf 'user="%s"\n' "$user"
-      printf 'password="%s"\n' "$password"
+      printf 'user=%s\n' "$(option_value "$user")"
+      printf 'password=%s\n' "$(option_value "$password")"
       printf 'host=%s\nport=%s\n' "$host" "$port"
       printf 'default-character-set=utf8mb4\n'
       [ -z "$ssl_mode" ] || printf 'ssl-mode=%s\n' "$ssl_mode"
