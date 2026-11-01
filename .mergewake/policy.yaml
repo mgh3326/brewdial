@@ -2,6 +2,7 @@ version: 1
 enabled: true
 required_checks:
   - 'Typecheck, Lint & Test'
+  - 'API tests (PostgreSQL + MySQL)'
   - 'GitGuardian Security Checks'
 blocking:
   - paths: ['.mergewake/**']
