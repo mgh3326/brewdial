@@ -1,5 +1,6 @@
 package com.brewdial.api.agent
 
+import com.brewdial.api.config.VendorSql
 import com.brewdial.api.recipe.Recipe
 import com.brewdial.api.validation.CreateRecipeInput
 import jakarta.persistence.EntityManager
@@ -15,7 +16,8 @@ import java.util.UUID
  */
 @Repository
 class AgentRecipeWriteRepository(
-    private val entityManager: EntityManager
+    private val entityManager: EntityManager,
+    private val sql: VendorSql
 ) {
     @Transactional
     fun insertAgentRecipe(input: CreateRecipeInput): Recipe {
@@ -37,9 +39,10 @@ class AgentRecipeWriteRepository(
             version = 1
             status = "active"
         }
-        entityManager.createNativeQuery("select set_config('bd.owner_write_ok','on',true)").singleResult
-        entityManager.persist(recipe)
-        entityManager.flush()
+        sql.withOwnerWrites(entityManager) {
+            entityManager.persist(recipe)
+            entityManager.flush()
+        }
         entityManager.refresh(recipe)
         return recipe
     }

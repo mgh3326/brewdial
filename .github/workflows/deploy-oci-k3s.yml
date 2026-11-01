@@ -1,0 +1,314 @@
+name: Deploy OCI (k3s, DEPRECATED)
+
+# DEPRECATED (ROB-1435): production deploys go through shiftgate
+# (.github/workflows/deploy-oci.yml). This workflow stays, manual-only, until
+# the k3s cutover is finished, so the k3s Deployment can still be re-pointed to
+# a known digest for rollback. Delete it together with deploy/oci/k3s/ in the
+# k3s-removal step of docs/runbooks/oci-heatwave-cutover.md.
+#
+# ROB-1214 — image-only production deploy.
+#
+# Path: GitHub Actions → CF Access (Service Token) → SSH → box-local kubectl.
+# Scope: digest-pinned `kubectl set image` + ConfigMap GIT_SHA patch.
+#   🔴 No full `kubectl apply` (manifest structure stays operator/manual).
+#   🔴 No kubeconfig in GitHub secrets (cluster-admin never leaves the box).
+#   🔴 No firewalld / k3s API exposure; no new open ports.
+#
+# Triggers:
+#   - push to `production`  → release (main is CI baseline; production = ship)
+#   - workflow_dispatch     → manual deploy / **standard rollback** (prior git_sha)
+#
+# Images are built only on `main` (see image.yml). Therefore production must be
+# a **fast-forward** of main so `sha-<short>` exists in GHCR. Merge-commit
+# promotions create a new SHA with no image → deploy fails closed (no fallback).
+
+on:
+  # No push trigger: `production` pushes deploy through shiftgate now.
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: >
+          Git commit (full or short) whose GHCR tag :sha-<7chars> to deploy.
+          Leave empty to use this workflow run's GITHUB_SHA.
+          Rollback: pass the previous healthy short/full SHA (not a force-push).
+        required: false
+        type: string
+        default: ""
+
+# Minimal top-level permissions. Job elevates packages:read only to resolve
+# the immutable GHCR digest for the release tag.
+permissions:
+  contents: read
+
+concurrency:
+  # Same group as deploy-oci.yml: never run a k3s and a shiftgate deploy at once.
+  group: deploy-oci-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPO: ghcr.io/mgh3326/brewdial
+  SSH_HOST: ssh.brewdial.robinco.dev
+  SSH_USER: opc
+  K8S_NAMESPACE: brewdial
+  K8S_DEPLOYMENT: brewdial-api
+  # Pinned cloudflared binary (linux-amd64) — checksum-verified at install.
+  CLOUDFLARED_VERSION: "2026.7.3"
+  CLOUDFLARED_SHA256: "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17"
+
+jobs:
+  deploy:
+    name: Deploy by digest (CF Access SSH → box kubectl)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history: resolve git_sha, main-ancestor guard, short SHA.
+          fetch-depth: 0
+
+      - name: Resolve target SHA and GHCR digest
+        id: target
+        env:
+          INPUT_SHA: ${{ inputs.git_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # --- select candidate commit ---
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_SHA}" ]; then
+            CANDIDATE="${INPUT_SHA}"
+          else
+            # production push, or dispatch with empty input → this ref's HEAD
+            CANDIDATE="${GITHUB_SHA}"
+          fi
+
+          # Full history is checked out, so every commit on main resolves here.
+          if ! git cat-file -e "${CANDIDATE}^{commit}" 2>/dev/null; then
+            echo "ERROR: git_sha '${CANDIDATE}' is not a resolvable commit"
+            exit 1
+          fi
+          FULL="$(git rev-parse "${CANDIDATE}")"
+          SHORT="$(git rev-parse --short=7 "${CANDIDATE}")"
+
+          TAG="sha-${SHORT}"
+          echo "Target: full=${FULL} short=${SHORT} tag=${TAG} event=${EVENT_NAME}"
+
+          # --- guard: deploy target must be on origin/main history ---
+          # Blocks shipping a commit that never landed on main (unreviewed tip).
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${FULL}" origin/main; then
+            echo "ERROR: commit ${FULL} is not reachable from origin/main (not an ancestor)."
+            echo "       Refusing to deploy a SHA that is not on main's history."
+            exit 1
+          fi
+          echo "OK: ${SHORT} is an ancestor of origin/main (or is main)"
+
+          # --- resolve immutable digest from GHCR (no tag deploy, no fallback) ---
+          echo "Resolving GHCR digest for ${IMAGE_REPO}:${TAG}"
+
+          TOKEN="$(curl -fsSL \
+            -u "${GITHUB_ACTOR}:${GITHUB_TOKEN}" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:mgh3326/brewdial:pull" \
+            | jq -r .token)"
+          if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+            echo "ERROR: failed to obtain GHCR pull token"
+            exit 1
+          fi
+
+          # Capture status + headers. Missing manifest must fail loudly — never
+          # substitute another tag/digest (no "nearest ancestor" fallback).
+          HDR_FILE="$(mktemp)"
+          HTTP_CODE="$(curl -sS -o /dev/null -D "${HDR_FILE}" -w '%{http_code}' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/mgh3326/brewdial/manifests/${TAG}" || true)"
+
+          DIGEST="$(tr -d '\r' < "${HDR_FILE}" \
+            | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2; exit }')"
+          rm -f "${HDR_FILE}"
+
+          if [ "${HTTP_CODE}" != "200" ] || [ -z "${DIGEST}" ]; then
+            echo "ERROR: no image for ${TAG} (HTTP ${HTTP_CODE}, digest=${DIGEST:-empty})"
+            echo "       production must be a fast-forward of main so GHCR has ${IMAGE_REPO}:${TAG}."
+            echo "       image.yml only builds on main push / PRs — a merge-commit promotion"
+            echo "       creates a new SHA with no image. Use: git push origin main:production"
+            echo "       Do NOT silently deploy another digest."
+            exit 1
+          fi
+
+          case "${DIGEST}" in
+            sha256:*) ;;
+            *)
+              echo "ERROR: no image for ${TAG} — unexpected digest value: ${DIGEST}"
+              echo "       production must be a fast-forward of main"
+              exit 1
+              ;;
+          esac
+
+          IMAGE_REF="${IMAGE_REPO}@${DIGEST}"
+          {
+            echo "full_sha=${FULL}"
+            echo "short_sha=${SHORT}"
+            echo "digest=${DIGEST}"
+            echo "image_ref=${IMAGE_REF}"
+            echo "image_tag=${TAG}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Resolved release:"
+          echo "  GIT_SHA (short) = ${SHORT}"
+          echo "  full SHA        = ${FULL}"
+          echo "  image tag       = ${TAG}"
+          echo "  image ref       = ${IMAGE_REF}"
+
+      - name: Install cloudflared (pinned + checksum)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o cloudflared \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          echo "${CLOUDFLARED_SHA256}  cloudflared" | sha256sum --check -
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/cloudflared
+          cloudflared version
+
+      - name: Configure deploy SSH key + ProxyCommand
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.ssh"
+          chmod 700 "${HOME}/.ssh"
+          # Preserve key body; ensure trailing newline for OpenSSH.
+          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/deploy_key"
+          chmod 600 "${HOME}/.ssh/deploy_key"
+          # Validate key parses without printing material.
+          ssh-keygen -y -f "${HOME}/.ssh/deploy_key" >/dev/null
+
+          cat > "${HOME}/.ssh/config" <<EOF
+          Host deploy-oci
+            HostName ${SSH_HOST}
+            User ${SSH_USER}
+            IdentityFile ${HOME}/.ssh/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ${HOME}/.ssh/known_hosts
+            ProxyCommand cloudflared access ssh --hostname %h
+          EOF
+          chmod 600 "${HOME}/.ssh/config"
+
+      - name: Deploy (set image + GIT_SHA + rollout + health + evidence)
+        env:
+          # Map GitHub secret names → cloudflared Access env vars (box-measured):
+          #   CF_ACCESS_CLIENT_ID     → TUNNEL_SERVICE_TOKEN_ID
+          #   CF_ACCESS_CLIENT_SECRET → TUNNEL_SERVICE_TOKEN_SECRET
+          # Header names (CF-Access-Client-Id) are different; do not confuse them.
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          IMAGE_REF: ${{ steps.target.outputs.image_ref }}
+          SHORT_SHA: ${{ steps.target.outputs.short_sha }}
+          FULL_SHA: ${{ steps.target.outputs.full_sha }}
+          DIGEST: ${{ steps.target.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          echo "Deploying ${IMAGE_REF} (GIT_SHA=${SHORT_SHA}) via CF Access SSH → box kubectl"
+          echo "CI run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "ROLLOUT_WINDOW_NOTE: set image is about to run on the box (timestamp below is CI-side)"
+          date -u +'CI_PRE_SSH_TS=%Y-%m-%dT%H:%M:%SZ'
+
+          # Quoted heredoc: remote expands. Values are shell-quoted into the
+          # remote command line so digest/SHA never re-enter unquoted.
+          # 🔴 KUBECONFIG is set inside the remote script — non-interactive SSH
+          # does not load ~/.bashrc (measured trap).
+          ssh deploy-oci \
+            "IMAGE_REF=$(printf %q "${IMAGE_REF}") SHORT_SHA=$(printf %q "${SHORT_SHA}") DIGEST=$(printf %q "${DIGEST}") FULL_SHA=$(printf %q "${FULL_SHA}") CI_RUN_URL=$(printf %q "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}") bash -s" \
+            <<'REMOTE'
+          set -euo pipefail
+
+          export KUBECONFIG="${HOME}/.kube/config"
+          echo "== preflight =="
+          echo "KUBECONFIG=${KUBECONFIG}"
+          test -r "${KUBECONFIG}"
+          kubectl config current-context
+          kubectl -n brewdial get deploy brewdial-api -o wide
+
+          echo "== before (images) =="
+          kubectl -n brewdial get deploy brewdial-api -o jsonpath='api={.spec.template.spec.containers[?(@.name=="api")].image}{"\n"}migrate={.spec.template.spec.initContainers[?(@.name=="migrate")].image}{"\n"}'
+
+          undo() {
+            echo "ERROR: deploy failed — running kubectl rollout undo"
+            kubectl -n brewdial rollout undo deploy/brewdial-api || true
+            kubectl -n brewdial rollout status deploy/brewdial-api --timeout=180s || true
+          }
+
+          echo "== patch ConfigMap GIT_SHA (before set image so new pods pick it up) =="
+          kubectl -n brewdial patch configmap brewdial-api-config --type merge \
+            -p "{\"data\":{\"GIT_SHA\":\"${SHORT_SHA}\"}}"
+
+          echo "== set image (digest-pinned; not a moving tag) =="
+          date -u +'BOX_SET_IMAGE_START=%Y-%m-%dT%H:%M:%SZ'
+          echo "api=${IMAGE_REF}"
+          echo "migrate=${IMAGE_REF}"
+          kubectl -n brewdial set image deploy/brewdial-api \
+            "api=${IMAGE_REF}" \
+            "migrate=${IMAGE_REF}"
+          date -u +'BOX_SET_IMAGE_DONE=%Y-%m-%dT%H:%M:%SZ'
+
+          echo "== rollout status =="
+          date -u +'BOX_ROLLOUT_STATUS_START=%Y-%m-%dT%H:%M:%SZ'
+          if ! kubectl -n brewdial rollout status deploy/brewdial-api --timeout=180s; then
+            date -u +'BOX_ROLLOUT_STATUS_FAIL=%Y-%m-%dT%H:%M:%SZ'
+            undo
+            exit 1
+          fi
+          date -u +'BOX_ROLLOUT_STATUS_OK=%Y-%m-%dT%H:%M:%SZ'
+
+          echo "== local health via NodePort 30020 =="
+          if ! curl -fsS --max-time 5 "http://127.0.0.1:30020/api/health"; then
+            echo
+            undo
+            exit 1
+          fi
+          echo
+          if ! curl -fsS --max-time 5 "http://127.0.0.1:30020/api/db/health"; then
+            echo
+            undo
+            exit 1
+          fi
+          echo
+
+          echo "== evidence: ConfigMap brewdial-api-config =="
+          kubectl -n brewdial get configmap brewdial-api-config -o yaml
+
+          echo "== evidence: pod imageID (must match new digest) =="
+          kubectl -n brewdial get pods -l app=brewdial-api \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" ready="}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{range .status.containerStatuses[*]}{"  container="}{.name}{" imageID="}{.imageID}{"\n"}{end}{range .status.initContainerStatuses[*]}{"  init="}{.name}{" imageID="}{.imageID}{"\n"}{end}{end}'
+          echo
+
+          echo "== evidence: deployment images after =="
+          kubectl -n brewdial get deploy brewdial-api -o jsonpath='api={.spec.template.spec.containers[?(@.name=="api")].image}{"\n"}migrate={.spec.template.spec.initContainers[?(@.name=="migrate")].image}{"\n"}'
+
+          echo "DEPLOY_OK short=${SHORT_SHA} digest=${DIGEST} full=${FULL_SHA} run=${CI_RUN_URL}"
+          REMOTE
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## Deploy OCI"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| event | \`${{ github.event_name }}\` |"
+            echo "| short SHA | \`${{ steps.target.outputs.short_sha }}\` |"
+            echo "| full SHA | \`${{ steps.target.outputs.full_sha }}\` |"
+            echo "| digest | \`${{ steps.target.outputs.digest }}\` |"
+            echo "| image ref | \`${{ steps.target.outputs.image_ref }}\` |"
+            echo "| run | ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} |"
+          } >> "${GITHUB_STEP_SUMMARY}"

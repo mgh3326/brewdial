@@ -29,7 +29,12 @@ dependencies {
 	// Boot 4-specific starter; blank sentry.dsn leaves the SDK disabled.
 	implementation("io.sentry:sentry-spring-boot-4-starter:8.53.0")
 	implementation("tools.jackson.module:jackson-module-kotlin")
+	// Schema migrations per vendor: db/migration/{postgresql,mysql}, selected by DATABASE_URL.
+	implementation("org.springframework.boot:spring-boot-starter-flyway")
+	implementation("org.flywaydb:flyway-database-postgresql")
+	implementation("org.flywaydb:flyway-mysql")
 	runtimeOnly("org.postgresql:postgresql")
+	runtimeOnly("com.mysql:mysql-connector-j")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")

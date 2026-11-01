@@ -23,12 +23,12 @@ class SavedRecipe {
     var recipeCode: String = ""
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "snapshot", columnDefinition = "jsonb")
+    @Column(name = "snapshot")
     var snapshot: String? = null
 
     @Column(name = "note")
     var note: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 }

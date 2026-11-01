@@ -41,12 +41,62 @@ class DatabaseUrlTest {
     }
 
     @Test
-    fun rejectsWrongSchemeWithClearMessage() {
+    fun rejectsUnknownSchemeWithClearMessage() {
         val exception = assertThrows(IllegalArgumentException::class.java) {
-            DatabaseUrlParser.parse("mysql://app-user:pw@localhost:3306/app")
+            DatabaseUrlParser.parse("sqlserver://app-user:pw@localhost:1433/app")
         }
 
         assertTrue(exception.message.orEmpty().contains("postgres://"))
+        assertTrue(exception.message.orEmpty().contains("mysql://"))
+    }
+
+    @Test
+    fun parsesMySqlUriWithDefaultPortAndQuery() {
+        val result = DatabaseUrlParser.parse("mysql://app-user:s3cret@db.example/app?sslMode=REQUIRED")
+
+        assertEquals(DatabaseVendor.MYSQL, result.vendor)
+        assertEquals("jdbc:mysql://db.example:3306/app?sslMode=REQUIRED", result.jdbcUrl)
+        assertEquals("app-user", result.username)
+        assertEquals("s3cret", result.password)
+    }
+
+    @Test
+    fun postgresqlSchemeAliasSelectsPostgres() {
+        val result = DatabaseUrlParser.parse("postgresql://app@db.example/app")
+
+        assertEquals(DatabaseVendor.POSTGRESQL, result.vendor)
+        assertEquals("jdbc:postgresql://db.example:5432/app", result.jdbcUrl)
+    }
+
+    @Test
+    fun mySqlUrlSelectsMySqlDriverMigrationsAndTypes() {
+        val environment = MockEnvironment().withProperty("DATABASE_URL", "mysql://app@db.example:3306/app")
+
+        DatabaseUrlEnvironmentPostProcessor().postProcessEnvironment(
+            environment,
+            SpringApplication(BrewdialApiKtApplication::class.java)
+        )
+
+        assertEquals("MYSQL", environment.getProperty(DatabaseVendor.PROPERTY))
+        assertEquals("com.mysql.cj.jdbc.Driver", environment.getProperty("spring.datasource.driver-class-name"))
+        assertEquals("classpath:db/migration/mysql", environment.getProperty("spring.flyway.locations"))
+        assertEquals("CHAR", environment.getProperty("spring.jpa.properties.hibernate.type.preferred_uuid_jdbc_type"))
+        assertNull(environment.getProperty("spring.flyway.baseline-on-migrate"))
+    }
+
+    @Test
+    fun explicitSpringPropertyOverridesVendorDefault() {
+        val environment = MockEnvironment()
+            .withProperty("DATABASE_URL", "postgres://app@db.example/app")
+            .withProperty("spring.flyway.locations", "classpath:custom")
+
+        DatabaseUrlEnvironmentPostProcessor().postProcessEnvironment(
+            environment,
+            SpringApplication(BrewdialApiKtApplication::class.java)
+        )
+
+        assertEquals("classpath:custom", environment.getProperty("spring.flyway.locations"))
+        assertEquals("true", environment.getProperty("spring.flyway.baseline-on-migrate"))
     }
 
     @Test
@@ -79,5 +129,8 @@ class DatabaseUrlTest {
         )
         assertEquals("app-user", environment.getProperty("spring.datasource.username"))
         assertEquals("s3cret", environment.getProperty("spring.datasource.password"))
+        assertEquals("org.postgresql.Driver", environment.getProperty("spring.datasource.driver-class-name"))
+        assertEquals("classpath:db/migration/postgresql", environment.getProperty("spring.flyway.locations"))
+        assertEquals("POSTGRESQL", environment.getProperty(DatabaseVendor.PROPERTY))
     }
 }

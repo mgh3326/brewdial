@@ -1,0 +1,188 @@
+table app_users
+  auth_user_id null
+  created_at not null
+  display_name null
+  id not null
+  updated_at not null
+table bd_migration_meta
+  created_at not null
+  key not null
+  value null
+table bean_photos
+  app_user_id null
+  attribution null
+  bean_id not null
+  created_at not null
+  id not null
+  sort_order not null
+  source null
+  updated_at not null
+  url not null
+table bean_purchase_links
+  active not null
+  bean_id not null
+  created_at not null
+  id not null
+  is_affiliate not null
+  link_category not null
+  price_krw null
+  sort_order not null
+  updated_at not null
+  url not null
+  vendor not null
+view bean_summaries
+  acidity
+  agtron_max
+  agtron_min
+  attrs_notes
+  attrs_source
+  body
+  decaf
+  flavor_categories
+  has_ai
+  id
+  latest_recipe_at
+  name
+  notes
+  origin
+  process
+  recipe_count
+  roast_level
+  roast_level_ord
+  roaster
+  source_url
+table beans
+  acidity null
+  agtron_max null
+  agtron_min null
+  attrs_notes null
+  attrs_source null
+  body null
+  created_at not null
+  decaf null
+  flavor_categories null
+  id not null
+  name not null
+  notes null
+  origin null
+  process null
+  roast_level null
+  roast_level_ord null
+  roaster null
+  source_url null
+  updated_at not null
+table drippers
+  class not null
+  continuum_position null
+  created_at not null
+  filter_type null
+  geometry null
+  hole_spec not null
+  id not null
+  name not null
+  notes null
+  recommended_dose_range not null
+  size_models not null
+  updated_at not null
+table feedback
+  actual null
+  bean_id null
+  comment null
+  created_at not null
+  desired_direction null
+  id not null
+  next_hint null
+  owner_id null
+  quick_tags null
+  ratings null
+  raw_comment null
+  recipe_code not null
+  source not null
+  updated_at not null
+table grinder_calibration
+  anchor_method null
+  app_user_id not null
+  created_at not null
+  from_grinder_id null
+  from_label not null
+  id not null
+  notes null
+  samples not null
+  source not null
+  to_grinder_id null
+  to_label not null
+  updated_at not null
+table grinders
+  anchor_point null
+  brew_method_ranges not null
+  created_at not null
+  id not null
+  name not null
+  notes null
+  stepless not null
+  um_per_click_est null
+  um_per_click_source null
+  updated_at not null
+  zero_ref null
+table preferences
+  created_at not null
+  default_params not null
+  dislikes not null
+  id not null
+  likes not null
+  updated_at not null
+table recipes
+  adjustment_from_previous null
+  bean_id null
+  bean_snapshot null
+  code not null
+  created_at not null
+  created_by not null
+  dripper_portability null
+  id not null
+  intent null
+  is_official not null
+  method not null
+  notes null
+  owner_id null
+  params not null
+  parent_code null
+  status not null
+  steps not null
+  superseded_by null
+  supersedes null
+  title not null
+  updated_at not null
+  version not null
+table saved_beans
+  app_user_id not null
+  bean_id not null
+  created_at not null
+  id not null
+  note null
+table saved_recipes
+  app_user_id not null
+  created_at not null
+  id not null
+  note null
+  recipe_code not null
+  snapshot null
+table user_gear
+  app_user_id not null
+  created_at not null
+  details not null
+  dripper_id null
+  grinder_id null
+  id not null
+  is_default not null
+  kind not null
+  label not null
+  updated_at not null
+table user_identities
+  app_user_id not null
+  created_at not null
+  external_key not null
+  id not null
+  provider not null
+  updated_at not null
+  verified not null

@@ -11,7 +11,11 @@ Full runbook: `docs/superpowers/plans/2026-06-23-m1-oci-provisioning-runbook.md`
 - **`brewdial-api.service`** (this dir) running, env from `/etc/brewdial/api.env` (600). Binds `127.0.0.1:3020`. `GET /api/health` + `/api/db/health` green.
 - **firewalld:** only `ssh` open (3020/5432 NOT exposed). `cloudflared` installed.
 
-## k3s runtime (production since 2026-08-06 — ROB-1214)
+## k3s runtime (production since 2026-08-06 — ROB-1214) — DEPRECATED
+
+Being replaced by shiftgate (ROB-1435): see `shiftgate/` and
+`docs/runbooks/oci-heatwave-cutover.md`. The manifests stay until cutover is
+complete so k3s remains a rollback target.
 
 Public API traffic is served by **k3s variant B** (pod network + NodePort
 30020). Manifests + full runbook: `k3s/` (`k3s/RUNBOOK.md`). Image builds:
@@ -49,8 +53,16 @@ ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
    + `brewdial-verify.timer` (the gate before decommissioning Supabase). Off-box target is the
    Mac (not OCI Object Storage) to stay within the free tier. Full procedure + DR steps:
    `docs/superpowers/plans/2026-06-29-rob-630-backup-restore-runbook.md`.
-3. **k3s CI deploy (ROB-1214 Phase 2+):** `.github/workflows/deploy-oci.yml`.
+3. **shiftgate deploy (ROB-1435, replaces k3s):** `.github/workflows/deploy-oci.yml`
+   builds the image, pushes it to GHCR and runs `shiftgate deploy brewdial-api
+   --digest <digest>` on the host over the tailnet. Host config:
+   `shiftgate/services.yaml`. Cutover, rollback and k3s removal:
+   `docs/runbooks/oci-heatwave-cutover.md`.
+4. **k3s CI deploy (ROB-1214 Phase 2+, DEPRECATED):** `.github/workflows/deploy-oci-k3s.yml`
+   (manual dispatch only).
    **`main` = CI baseline** (images). **`production` push = release**
    (fast-forward only: `git push origin main:production`). Rollback =
-   `gh workflow run deploy-oci.yml -f git_sha=<prior>`. Full procedure:
-   `k3s/RUNBOOK.md` §7.
+   `gh workflow run deploy-oci-k3s.yml -f git_sha=<prior>`. Full procedure:
+   `k3s/RUNBOOK.md` §7. After the shiftgate cutover this only changes the k3s
+   image: traffic returns to k3s only when cloudflared points back at `:30020`
+   (`docs/runbooks/oci-heatwave-cutover.md` §2).

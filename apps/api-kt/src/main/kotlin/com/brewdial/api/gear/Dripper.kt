@@ -32,26 +32,26 @@ class Dripper {
     var continuumPosition: BigDecimal? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "hole_spec", nullable = false, columnDefinition = "jsonb", insertable = false, updatable = false)
+    @Column(name = "hole_spec", nullable = false, insertable = false, updatable = false)
     var holeSpec: String = "{}"
 
     @Column(name = "filter_type")
     var filterType: String? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "recommended_dose_range", nullable = false, columnDefinition = "jsonb", insertable = false, updatable = false)
+    @Column(name = "recommended_dose_range", nullable = false, insertable = false, updatable = false)
     var recommendedDoseRange: String = "{}"
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "size_models", nullable = false, columnDefinition = "jsonb", insertable = false, updatable = false)
+    @Column(name = "size_models", nullable = false, insertable = false, updatable = false)
     var sizeModels: String = "[]"
 
     @Column(name = "notes")
     var notes: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

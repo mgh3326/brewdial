@@ -1,5 +1,12 @@
 # k3s deploy runbook — BrewDial API (ROB-1214)
 
+> **DEPRECATED (ROB-1435).** The OCI host is moving from k3s to shiftgate
+> (blue-green containers behind one HAProxy). New deploys:
+> `.github/workflows/deploy-oci.yml`; procedure:
+> [`docs/runbooks/oci-heatwave-cutover.md`](../../../docs/runbooks/oci-heatwave-cutover.md).
+> These manifests and `deploy-oci-k3s.yml` (manual dispatch only) stay until
+> that runbook's k3s-removal step, so k3s remains a rollback target.
+
 Single-node k3s on the OCI box (Oracle Linux 9.7, aarch64, SELinux Enforcing).
 Postgres stays on the **host**, outside the cluster (hard invariant — the
 ROB-630 backup + weekly verify-restore gate targets host PG).
@@ -7,7 +14,7 @@ ROB-630 backup + weekly verify-restore gate targets host PG).
 Phase 1 scope: everything here is validated in CI (`.github/workflows/k8s-validate.yml`).
 **Production cutover to variant B was completed 2026-08-06** (operator-approved).
 This document records the applied shape. **CI image deploy** is
-`.github/workflows/deploy-oci.yml` (production push + workflow_dispatch) —
+`.github/workflows/deploy-oci-k3s.yml` (workflow_dispatch only since ROB-1435) —
 see §7.
 
 > **Fact accuracy.** Values under **Confirmed** came from a single production
@@ -215,7 +222,7 @@ Actions run of `Deploy OCI` with the previous healthy commit:
 
 ```bash
 # previous healthy short or full SHA that still has ghcr.io/.../brewdial:sha-<short>
-gh workflow run deploy-oci.yml -f git_sha=<prior-sha>
+gh workflow run deploy-oci-k3s.yml -f git_sha=<prior-sha>
 # then: gh run watch  (confirm DEPLOY_OK + imageID)
 ```
 
@@ -339,17 +346,25 @@ are mounted.)
 
 ## 7. CI release procedure (ROB-1214 Phase 2+)
 
-Implemented workflow: `.github/workflows/deploy-oci.yml`.
+Implemented workflow: `.github/workflows/deploy-oci-k3s.yml`.
+
+> **Since ROB-1435 this workflow is manual-only.** A push to `production` no
+> longer deploys to k3s: it runs the shiftgate workflow `deploy-oci.yml`, which
+> is a dry run until `vars.SHIFTGATE_DEPLOY_ENABLED=true`. While k3s still
+> serves traffic, **release with an explicit dispatch** (§7.4). §7.1–§7.3
+> describe the guards and the fast-forward rule, which still apply; the
+> `production` push no longer triggers this workflow. Rolling traffic back from
+> shiftgate to k3s also needs the cloudflared step in
+> `docs/runbooks/oci-heatwave-cutover.md` §2.
 
 ### 7.1 Branch roles
 
 | Branch | Role |
 |---|---|
 | **`main`** | CI baseline. Every push/PR runs CI Gate, k8s Validation, Container Image. Images are published as `ghcr.io/mgh3326/brewdial:sha-<7chars>` **only** from main (and same-repo PR builds). |
-| **`production`** | **Release decision tip.** A push to `production` runs `Deploy OCI` and ships that commit's image digest to the live cluster. |
+| **`production`** | **Release decision tip.** A push to `production` runs the shiftgate workflow (`deploy-oci.yml`), not this one. |
 
-`main` green ≠ live. Live updates only when `production` moves (or when an
-operator runs `workflow_dispatch`).
+`main` green ≠ live. k3s updates only when an operator runs `workflow_dispatch`.
 
 ### 7.2 Standard promotion — fast-forward only
 
@@ -357,7 +372,8 @@ operator runs `workflow_dispatch`).
 # From a machine with push rights (after main is green and image exists):
 git fetch origin
 git push origin main:production
-# → Deploy OCI runs on the production push event for that SHA
+# → deploy-oci.yml (shiftgate) runs on this push. To release to k3s:
+gh workflow run deploy-oci-k3s.yml -f git_sha="$(git rev-parse origin/main)"
 ```
 
 **Why fast-forward is mandatory:** `image.yml` builds `sha-<short>` for commits
@@ -389,8 +405,8 @@ git merge-base --is-ancestor origin/production origin/main && echo "ff-ok"
 
 ### 7.3 What the deploy job does
 
-1. Resolve target SHA (`GITHUB_SHA` on production push, or `git_sha` input on
-   dispatch).
+1. Resolve target SHA (`git_sha` input, or the dispatched ref's HEAD). An
+   unresolvable SHA fails.
 2. **Guard:** target must be an ancestor of `origin/main` (on main's history).
 3. **Guard:** resolve `Docker-Content-Digest` for `sha-<7>`; missing → fail with
    the fast-forward message above (no alternate tag).
@@ -407,7 +423,7 @@ Scope is **image + GIT_SHA only**. Manifest structure changes remain manual
 
 ```bash
 # Deploy or roll back to a known-good main commit that still has a GHCR image:
-gh workflow run deploy-oci.yml -f git_sha=<full-or-short-sha>
+gh workflow run deploy-oci-k3s.yml -f git_sha=<full-or-short-sha>
 ```
 
 This is the **standard rollback** path (see §4.1). Prefer it over force-pushing
@@ -534,6 +550,6 @@ cloudflared, and verify `curl -fsS localhost:30020/api/db/health`. Leave the
 old Node Deployment in place; no Kubernetes rollback is required for the
 traffic reversal.
 
-`deploy-oci.yml` remains **Node API only**. It does not deploy, update, or
+`deploy-oci-k3s.yml` remains **Node API only**. It does not deploy, update, or
 roll back `brewdial-api-kt`; any Phase 3 Kubernetes action requires explicit
 operator attendance.

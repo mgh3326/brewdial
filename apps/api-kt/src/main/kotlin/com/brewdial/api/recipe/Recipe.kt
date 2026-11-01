@@ -34,22 +34,21 @@ class Recipe {
     var version: Int = 1
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "params", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "params", nullable = false)
     var params: String? = "{}"
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "steps", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "steps", nullable = false)
     var steps: String? = "[]"
 
     @Column(name = "bean_id")
     var beanId: String? = null
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "bean_snapshot", columnDefinition = "jsonb")
+    @Column(name = "bean_snapshot")
     var beanSnapshot: String? = null
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "intent", columnDefinition = "text[]")
+    @Column(name = "intent")
     var intent: List<String>? = null
 
     @Column(name = "notes")
@@ -68,7 +67,7 @@ class Recipe {
     var isOfficial: Boolean = false
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "dripper_portability", columnDefinition = "jsonb")
+    @Column(name = "dripper_portability")
     var dripperPortability: String? = null
 
     @Column(name = "status", nullable = false)
@@ -83,9 +82,9 @@ class Recipe {
     @Column(name = "parent_code")
     var parentCode: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 
-    @Column(name = "updated_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     var updatedAt: Instant? = null
 }

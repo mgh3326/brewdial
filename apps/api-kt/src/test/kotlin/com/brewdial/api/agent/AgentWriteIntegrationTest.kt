@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.transaction.support.TransactionTemplate
+import tools.jackson.databind.node.JsonNodeFactory
 import java.util.UUID
 
 @SpringBootTest
@@ -96,6 +97,24 @@ class AgentWriteIntegrationTest {
         assertEquals(false, row["is_official"])
         assertEquals(1, row["version"])
         assertEquals(true, (row["code"] as String).startsWith("COF-"))
+    }
+
+    @Test
+    fun failedAgentInsertDoesNotLeaveOwnerWritesEnabled() {
+        val title = "Leak proof ${UUID.randomUUID()}"
+        val invalidGrind = JsonNodeFactory.instance.objectNode().put("grind", 3)
+
+        // The CHECK on params.grind fails the flush inside the owner-write section.
+        assertThrows(Exception::class.java) {
+            recipeWrites.insertAgentRecipe(CreateRecipeInput("v60", title, params = invalidGrind))
+        }
+
+        // Same thread, so Hikari hands back the same connection. The guard must
+        // still force created_by to 'manual' for a session without the flag.
+        jdbcTemplate.update("insert into recipes (method, title, created_by) values ('v60', ?, 'agent')", title)
+        val row = jdbcTemplate.queryForMap("select code, created_by from recipes where title = ?", title)
+        recipeCodes += row["code"] as String
+        assertEquals("manual", row["created_by"])
     }
 
     @Test

@@ -1,0 +1,68 @@
+# shiftgate configuration for the OCI host — install as /etc/shiftgate/services.yaml.
+# Reference: https://github.com/mgh3326/shiftgate (README "services.yaml reference").
+# Runbook: docs/runbooks/oci-heatwave-cutover.md (ROB-1435).
+#
+# No secrets, hostnames or IPs live here. Each service's DATABASE_URL, AGENT_TOKEN,
+# SENTRY_DSN, … sit in its env file on the host (root:root 0600). shiftgate passes
+# the file to `docker run --env-file` by path and never opens it.
+#
+# HAProxy runs as the `shiftgate-haproxy` container (host network): Oracle Linux 9
+# ships HAProxy 2.4 and shiftgate needs 2.8+. shiftgate-haproxy.service starts it.
+state_dir: /var/lib/shiftgate
+keep_digests: 3
+haproxy:
+  config: /etc/shiftgate/haproxy/haproxy.cfg
+  # The socket directory is bind-mounted into the container at the same path.
+  socket: /run/shiftgate-haproxy/admin.sock
+  check: ["docker", "run", "--rm", "--network", "none",
+          "-v", "/etc/shiftgate/haproxy:/etc/shiftgate/haproxy:ro",
+          "docker.io/library/haproxy:3.0@sha256:263a38dfde928f83104d86a4e1a659317ce988fa29535f76335046c91e291a98",
+          "haproxy", "-c", "-f", "{config}"]
+  reload: ["docker", "kill", "--signal", "HUP", "shiftgate-haproxy"]
+  # Loopback only: cloudflared is the single public entry point.
+  allowed_binds: ["127.0.0.1"]
+  log: stdout format raw local0
+  timeouts: {connect: 5s, client: 1m, server: 1m, tunnel: 0s, http_request: 10s}
+
+services:
+  # Production API today: the Node image (apps/api, Dockerfile at the repo root)
+  # on the host PostgreSQL. It replaces the k3s Deployment brewdial/brewdial-api.
+  - name: brewdial-api
+    image: ghcr.io/mgh3326/brewdial
+    # cloudflared ingress points here after cutover (k3s NodePort 30020 before).
+    binds: ["127.0.0.1:8020"]
+    ports: {blue: 18020, green: 18021}
+    # Host network: the app reaches PostgreSQL on 127.0.0.1:5432 and listens on
+    # the colour port (shiftgate sets PORT to it).
+    network: host
+    env_files: [/etc/shiftgate/brewdial-api.env]
+    env: {HOST: "127.0.0.1", NODE_ENV: production}
+    # Same order as the k3s initContainer: migrate (idempotent, pgmigrations),
+    # then start. A failed migration exits the container and fails the health
+    # check, so traffic never flips to it.
+    args: ["sh", "-c", "node /migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js -m /migrate/migrations -j sql up && exec node /app/dist/server.js"]
+    run_args: ["--memory=512m"]
+    health: {http: /api/db/health, expect_status: 200, timeout: 90s, interval: 2s}
+    check: {inter: 5s, fall: 2, rise: 1}
+    drain_timeout: 30s
+    stop_timeout: 15s
+
+  # Prepared, not deployed: the Kotlin API (apps/api-kt) for the later Node →
+  # api-kt + HeatWave MySQL cutover (runbook phase 3). Its env file decides the
+  # database: DATABASE_URL=postgres://… or mysql://… . Flyway migrates at startup.
+  - name: brewdial-api-kt
+    image: ghcr.io/mgh3326/brewdial-api-kt
+    binds: ["127.0.0.1:8021"]
+    ports: {blue: 18022, green: 18023}
+    network: host
+    env_files: [/etc/shiftgate/brewdial-api-kt.env]
+    env:
+      SPRING_PROFILES_ACTIVE: prod
+      # Host network: without this Spring would listen on every interface.
+      SERVER_ADDRESS: "127.0.0.1"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Xss512k"
+    run_args: ["--memory=768m"]
+    health: {http: /api/db/health, expect_status: 200, timeout: 180s, interval: 2s}
+    check: {inter: 5s, fall: 2, rise: 1}
+    drain_timeout: 30s
+    stop_timeout: 20s

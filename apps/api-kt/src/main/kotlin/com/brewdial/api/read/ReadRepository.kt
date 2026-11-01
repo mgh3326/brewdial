@@ -1,5 +1,6 @@
 package com.brewdial.api.read
 
+import com.brewdial.api.config.VendorSql
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
@@ -7,7 +8,8 @@ import org.springframework.stereotype.Repository
 @Repository
 class ReadRepository(
     private val jdbcTemplate: JdbcTemplate,
-    private val rows: ApiRowMapper
+    private val rows: ApiRowMapper,
+    private val sql: VendorSql
 ) {
     private val beanRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.bean(resultSet) }
     private val recipeRow = RowMapper<LinkedHashMap<String, Any?>> { resultSet, _ -> rows.recipe(resultSet) }
@@ -21,7 +23,7 @@ class ReadRepository(
         """
         select $BEAN_SELECT from bean_summaries
         where recipe_count > 0 or attrs_source is not null
-        order by latest_recipe_at desc nulls last, name asc
+        order by latest_recipe_at is null, latest_recipe_at desc, name asc
         """.trimIndent(),
         beanRow
     )
@@ -31,7 +33,7 @@ class ReadRepository(
         return jdbcTemplate.query(
             """
             select $BEAN_SELECT from bean_summaries
-            where (name ilike ? or roaster ilike ?)
+            where (lower(name) like lower(?) or lower(roaster) like lower(?))
               and (recipe_count > 0 or attrs_source is not null)
             order by recipe_count desc, name asc
             limit ?
@@ -88,7 +90,7 @@ class ReadRepository(
             """
             select $RECIPE_SELECT from recipes
             where bean_id = ? and status = 'active'
-              and (owner_id is null or owner_id = ?)
+              and (owner_id is null or owner_id = ${sql.uuid})
             order by created_at desc
             """.trimIndent(),
             recipeRow,
@@ -112,7 +114,7 @@ class ReadRepository(
                 """
                 select $RECIPE_SELECT from recipes
                 where code = ? and status not in ('test', 'reference')
-                  and (owner_id is null or owner_id = ?)
+                  and (owner_id is null or owner_id = ${sql.uuid})
                 """.trimIndent(),
                 recipeRow,
                 code,
@@ -128,13 +130,13 @@ class ReadRepository(
     )
 
     fun findFeedback(id: String): LinkedHashMap<String, Any?>? = queryOne(
-        "select $FEEDBACK_SELECT from feedback where id = cast(? as uuid)",
+        "select $FEEDBACK_SELECT from feedback where id = ${sql.uuid}",
         feedbackRow,
         id
     )
 
     fun findPurchaseLink(id: String): LinkedHashMap<String, Any?>? = queryOne(
-        "select $PURCHASE_LINK_SELECT from bean_purchase_links where id = cast(? as uuid)",
+        "select $PURCHASE_LINK_SELECT from bean_purchase_links where id = ${sql.uuid}",
         purchaseLinkRow,
         id
     )

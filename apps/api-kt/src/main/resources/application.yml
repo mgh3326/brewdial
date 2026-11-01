@@ -4,8 +4,11 @@ server:
 spring:
   application:
     name: brewdial-api
-  datasource:
-    driver-class-name: org.postgresql.Driver
+  # DATABASE_URL (postgres:// or mysql://) selects the vendor; see
+  # DatabaseUrlEnvironmentPostProcessor for the driver and Flyway folder.
+  flyway:
+    # Migration SQL is literal: no ${...} substitution.
+    placeholder-replacement: false
   jpa:
     hibernate:
       ddl-auto: validate

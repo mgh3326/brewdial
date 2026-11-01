@@ -3,31 +3,32 @@ package com.brewdial.api.config
 import java.net.URI
 
 class DatabaseUrlConfig(
+    val vendor: DatabaseVendor,
     val jdbcUrl: String,
     val username: String,
     val password: String?
 )
 
 object DatabaseUrlParser {
-    private const val DEFAULT_POSTGRES_PORT = 5432
+    private const val SCHEMES = "postgres:// or mysql://"
 
     fun parse(value: String): DatabaseUrlConfig {
         val rawValue = value.trim()
         require(rawValue.isNotEmpty()) {
-            "DATABASE_URL must be set to a postgres:// URI"
+            "DATABASE_URL must be set to a $SCHEMES URI"
         }
 
         val uri = try {
             URI(rawValue)
         } catch (exception: IllegalArgumentException) {
             throw IllegalArgumentException(
-                "DATABASE_URL is not a valid postgres:// URI",
+                "DATABASE_URL is not a valid $SCHEMES URI",
                 exception
             )
         }
 
-        require(uri.scheme.equals("postgres", ignoreCase = true)) {
-            "DATABASE_URL must use the postgres:// scheme (got ${uri.scheme ?: "none"})"
+        val vendor = requireNotNull(DatabaseVendor.fromUriScheme(uri.scheme)) {
+            "DATABASE_URL must use the $SCHEMES scheme (got ${uri.scheme ?: "none"})"
         }
 
         val userInfo = requireNotNull(uri.userInfo) {
@@ -43,7 +44,7 @@ object DatabaseUrlParser {
         val host = requireNotNull(uri.host) {
             "DATABASE_URL must include a host"
         }
-        val port = if (uri.port == -1) DEFAULT_POSTGRES_PORT else uri.port
+        val port = if (uri.port == -1) vendor.defaultPort else uri.port
         require(port in 1..65535) {
             "DATABASE_URL must use a valid TCP port"
         }
@@ -59,7 +60,8 @@ object DatabaseUrlParser {
         val jdbcHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
         val query = uri.rawQuery?.let { "?$it" }.orEmpty()
         return DatabaseUrlConfig(
-            jdbcUrl = "jdbc:postgresql://$jdbcHost:$port$databasePath$query",
+            vendor = vendor,
+            jdbcUrl = "jdbc:${vendor.jdbcScheme}://$jdbcHost:$port$databasePath$query",
             username = username,
             password = password
         )

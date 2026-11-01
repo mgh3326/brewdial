@@ -17,12 +17,12 @@ class SavedBean {
     @Column(name = "app_user_id", nullable = false)
     var appUserId: UUID? = null
 
-    @Column(name = "bean_id", nullable = false, columnDefinition = "text")
+    @Column(name = "bean_id", nullable = false)
     var beanId: String = ""
 
     @Column(name = "note")
     var note: String? = null
 
-    @Column(name = "created_at", nullable = false, columnDefinition = "timestamptz", insertable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     var createdAt: Instant? = null
 }

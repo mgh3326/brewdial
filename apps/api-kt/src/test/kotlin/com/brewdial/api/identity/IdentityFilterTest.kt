@@ -1,5 +1,6 @@
 package com.brewdial.api.identity
 
+import com.brewdial.api.config.DatabaseVendor
 import jakarta.servlet.http.HttpServletRequest
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.eq
@@ -11,6 +12,7 @@ import org.springframework.dao.DataAccessResourceFailureException
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
@@ -36,7 +38,7 @@ class IdentityFilterTest {
                 eq(key)
             )
 
-        mvc(JdbcIdentityResolver(jdbcTemplate))
+        mvc(JdbcIdentityResolver(jdbcTemplate, DatabaseVendor.POSTGRESQL, mock(PlatformTransactionManager::class.java)))
             .perform(get("/probe").header(IdentityFilter.HEADER, "toss_anon:$key"))
             .andExpect(status().isServiceUnavailable)
             .andExpect(content().string("{\"ok\":false,\"error\":\"identity temporarily unavailable\"}"))
@@ -53,7 +55,7 @@ class IdentityFilterTest {
     fun missingHeaderStaysAnonymousAndReturns200() {
         val jdbcTemplate = mock(JdbcTemplate::class.java)
 
-        mvc(JdbcIdentityResolver(jdbcTemplate))
+        mvc(JdbcIdentityResolver(jdbcTemplate, DatabaseVendor.POSTGRESQL, mock(PlatformTransactionManager::class.java)))
             .perform(get("/probe"))
             .andExpect(status().isOk)
             .andExpect(content().string("anonymous"))
@@ -65,7 +67,7 @@ class IdentityFilterTest {
     fun malformedHeaderStaysAnonymousAndReturns200() {
         val jdbcTemplate = mock(JdbcTemplate::class.java)
 
-        mvc(JdbcIdentityResolver(jdbcTemplate))
+        mvc(JdbcIdentityResolver(jdbcTemplate, DatabaseVendor.POSTGRESQL, mock(PlatformTransactionManager::class.java)))
             .perform(get("/probe").header(IdentityFilter.HEADER, "bogus:short"))
             .andExpect(status().isOk)
             .andExpect(content().string("anonymous"))
@@ -77,7 +79,7 @@ class IdentityFilterTest {
     fun optionsSkipsIdentityResolution() {
         val jdbcTemplate = mock(JdbcTemplate::class.java)
 
-        mvc(JdbcIdentityResolver(jdbcTemplate))
+        mvc(JdbcIdentityResolver(jdbcTemplate, DatabaseVendor.POSTGRESQL, mock(PlatformTransactionManager::class.java)))
             .perform(options("/probe").header(IdentityFilter.HEADER, "web_local:valid-identity-key-123456"))
             .andExpect(status().isOk)
 
