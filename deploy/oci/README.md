@@ -63,4 +63,6 @@ ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
    **`main` = CI baseline** (images). **`production` push = release**
    (fast-forward only: `git push origin main:production`). Rollback =
    `gh workflow run deploy-oci-k3s.yml -f git_sha=<prior>`. Full procedure:
-   `k3s/RUNBOOK.md` §7.
+   `k3s/RUNBOOK.md` §7. After the shiftgate cutover this only changes the k3s
+   image: traffic returns to k3s only when cloudflared points back at `:30020`
+   (`docs/runbooks/oci-heatwave-cutover.md` §2).

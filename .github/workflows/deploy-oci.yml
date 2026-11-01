@@ -15,8 +15,9 @@ name: Deploy OCI (shiftgate)
 #   workflow_dispatch dry_run=false   → deploy
 #   push to `production`              → deploy
 # Every deploy also needs the repository variable SHIFTGATE_DEPLOY_ENABLED=true,
-# set by the desk once the host runs shiftgate (runbook phase 1). Until then
+# set by the desk once the host runs shiftgate (runbook phase 2). Until then
 # every run is a dry run, so merging this file cannot touch the host.
+# A deploy fails unless the commit is on main's history, whatever the ref.
 #
 # Host, user and keys come from repository variables/secrets; nothing about the
 # host lives in this file:
@@ -78,6 +79,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history for the main-ancestor guard.
+          fetch-depth: 0
 
       - name: Decide mode
         id: mode
@@ -95,6 +99,13 @@ jobs:
             mode=dry-run; reason="workflow_dispatch dry_run=${DRY_RUN_INPUT}"
           elif [ "${DEPLOY_ENABLED}" != true ]; then
             mode=dry-run; reason="vars.SHIFTGATE_DEPLOY_ENABLED is not 'true' (host not cut over yet)"
+          fi
+          if [ "${mode}" = deploy ]; then
+            git fetch --no-tags origin main
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "ERROR: $(git rev-parse HEAD) is not on main's history; refusing to deploy it."
+              exit 1
+            fi
           fi
           echo "mode=${mode}" >> "$GITHUB_OUTPUT"
           echo "Mode: ${mode} (${reason})"

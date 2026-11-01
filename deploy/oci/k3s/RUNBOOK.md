@@ -348,15 +348,23 @@ are mounted.)
 
 Implemented workflow: `.github/workflows/deploy-oci-k3s.yml`.
 
+> **Since ROB-1435 this workflow is manual-only.** A push to `production` no
+> longer deploys to k3s: it runs the shiftgate workflow `deploy-oci.yml`, which
+> is a dry run until `vars.SHIFTGATE_DEPLOY_ENABLED=true`. While k3s still
+> serves traffic, **release with an explicit dispatch** (§7.4). §7.1–§7.3
+> describe the guards and the fast-forward rule, which still apply; the
+> `production` push no longer triggers this workflow. Rolling traffic back from
+> shiftgate to k3s also needs the cloudflared step in
+> `docs/runbooks/oci-heatwave-cutover.md` §2.
+
 ### 7.1 Branch roles
 
 | Branch | Role |
 |---|---|
 | **`main`** | CI baseline. Every push/PR runs CI Gate, k8s Validation, Container Image. Images are published as `ghcr.io/mgh3326/brewdial:sha-<7chars>` **only** from main (and same-repo PR builds). |
-| **`production`** | **Release decision tip.** A push to `production` runs `Deploy OCI` and ships that commit's image digest to the live cluster. |
+| **`production`** | **Release decision tip.** A push to `production` runs the shiftgate workflow (`deploy-oci.yml`), not this one. |
 
-`main` green ≠ live. Live updates only when `production` moves (or when an
-operator runs `workflow_dispatch`).
+`main` green ≠ live. k3s updates only when an operator runs `workflow_dispatch`.
 
 ### 7.2 Standard promotion — fast-forward only
 
@@ -364,7 +372,8 @@ operator runs `workflow_dispatch`).
 # From a machine with push rights (after main is green and image exists):
 git fetch origin
 git push origin main:production
-# → Deploy OCI runs on the production push event for that SHA
+# → deploy-oci.yml (shiftgate) runs on this push. To release to k3s:
+gh workflow run deploy-oci-k3s.yml -f git_sha="$(git rev-parse origin/main)"
 ```
 
 **Why fast-forward is mandatory:** `image.yml` builds `sha-<short>` for commits
@@ -396,8 +405,8 @@ git merge-base --is-ancestor origin/production origin/main && echo "ff-ok"
 
 ### 7.3 What the deploy job does
 
-1. Resolve target SHA (`GITHUB_SHA` on production push, or `git_sha` input on
-   dispatch).
+1. Resolve target SHA (`git_sha` input, or the dispatched ref's HEAD). An
+   unresolvable SHA fails.
 2. **Guard:** target must be an ancestor of `origin/main` (on main's history).
 3. **Guard:** resolve `Docker-Content-Digest` for `sha-<7>`; missing → fail with
    the fast-forward message above (no alternate tag).

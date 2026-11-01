@@ -38,7 +38,9 @@ Conventions:
 2. **shiftgate.** Build the binary for linux/arm64 from the pinned revision,
    which `.github/workflows/shiftgate-render.yml` also uses:
    ```sh
-   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go install github.com/mgh3326/shiftgate/cmd/shiftgate@c65b3a4428c9
+   git clone https://github.com/mgh3326/shiftgate && cd shiftgate && git checkout c65b3a4428c9
+   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o shiftgate ./cmd/shiftgate
+   # Copy the binary to the host if you built it elsewhere, then on the host:
    sudo install -m 0755 shiftgate /usr/local/bin/shiftgate
    ```
 3. **Config.** Install the repository file:
@@ -127,10 +129,20 @@ k3s keeps serving on `127.0.0.1:30020` throughout. shiftgate serves on
    The container runs `node-pg-migrate up` before the server starts, as the
    k3s initContainer did. Against the current database it is a no-op, because
    `pgmigrations` already lists every migration.
-2. **Enable CI deploys.** Set `SHIFTGATE_DEPLOY_ENABLED=true`, run `gh workflow
-   run deploy-oci.yml -f dry_run=false`, and check that the run's `plan` job
-   printed the digest that is now active in `shiftgate status`. The second
-   deploy fills the other colour, which makes `shiftgate rollback` available.
+2. **Enable CI deploys.** CI builds its own image, so its digest differs from
+   the k3s digest even for the same commit. Compare the commit instead:
+   1. Fast-forward `production` to the `main` commit you intend to ship (`git
+      push origin main:production`). This commit must contain this workflow.
+      The push only produces a dry run while the variable is unset.
+   2. Read that run's `plan` job, and check that the commit is the one you want
+      and that it printed `SHIFTGATE_COMMAND: … --digest sha256:…`.
+   3. Set `SHIFTGATE_DEPLOY_ENABLED=true`, then run `gh workflow run
+      deploy-oci.yml --ref production -f dry_run=false`.
+   4. Check that the digest in that run's `plan` job is the one now active in
+      `shiftgate status`.
+
+   This second deploy fills the other colour, which makes `shiftgate rollback`
+   available.
 3. **Switch traffic.** In `/etc/cloudflared/config.yml`, change the ingress
    from `http://127.0.0.1:30020` to `http://127.0.0.1:8020`. Then run `sudo
    systemctl restart cloudflared` and check the public `/api/health` and
@@ -189,9 +201,13 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
 - **Env file for `brewdial-api-kt`.** Create
   `/etc/shiftgate/brewdial-api-kt.env` (`0600`) with `AGENT_TOKEN`,
   `SENTRY_DSN` and, first, the **PostgreSQL** `DATABASE_URL`
-  (`postgres://brewdial_app:…@127.0.0.1:5432/brewdial`). Write the HeatWave
-  URL (`mysql://app:…@<private-ip>:3306/brewdial?sslMode=REQUIRED`) only to
-  `/etc/shiftgate/brewdial-copy.env` for now. Step 4.4 moves it.
+  (`postgres://brewdial_app:…@127.0.0.1:5432/brewdial`).
+- **Env file for the copy.** Create `/etc/shiftgate/brewdial-copy.env`
+  (`0600`) with two keys: `DATABASE_URL`, the HeatWave target
+  (`mysql://app:…@<private-ip>:3306/brewdial?sslMode=REQUIRED`), and
+  `BREWDIAL_COPY_SOURCE_URL`, the PostgreSQL source. Passing them by file keeps
+  the passwords out of the process list. Step 4.4 moves the HeatWave URL into
+  the api-kt env file.
 - **PostgreSQL is at migration 007.** Run `select name from pgmigrations order
   by run_on;`. On its first start against this database, api-kt's Flyway
   records it as baseline V1 (`baseline-on-migrate`), and V1 equals
@@ -205,8 +221,11 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
   union all select 'recipe codes', count(*) from recipes where char_length(code) > 64
   union all select 'calibration labels', count(*) from grinder_calibration
     where char_length(from_label) > 255 or char_length(to_label) > 255 or char_length(anchor_method) > 120
-  union all select 'preferences.id', count(*) from preferences where char_length(id) > 64;
+  union all select 'preferences.id', count(*) from preferences where char_length(id) > 64
+  union all select 'bd_migration_meta.key', count(*) from bd_migration_meta where char_length(key) > 128;
   ```
+  The copy repeats this check for every bounded column before it writes
+  anything, and refuses with the list of oversized values.
 
 ### 4.2 Parity precheck: Node API vs api-kt
 
@@ -253,13 +272,11 @@ Finally, each table is verified:
 1. **Freeze writes.** Point cloudflared at a maintenance response
    (`service: http_status:503`) and restart it. The data is small, so the
    window is minutes. The Node API keeps running on `:8020`.
-2. **Copy**, using the HeatWave URL from the copy env file and the PostgreSQL
-   source from the api-kt env file:
+2. **Copy**, with both URLs coming from the copy env file:
    ```sh
    sudo docker run --rm --network host \
      --env-file /etc/shiftgate/brewdial-copy.env \
      -e SPRING_MAIN_WEB_APPLICATION_TYPE=none -e BREWDIAL_COPY_MODE=copy \
-     -e BREWDIAL_COPY_SOURCE_URL="$(sudo sed -n 's/^DATABASE_URL=//p' /etc/shiftgate/brewdial-api-kt.env)" \
      ghcr.io/mgh3326/brewdial-api-kt@sha256:<api-kt digest>
    ```
    The output ends with a table (`TABLE  POSTGRES_ROWS  MYSQL_ROWS
@@ -274,8 +291,8 @@ Finally, each table is verified:
 ### 4.4 Cutover through shiftgate
 
 1. Move the HeatWave `DATABASE_URL` into `/etc/shiftgate/brewdial-api-kt.env`
-   with `sudoedit`, replacing the PostgreSQL line. Keep the PostgreSQL URL in
-   `/etc/shiftgate/brewdial-api-kt.postgres.env` (`0600`) for reference.
+   with `sudoedit`, replacing the PostgreSQL line. The PostgreSQL URL stays in
+   `/etc/shiftgate/brewdial-copy.env` as `BREWDIAL_COPY_SOURCE_URL`.
 2. Deploy the **same** api-kt digest again. shiftgate starts the idle colour
    (green) with the new env file, health-checks `/api/db/health` against
    MySQL, and flips HAProxy on `:8021`:

@@ -7,9 +7,11 @@ per vendor, in the same PR.
 
 - `postgresql/` is generated from `packages/db/migrations` (node-pg-migrate,
   the PostgreSQL source of truth for the Node API) with
-  `scripts/gen-postgres-baseline.sh`. `PostgresBaselineDriftTest` fails if
-  they disagree. A database that node-pg-migrate already migrated is
-  baselined at V1 on first start (`baseline-on-migrate`, PostgreSQL only).
+  `scripts/gen-postgres-baseline.sh`, which covers 001–007 only. Migration
+  008 onward gets its own `V<n>` file holding that migration's up section.
+  `PostgresBaselineDriftTest` fails if the two sides disagree. A database that
+  node-pg-migrate already migrated is baselined at V1 on first start
+  (`baseline-on-migrate`, PostgreSQL only).
 - `mysql/` is written by hand for MySQL 8.4.
 - `SchemaContractTest` checks both vendors' migrated schemas against
   `src/test/resources/schema-contract.txt`: tables, views, columns and NOT

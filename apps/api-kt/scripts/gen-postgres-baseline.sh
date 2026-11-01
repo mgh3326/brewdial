@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Regenerates the Flyway PostgreSQL baseline from the node-pg-migrate files.
+# Regenerates the Flyway PostgreSQL V1 baseline from node-pg-migrate 001..007.
+# V1 is frozen once released: migration 008 onward gets its own V<n> file with
+# that migration's up section, so this script must never read past 007.
 # packages/db/migrations stays the source of truth for PostgreSQL; the
 # PostgresBaselineDriftTest fails when this file and those migrations disagree.
 set -euo pipefail
@@ -14,7 +16,7 @@ out="$api_kt_dir/src/main/resources/db/migration/postgresql/V1__baseline.sql"
   echo "-- Up sections of packages/db/migrations/001..007, concatenated in order."
   echo "-- Existing databases migrated by node-pg-migrate are baselined at V1"
   echo "-- (spring.flyway.baseline-on-migrate), so this runs only on empty schemas."
-  for f in "$migrations_dir"/*.sql; do
+  for f in "$migrations_dir"/00[1-7]_*.sql; do
     echo
     echo "-- >>> $(basename "$f")"
     awk '/^-- Down Migration/{exit} {print}' "$f"

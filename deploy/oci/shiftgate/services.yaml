@@ -58,6 +58,8 @@ services:
     env_files: [/etc/shiftgate/brewdial-api-kt.env]
     env:
       SPRING_PROFILES_ACTIVE: prod
+      # Host network: without this Spring would listen on every interface.
+      SERVER_ADDRESS: "127.0.0.1"
       JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Xss512k"
     run_args: ["--memory=768m"]
     health: {http: /api/db/health, expect_status: 200, timeout: 180s, interval: 2s}

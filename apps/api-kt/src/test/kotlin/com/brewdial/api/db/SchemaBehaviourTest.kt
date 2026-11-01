@@ -6,7 +6,6 @@ import com.brewdial.api.me.MeRepository
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -166,7 +165,7 @@ class SchemaBehaviourTest {
         appUsers += first
         val second = identities.resolve("toss_anon", "sb-$tag-identity-key")
         assertEquals(first, second)
-        assertNotNull(jdbc.queryForObject("select count(*) from app_users where id = $uuid", Long::class.java, first))
+        assertEquals(1L, jdbc.queryForObject("select count(*) from app_users where id = $uuid", Long::class.java, first))
         assertThrows(Exception::class.java) { identities.resolve("toss_login", "sb-$tag-identity-key") }
     }
 

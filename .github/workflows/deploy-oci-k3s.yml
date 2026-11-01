@@ -87,40 +87,26 @@ jobs:
             CANDIDATE="${GITHUB_SHA}"
           fi
 
-          if git cat-file -e "${CANDIDATE}^{commit}" 2>/dev/null; then
-            FULL="$(git rev-parse "${CANDIDATE}")"
-            SHORT="$(git rev-parse --short=7 "${CANDIDATE}")"
-          else
-            HEX="$(printf '%s' "${CANDIDATE}" | tr -cd '0-9a-fA-F')"
-            if [ "${#HEX}" -lt 7 ]; then
-              echo "ERROR: git_sha '${CANDIDATE}' is not a resolvable commit and is shorter than 7 hex chars"
-              exit 1
-            fi
-            FULL="${CANDIDATE}"
-            SHORT="$(printf '%s' "${HEX}" | cut -c1-7 | tr 'A-F' 'a-f')"
+          # Full history is checked out, so every commit on main resolves here.
+          if ! git cat-file -e "${CANDIDATE}^{commit}" 2>/dev/null; then
+            echo "ERROR: git_sha '${CANDIDATE}' is not a resolvable commit"
+            exit 1
           fi
+          FULL="$(git rev-parse "${CANDIDATE}")"
+          SHORT="$(git rev-parse --short=7 "${CANDIDATE}")"
 
           TAG="sha-${SHORT}"
           echo "Target: full=${FULL} short=${SHORT} tag=${TAG} event=${EVENT_NAME}"
 
           # --- guard: deploy target must be on origin/main history ---
           # Blocks shipping a commit that never landed on main (unreviewed tip).
-          git fetch --no-tags origin main 2>/dev/null || true
-          if git rev-parse --verify origin/main >/dev/null 2>&1; then
-            if git cat-file -e "${FULL}^{commit}" 2>/dev/null; then
-              if ! git merge-base --is-ancestor "${FULL}" origin/main; then
-                echo "ERROR: commit ${FULL} is not reachable from origin/main (not an ancestor)."
-                echo "       Refusing to deploy a SHA that is not on main's history."
-                echo "       Land the commit on main (CI baseline) first, then fast-forward production."
-                exit 1
-              fi
-              echo "OK: ${SHORT} is an ancestor of origin/main (or is main)"
-            else
-              echo "WARNING: full commit not in this checkout; skipping main-ancestor check for ${FULL}"
-            fi
-          else
-            echo "WARNING: origin/main not available; skipping main-ancestor check"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${FULL}" origin/main; then
+            echo "ERROR: commit ${FULL} is not reachable from origin/main (not an ancestor)."
+            echo "       Refusing to deploy a SHA that is not on main's history."
+            exit 1
           fi
+          echo "OK: ${SHORT} is an ancestor of origin/main (or is main)"
 
           # --- resolve immutable digest from GHCR (no tag deploy, no fallback) ---
           echo "Resolving GHCR digest for ${IMAGE_REPO}:${TAG}"

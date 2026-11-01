@@ -90,7 +90,28 @@ class DatabaseCopyRunner(
         check(unknown.isEmpty()) { "tables not covered by the copy: $unknown (update DatabaseCopyRunner.TABLES)" }
     }
 
+    /**
+     * MySQL bounds the VARCHAR columns that PostgreSQL keeps as unbounded text.
+     * Reports every oversized value at once, before anything is written.
+     */
+    private fun checkCapacity(pg: Connection, mysql: Connection) {
+        val tooLong = TABLES.flatMap { table ->
+            targetColumns(mysql, table).filter { it.maxChars != null }.mapNotNull { column ->
+                val sql = "select count(*) from ${pgName(table)} where char_length(${pgName(column.name)}::text) > ${column.maxChars}"
+                val rows = pg.createStatement().use { statement ->
+                    statement.executeQuery(sql).use { result ->
+                        result.next()
+                        result.getLong(1)
+                    }
+                }
+                if (rows > 0) "$table.${column.name}: $rows rows longer than ${column.maxChars}" else null
+            }
+        }
+        check(tooLong.isEmpty()) { "source values do not fit the MySQL columns: $tooLong" }
+    }
+
     private fun copy(pg: Connection, mysql: Connection) {
+        checkCapacity(pg, mysql)
         mysql.autoCommit = false
         try {
             mysql.createStatement().use { statement ->
@@ -221,7 +242,12 @@ class DatabaseCopyRunner(
         val columns = mutableListOf<Column>()
         mysql.metaData.getColumns(mysql.catalog, null, table, "%").use { rows ->
             while (rows.next()) {
-                columns += Column(rows.getString("COLUMN_NAME"), rows.getString("TYPE_NAME").equals("JSON", ignoreCase = true))
+                val type = rows.getString("TYPE_NAME")
+                columns += Column(
+                    name = rows.getString("COLUMN_NAME"),
+                    json = type.equals("JSON", ignoreCase = true),
+                    maxChars = if (type.equals("VARCHAR", ignoreCase = true)) rows.getInt("COLUMN_SIZE") else null
+                )
             }
         }
         check(columns.isNotEmpty()) { "target table $table has no columns" }
@@ -232,7 +258,7 @@ class DatabaseCopyRunner(
 
     private fun mysqlName(name: String) = "`$name`"
 
-    private class Column(val name: String, val json: Boolean)
+    private class Column(val name: String, val json: Boolean, val maxChars: Int?)
 
     private class TableReport(
         val table: String,
