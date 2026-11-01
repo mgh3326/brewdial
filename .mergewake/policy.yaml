@@ -1,0 +1,16 @@
+version: 1
+enabled: true
+required_checks:
+  - 'Typecheck, Lint & Test'
+  - 'GitGuardian Security Checks'
+blocking:
+  - paths: ['.mergewake/**']
+    reason: Policy changes can authorize irreversible automation before a revert.
+  - paths: ['packages/db/migrations/**', 'supabase/**']
+    reason: Schema and data migrations alter persistent data before a revert.
+  - paths: ['deploy/**', '.github/workflows/deploy-oci.yml']
+    reason: Deploy and host configuration change the running service before a revert.
+review_gate:
+  land: graded
+fast_lane:
+  max_changed_lines: 50
