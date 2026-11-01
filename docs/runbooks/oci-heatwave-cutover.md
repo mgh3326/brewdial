@@ -173,15 +173,14 @@ databases (`ci-kt.yml`). PostgreSQL support stays permanently.
 - **HeatWave.** The DB system runs MySQL 8.4 LTS or newer in the private
   subnet. Its security list allows TCP 3306 from the host's subnet only.
   Create the database and an application user: `create database brewdial;`
-  and grant all on `brewdial.*`. Also `grant process on *.* to <user>`: the rollback
-  copy uses it to see other accounts' writes, and the copy refuses at cutover without
-  it. The user creates triggers, so with binary
+  and grant all on `brewdial.*`. The user creates triggers, so with binary
   logging on it also needs `log_bin_trust_function_creators=ON` in the DB
   system configuration, or an equivalent privilege. Test this once with
   `create trigger` in a scratch schema.
 - **PostgreSQL role.** The application role owns the tables. The rollback copy
   needs that: an owner may disable user triggers, and no superuser is involved.
-  The copy checks this at cutover and refuses otherwise.
+  The copy checks this at cutover and refuses otherwise. The Node API, api-kt and
+  the copy must all use this one role, because the seal revokes that role's writes.
 - **Scripts on the host.** `/opt/brewdial` holds a checkout of a commit that
   contains `deploy/oci/heatwave-phase4.sh` (rsync as in `deploy/oci/README.md`).
 - **Write-freeze switch on the Node API.** Deploy a Node image built from a
@@ -296,7 +295,8 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 |---|---|---|
 | `preflight` | Reads the env files by path, cloudflared, shiftgate state, health | Every file is `0600` with the right keys, cloudflared routes to `:8020` and nothing to `:8021`, api-kt is on blue with this digest, and the freeze probe answers |
 | `freeze` | Creates `/var/lib/brewdial/freeze/write-freeze`, then waits up to 120 s for writes admitted before it to finish | `POST /api/write-freeze-probe` on `:8020` answers 503, and its `X-Writes-In-Flight` header reads 0 |
-| `copy` | Waits for PostgreSQL to have no other write transaction (up to 120 s), copies in one snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
+| `seal` | Revokes the role's `INSERT`, `UPDATE`, `DELETE` and `TRUNCATE` on every copied table, then tries each kind of write on every table, matching no rows | `PG_WRITES_SEALED`: every write was denied |
+| `copy` | Locks the PostgreSQL tables against writes on any account, waiting up to 120 s for open writes, then copies in one snapshot and compares before it commits. Reads carry on | `COPY_VERIFY_OK` and exit 0 |
 | `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
 | `deploy` | Moves the HeatWave `DATABASE_URL` into the api-kt env file, runs `shiftgate deploy` | Green is active, blue is the rollback colour, `/api/db/health` on `:8021` answers 200 |
 | `parity` | Compares the §4.2 reads and one bean and recipe, Node on PostgreSQL against api-kt on MySQL | Same after the README's allowed differences |
@@ -307,6 +307,12 @@ and exits non-zero. It only prints what the table shows. Tool output goes to
 to resolve every host in an active rule and the catch-all, so comments and unused
 keys do not count. A rule limited by path that points at `:8021` also stops it.
 `cloudflared` must be running and must have started after the file last changed.
+
+**The seal is the barrier; the freeze is the courtesy.** The seal stays on from this
+step until `rollback` or `unfreeze` lifts it, across every run and restart, and it
+applies to sessions that are already open. If the freeze failed, a write would get a
+500 instead of a 503, and PostgreSQL would still not change. The seal does not stop
+another role, so nothing else may write to these tables during the window.
 
 **What the freeze does.** While the file exists, the Node API answers 503 with
 `Retry-After` to every method except `GET`, `HEAD` and `OPTIONS`. Reads keep
@@ -335,12 +341,14 @@ sequences=1`. Any `MISMATCH` exits non-zero.
 |---|---|
 | `preflight` | Nothing changed. Fix the cause and run it again. |
 | `freeze` | If the switch does not work, run `unfreeze` and fix §4.1. If writes are still running, find out why (`pg_stat_activity`) and run it again: nothing has been copied. |
+| `seal` | A write got through, so the role has another grant. Remove that grant and run it again. |
 | `copy` | The copy rolled back, including on `MISMATCH`, and the target is still empty. Fix the cause and run it again. |
 | `verify` | The target holds rows, and something changed after the copy. Investigate, then run it again with `--replace-target`. |
 | `deploy`, `parity` or `final-verify` | If green is active, run `sudo shiftgate rollback brewdial-api-kt` first, because the script requires blue. Run it again with `--replace-target`. If the fix needs a new api-kt digest, restore the env file first (below) and deploy that digest to blue on PostgreSQL. The script refuses a blue that is not on PostgreSQL. |
 
-To abandon the window, also restore the env file and open writes again. This also
-disables `rollback`, because MySQL is stale from then on:
+To abandon the window, also restore the env file and open writes again. `unfreeze`
+lifts the seal first. This also disables `rollback`, because MySQL is stale from then
+on:
 
 ```sh
 sudo cp -p /etc/shiftgate/brewdial-api-kt.env.postgres /etc/shiftgate/brewdial-api-kt.env
@@ -380,8 +388,8 @@ accepted path.
    one previous container.
 2. Smoke test: run public `/api/health`, `/api/db/health` and a read, then
    one agent write through MCP. Check Sentry.
-3. Keep the freeze file. The Node API on PostgreSQL stays read-only, so nothing
-   can diverge there while it is the rollback target.
+3. Keep the freeze file. PostgreSQL stays sealed and the Node API stays read-only,
+   so nothing can diverge there while it is the rollback target.
 4. Move the backup timers to HeatWave now (§4.6). PostgreSQL no longer changes,
    and the timers do not cover the live data until you do.
 5. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
@@ -408,12 +416,11 @@ after the cutover all arrive, and the sequence continues where MySQL stopped.
       waits up to 40 s for requests to finish.
    2. Dumps PostgreSQL to
       `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`.
-   3. Waits up to 120 s until no other session of the MySQL application user remains
-      and no other account has a write transaction, then replaces every row in one transaction, compares before it commits, and
+   3. Locks the MySQL tables against writes on any account, waiting up to 120 s for
+      open writes, then, in one PostgreSQL transaction, lifts the seal and replaces every row in one transaction, compares before it commits, and
       compares again in a new snapshot.
 
-   Close any session of your own that uses that MySQL user first, or the copy
-   refuses to read.
+   An open write on MySQL, even from your own session, makes the copy refuse.
    ```sh
    sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
    ```

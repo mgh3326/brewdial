@@ -31,11 +31,17 @@ internal enum class CopyMode {
     REPLACE,
 
     /** Compare only; writes nothing. */
-    VERIFY;
+    VERIFY,
+
+    /** Revoke the PostgreSQL role's write privileges, for the whole window across runs. */
+    SEAL,
+
+    /** Give them back. */
+    UNSEAL;
 
     companion object {
         fun parse(value: String): CopyMode = entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
-            ?: error("BREWDIAL_COPY_MODE must be copy, replace or verify")
+            ?: error("BREWDIAL_COPY_MODE must be copy, replace, verify, seal or unseal")
     }
 }
 
@@ -71,13 +77,10 @@ internal class DatabaseCopy(
      * is compared inside its transaction and commits only if everything matches.
      */
     fun run(mode: CopyMode): Boolean {
-        checkMysqlWritersAreVisible()
-        waitForQuietSource()
         checkPostgresOwnership()
-        // One snapshot of the source for the whole copy and verification.
-        source.connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
-        source.connection.autoCommit = false
-        source.connection.isReadOnly = true
+        if (mode == CopyMode.SEAL) return seal()
+        if (mode == CopyMode.UNSEAL) return unseal()
+        holdSourceAgainstWrites()
         try {
             val columns = TABLES.associateWith { table -> sharedColumns(table) }
             checkTableList(source)
@@ -86,30 +89,95 @@ internal class DatabaseCopy(
             checkCounterList(target)
             return if (mode == CopyMode.VERIFY) report(columns) else write(mode, columns)
         } finally {
-            source.connection.rollback()
+            releaseSource()
         }
     }
 
     /**
-     * A snapshot cannot see a write that commits after it starts, so the source must
-     * be quiet first. This runs before the snapshot: PostgreSQL caches its activity
-     * view for a whole transaction. It cannot see sessions of another non-superuser
-     * role; the verify steps catch those once they commit.
+     * The barrier for the whole window, across runs and restarts: every session of
+     * the role loses its write privileges at once, whatever the application does. It
+     * does not stop another role, or a write already running, which the lock on each
+     * run does. Only a probe that fails proves it, so each kind of write is tried on
+     * every table, and matching no rows, so that a probe can never change data.
      */
-    private fun waitForQuietSource() {
-        val deadline = System.nanoTime() + quietTimeout.toNanos()
-        while (true) {
-            val active = query(source.connection, activeSessionsSql()) { rows ->
-                rows.next()
-                rows.getLong(1)
-            }
-            if (active == 0L) return
-            check(System.nanoTime() < deadline) {
-                "the ${source.vendor} source still has $active session(s) that could write after waiting $quietTimeout; refusing to read it"
-            }
-            log.info("waiting for {} session(s) on the {} source", active, source.vendor)
-            Thread.sleep(QUIET_POLL_MILLIS)
+    private fun seal(): Boolean {
+        execute("revoke insert, update, delete, truncate on ${postgresTables()} from current_user", postgres.connection)
+        TABLES.forEach { table ->
+            val quoted = name(postgres, table)
+            val column = name(postgres, columns(postgres, table).keys.first())
+            listOf(
+                "insert into $quoted select * from $quoted where false",
+                "update $quoted set $column = $column where false",
+                "delete from $quoted where false"
+            ).forEach { probe -> check(isDenied(probe)) { "$table still accepts writes after the seal, so the role has another grant: $probe" } }
+            check(!hasTruncate(table)) { "$table can still be truncated after the seal" }
         }
+        output("PG_WRITES_SEALED tables=${TABLES.size}")
+        return true
+    }
+
+    private fun unseal(): Boolean {
+        grantWrites()
+        check(TABLES.all { hasTruncate(it) }) { "the role did not get its write privileges back" }
+        output("PG_WRITES_OPEN tables=${TABLES.size}")
+        return true
+    }
+
+    private fun grantWrites() {
+        execute("grant insert, update, delete, truncate on ${postgresTables()} to current_user", postgres.connection)
+    }
+
+    private fun isDenied(probe: String): Boolean = try {
+        execute(probe, postgres.connection)
+        false
+    } catch (exception: SQLException) {
+        exception.sqlState == PG_INSUFFICIENT_PRIVILEGE
+    }
+
+    private fun hasTruncate(table: String): Boolean =
+        query(postgres.connection, "select has_table_privilege(current_user, '${name(postgres, table)}', 'TRUNCATE')") { rows ->
+            rows.next()
+            rows.getBoolean(1)
+        }
+
+    private fun postgresTables() = TABLES.joinToString(", ") { name(postgres, it) }
+
+    private val postgres get() = if (source.vendor == DatabaseVendor.POSTGRESQL) source else target
+
+    /**
+     * Held for the whole run, on every account: new writes wait, open ones must finish
+     * first, and reads carry on. A check that the source is quiet would leave a gap
+     * before the first read. A timeout means something still holds a write open.
+     */
+    private fun holdSourceAgainstWrites() {
+        val connection = source.connection
+        val seconds = quietTimeout.seconds.coerceAtLeast(1)
+        try {
+            when (source.vendor) {
+                DatabaseVendor.POSTGRESQL -> {
+                    // Repeatable read takes its one snapshot at the first query, after these locks.
+                    connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
+                    connection.autoCommit = false
+                    execute("set local lock_timeout = '${seconds}s'", connection)
+                    execute("lock table ${TABLES.joinToString(", ") { name(source, it) }} in share mode", connection)
+                    execute("set transaction read only", connection)
+                }
+                // No transaction is open: with writers locked out, every read sees the same data.
+                DatabaseVendor.MYSQL -> {
+                    execute("set session lock_wait_timeout = $seconds", connection)
+                    val tables = TABLES + RECIPE_CODE_SEQUENCE
+                    execute("lock tables ${tables.joinToString(", ") { "${name(source, it)} read" }}", connection)
+                }
+            }
+        } catch (exception: SQLException) {
+            if (!connection.autoCommit) connection.rollback()
+            error("the ${source.vendor} source was not locked within $quietTimeout, so a session that could write may still hold it (${exception.sqlState})")
+        }
+    }
+
+    private fun releaseSource() = when (source.vendor) {
+        DatabaseVendor.POSTGRESQL -> source.connection.rollback()
+        DatabaseVendor.MYSQL -> execute("unlock tables", source.connection)
     }
 
     /**
@@ -117,7 +185,6 @@ internal class DatabaseCopy(
      * do. Checked in both directions, so that the cutover fails rather than the rollback.
      */
     private fun checkPostgresOwnership() {
-        val postgres = if (source.vendor == DatabaseVendor.POSTGRESQL) source else target
         val tables = TABLES.joinToString(", ") { "'$it'" }
         val foreign = mutableListOf<String>()
         query(
@@ -125,34 +192,6 @@ internal class DatabaseCopy(
             "select tablename from pg_tables where schemaname = current_schema() and tablename in ($tables) and tableowner <> current_user"
         ) { rows -> while (rows.next()) foreign += rows.getString(1) }
         check(foreign.isEmpty()) { "the PostgreSQL role does not own $foreign, so a rollback could not load them" }
-    }
-
-    private fun activeSessionsSql(): String = when (source.vendor) {
-        // Sessions holding a transaction ID have written or are writing.
-        DatabaseVendor.POSTGRESQL ->
-            "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() " +
-                "and backend_type = 'client backend' and backend_xid is not null"
-        // MySQL is the source only for a rollback, with api-kt stopped. The application
-        // user then has no reason to be connected, so any other session of it counts,
-        // and so does a transaction of any account that has written or is waiting to.
-        // A backup's read-only snapshot does not.
-        DatabaseVendor.MYSQL ->
-            "select (select count(*) from information_schema.processlist where user = substring_index(current_user(), '@', 1) and id <> connection_id()) + " +
-                "(select count(*) from information_schema.innodb_trx where trx_mysql_thread_id <> connection_id() " +
-                "and (trx_rows_modified > 0 or trx_state = 'LOCK WAIT' or trx_tables_locked > 0))"
-    }
-
-    /**
-     * Without PROCESS, MySQL hides other accounts' sessions and refuses innodb_trx.
-     * Checked in both directions, so that the cutover fails rather than the rollback.
-     */
-    private fun checkMysqlWritersAreVisible() {
-        val mysql = if (source.vendor == DatabaseVendor.MYSQL) source else target
-        try {
-            query(mysql.connection, "select count(*) from information_schema.innodb_trx") { rows -> rows.next() }
-        } catch (exception: SQLException) {
-            error("the MySQL user cannot see other accounts' writes, which a rollback must check: grant it PROCESS (${exception.errorCode})")
-        }
     }
 
     /**
@@ -296,6 +335,8 @@ internal class DatabaseCopy(
         DatabaseVendor.MYSQL -> execute("set @bd_replication_role = 'replica'")
         DatabaseVendor.POSTGRESQL -> {
             execute("set local lock_timeout = '30s'")
+            // Lifts the seal in this transaction: a failed replace leaves it on.
+            grantWrites()
             TABLES.forEach { table -> execute("alter table ${name(target, table)} disable trigger user") }
         }
     }
@@ -456,8 +497,8 @@ internal class DatabaseCopy(
         array.free()
     }
 
-    private fun execute(sql: String) {
-        target.connection.createStatement().use { it.execute(sql) }
+    private fun execute(sql: String, connection: Connection = target.connection) {
+        connection.createStatement().use { it.execute(sql) }
     }
 
     private fun <T> query(connection: Connection, sql: String, read: (ResultSet) -> T): T =
@@ -496,7 +537,7 @@ internal class DatabaseCopy(
 
     internal companion object {
         private const val BATCH = 500
-        private const val QUIET_POLL_MILLIS = 500L
+        private const val PG_INSUFFICIENT_PRIVILEGE = "42501"
         private const val PG_TEXT_ARRAY = "_text"
         const val RECIPE_CODE_SEQUENCE = "recipe_code_seq"
 

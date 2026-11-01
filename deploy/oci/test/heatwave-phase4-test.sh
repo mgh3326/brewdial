@@ -56,6 +56,17 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+if [ "$mode" = seal ] || [ "$mode" = unseal ]; then
+  echo "docker-$mode" >>"$STUB_STATE/calls"
+  echo "jdbc connect postgres://brewdial_app:$STUB_SECRET@127.0.0.1:5432/brewdial"
+  if [ "${STUB_FAIL:-}" = "$mode-fails" ]; then
+    echo "COPY_CHECK_FAILED saved_beans still accepts writes after the seal"
+    exit 1
+  fi
+  [ "${STUB_FAIL:-}" = "$mode-silent" ] && exit 0
+  [ "$mode" = seal ] && echo "PG_WRITES_SEALED tables=15" || echo "PG_WRITES_OPEN tables=15"
+  exit 0
+fi
 n="$(cat "$STUB_STATE/copy_runs" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" >"$STUB_STATE/copy_runs"
 echo "docker-$mode-$(basename "$env_file")-run$n" >>"$STUB_STATE/calls"
 echo "jdbc connect postgres://brewdial_app:$STUB_SECRET@127.0.0.1:5432/brewdial"
@@ -269,7 +280,10 @@ EOF
   chmod 600 "$scenario"/env/*
   echo "$color" >"$scenario/state/color"
   [ "$frozen" = 1 ] && touch "$scenario/freeze/write-freeze"
-  [ "$verified" = 1 ] && printf '%s\n' "$DIGEST" >"$scenario/freeze/write-freeze.cutover-verified"
+  if [ "$verified" = 1 ]; then
+    printf '%s\n' "$DIGEST" >"$scenario/freeze/write-freeze.cutover-verified"
+    touch "$scenario/freeze/write-freeze.sealed"
+  fi
   printf 'tunnel: test\ningress:\n  - hostname: api.example.test\n    service: %s\n  - service: http_status:404\n' "$ingress" >"$scenario/config.yml"
   [ -n "$mutate" ] && (cd "$scenario" && eval "$mutate")
   : >"$scenario/state/calls"
@@ -316,11 +330,12 @@ COPY1='docker-copy-brewdial-copy.env-run1'
 VERIFY2='docker-verify-brewdial-copy.env-run2'
 VERIFY3='docker-verify-brewdial-copy.env-run3'
 DEPLOY='shiftgate-deploy'
-c1="$COPY1"
-c2="$COPY1
+SEAL='docker-seal'
+c1="$SEAL
+$COPY1"
+c2="$c1
 $VERIFY2"
-c3="$COPY1
-$VERIFY2
+c3="$c2
 $DEPLOY"
 c4="$c3
 $VERIFY3"
@@ -340,6 +355,8 @@ grep -q '^DATABASE_URL=postgres://' "$scenario/env/brewdial-api-kt.env.postgres"
 [ "$(stat -c %a "$scenario/env/brewdial-api-kt.env.postgres")" = 600 ] || bad "the kept env must stay 0600"
 expect_frozen
 [ "$(cat "$scenario/freeze/write-freeze.cutover-verified" 2>/dev/null)" = "$DIGEST" ] || bad "a finished cutover must record the digest it verified"
+[ -e "$scenario/freeze/write-freeze.sealed" ] || bad "PostgreSQL must stay sealed after a finished cutover"
+case "$output" in *"PG_WRITES_SEALED tables=15"*) ;; *) bad "the seal must be reported" ;; esac
 expect_no_secret
 if grep -rl "$SECRET" "$scenario/log" >/dev/null; then bad "a tool log holds the fixture password"; fi
 [ "$failures" -gt 0 ] || printf 'ok   %s\n' "$current"
@@ -591,6 +608,10 @@ SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario cutover-over-verified "" cuto
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario replace-over-verified "" cutover --digest "$DIGEST" --replace-target; expect_stopped preflight ""
 [ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the marker must survive a refused replace"
 
+# The barrier comes before any read, and its proof is required.
+run_scenario seal-fails seal-fails cutover --digest "$DIGEST"; expect_stopped seal "$SEAL"; expect_frozen
+case "$output" in *"still accepts writes"*) ;; *) bad "the reason must be shown" ;; esac
+run_scenario seal-unproven seal-silent cutover --digest "$DIGEST"; expect_stopped seal "$SEAL"; expect_frozen
 run_scenario copy-exit copy-exit cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen
 case "$output" in *"COPY_CHECK_FAILED schema drift"*) ;; *) bad "the drift message is missing" ;; esac
 run_scenario copy-mismatch copy-mismatch cutover --digest "$DIGEST"; expect_stopped copy "$c1"; expect_frozen
@@ -626,7 +647,8 @@ before=$failures
 # --- --replace-target is the only way to overwrite the target ---
 run_scenario replace-target "" cutover --digest "$DIGEST" --replace-target
 [ "$status" = 0 ] || bad "expected success"
-case "$calls" in docker-replace-brewdial-copy.env-run1*) ;; *) bad "first call was [$calls]" ;; esac
+case "$calls" in "$SEAL
+docker-replace-brewdial-copy.env-run1"*) ;; *) bad "calls began [$calls]" ;; esac
 expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
@@ -650,6 +672,7 @@ $ROLLBACK1
 $ROLLBACK2" ] || bad "calls were [$calls]"
 expect_frozen
 [ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "a second rollback must be refused"
+[ ! -e "$scenario/freeze/write-freeze.sealed" ] || bad "the committed replace lifted the seal"
 ls "$scenario"/final-postgres/pre-rollback-*.dump >/dev/null 2>&1 || bad "the safety dump is missing"
 expect_no_secret
 case "$output" in *"unfreeze"*) ;; *) bad "the next step is missing" ;; esac
@@ -684,6 +707,10 @@ $ROLLBACK2"; expect_frozen
 
 # --- unfreeze ---
 UNFREEZE_VERIFY='docker-verify-brewdial-copy.env-run1'
+UNFREEZE_LIFTED="$UNFREEZE_VERIFY
+docker-unseal"
+UNFREEZE_RESEALED="$UNFREEZE_LIFTED
+docker-seal"
 # Nothing to compare before a cutover has verified.
 SCENARIO_FROZEN=1 run_scenario unfreeze-no-cutover "" unfreeze
 [ "$status" = 0 ] || bad "unfreeze should pass"
@@ -694,7 +721,8 @@ before=$failures
 
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze "" unfreeze --digest "$DIGEST"
 [ "$status" = 0 ] || bad "unfreeze should pass"
-[ "$calls" = "$UNFREEZE_VERIFY" ] || bad "calls were [$calls]"
+[ "$calls" = "$UNFREEZE_LIFTED" ] || bad "calls were [$calls]"
+[ ! -e "$scenario/freeze/write-freeze.sealed" ] || bad "unfreeze must clear the seal marker"
 expect_not_frozen
 [ ! -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "after an unfreeze MySQL is stale: rollback must be refused"
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
@@ -705,6 +733,7 @@ SCENARIO_FROZEN=1 SCENARIO_INGRESS=http://127.0.0.1:8021 run_scenario unfreeze-t
 expect_rollback_state() {
   [ -e "$scenario/freeze/write-freeze" ] || bad "the freeze must be back after a failed unfreeze"
   [ -e "$scenario/freeze/write-freeze.cutover-verified" ] || bad "the cutover marker must survive a failed unfreeze"
+  [ -e "$scenario/freeze/write-freeze.sealed" ] || bad "the seal must be back after a failed unfreeze"
 }
 
 # MySQL differs from PostgreSQL, so it may hold writes: reopening PostgreSQL would strand them.
@@ -717,20 +746,20 @@ SCENARIO_VERIFIED=1 run_scenario unfreeze-unhealthy-file-gone probe-500 unfreeze
 case "$output" in *"the freeze file is absent"*) ;; *) bad "the message must say the file is absent" ;; esac
 case "$output" in *"writes stay frozen"*) bad "the message must not claim writes are frozen" ;; esac
 
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
-case "$output" in *"the freeze is back"*) ;; *) bad "the message must say the freeze is back" ;; esac
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-not-honoured stuck-frozen unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_RESEALED"; expect_rollback_state
+case "$output" in *"the freeze and the seal are back"*) ;; *) bad "the message must say the freeze and seal are back" ;; esac
 
 # r4436182728: a 500 once writes are open puts the freeze back.
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-500-when-open probe-500-when-open unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
-case "$output" in *"probe answered 500, expected 404; the freeze is back"*) ;; *) bad "the message must name the 500" ;; esac
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-500-when-open probe-500-when-open unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_RESEALED"; expect_rollback_state
+case "$output" in *"probe answered 500, expected 404; the freeze and the seal are back"*) ;; *) bad "the message must name the 500" ;; esac
 
 # Unhealthy before it starts: nothing is touched.
 SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-node-unhealthy probe-500 unfreeze; expect_stopped unfreeze ""; expect_rollback_state
 case "$output" in *"not healthy (probe answered 500)"*) ;; *) bad "the message must say the Node API is unhealthy" ;; esac
 
 # The probe breaks part-way: the freeze is back, and the desk is told it cannot be proven.
-SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-probe-breaks probe-breaks unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_VERIFY"; expect_rollback_state
-case "$output" in *"writes may be open"*) ;; *) bad "the message must warn that writes may be open" ;; esac
+SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario unfreeze-probe-breaks probe-breaks unfreeze --digest "$DIGEST"; expect_stopped unfreeze "$UNFREEZE_RESEALED"; expect_rollback_state
+case "$output" in *"check the Node API"*) ;; *) bad "the message must say to check the Node API" ;; esac
 
 # What each failed unfreeze leaves behind passes the rollback preflight.
 SCENARIO_COLOR=green SCENARIO_FROZEN=1 SCENARIO_VERIFIED=1 run_scenario rollback-after-stuck-unfreeze stuck-frozen rollback --digest "$DIGEST" --preflight
@@ -744,6 +773,17 @@ expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
 
+# A window that failed before verifying has a seal and no marker: nothing to compare, but it must be lifted.
+SCENARIO_FROZEN=1 SCENARIO_MUTATE='touch freeze/write-freeze.sealed' run_scenario unfreeze-sealed-only "" unfreeze --digest "$DIGEST"
+[ "$status" = 0 ] || bad "unfreeze should pass"
+[ "$calls" = 'docker-unseal' ] || bad "calls were [$calls]"
+expect_not_frozen
+[ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+before=$failures
+SCENARIO_FROZEN=1 SCENARIO_MUTATE='touch freeze/write-freeze.sealed' run_scenario unfreeze-sealed-without-digest "" unfreeze; expect_stopped unfreeze ""; expect_frozen
+# If the seal cannot be lifted, the Node API stays frozen.
+SCENARIO_FROZEN=1 SCENARIO_MUTATE='touch freeze/write-freeze.sealed' run_scenario unfreeze-unseal-fails unseal-fails unfreeze --digest "$DIGEST"; expect_stopped unfreeze 'docker-unseal'; expect_frozen
+
 # A repeated unfreeze still finishes.
 SCENARIO_VERIFIED=1 run_scenario unfreeze-repeated "" unfreeze --digest "$DIGEST"
 [ "$status" = 0 ] || bad "a repeated unfreeze should pass"
@@ -752,6 +792,25 @@ expect_not_frozen
 expect_no_secret
 [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
 before=$failures
+
+# r4436714502: the exact command the runbook gives for the rollback env file.
+runbook="$here/../../../docs/runbooks/oci-heatwave-cutover.md"
+if [ -r "$runbook" ]; then
+  current="runbook-rollback-env-command"
+  output=""; calls=""
+  env_dir="$work/runbook-env"
+  mkdir -p "$env_dir"
+  printf 'DATABASE_URL=mysql://app:pw@10.0.0.5:3306/brewdial\nBREWDIAL_COPY_SOURCE_URL=postgres://brewdial_app:pw@127.0.0.1:5432/brewdial\n' >"$env_dir/brewdial-copy.env"
+  command_line="$(grep -m1 "umask 077; sed -nE" "$runbook" | sed -E "s#^ *sudo sh -c '##; s#'\$##; s#/etc/shiftgate#$env_dir#g")"
+  [ -n "$command_line" ] || bad "the runbook command was not found"
+  sh -c "$command_line"
+  expected='BREWDIAL_COPY_SOURCE_URL=mysql://app:pw@10.0.0.5:3306/brewdial
+DATABASE_URL=postgres://brewdial_app:pw@127.0.0.1:5432/brewdial'
+  [ "$(cat "$env_dir/brewdial-rollback.env" 2>/dev/null)" = "$expected" ] || bad "the rollback env file is wrong: it must swap both keys"
+  [ "$(stat -c %a "$env_dir/brewdial-rollback.env" 2>/dev/null)" = 600 ] || bad "the rollback env file must be 0600"
+  [ "$failures" -gt "$before" ] || printf 'ok   %s\n' "$current"
+  before=$failures
+fi
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"

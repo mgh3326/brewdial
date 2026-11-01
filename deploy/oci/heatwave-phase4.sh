@@ -5,9 +5,9 @@
 #
 #   heatwave-phase4.sh cutover  --digest sha256:<64 hex> [--preflight] [--replace-target] [--accept-order]
 #   heatwave-phase4.sh rollback --digest sha256:<64 hex> [--preflight]
-#   heatwave-phase4.sh unfreeze [--digest sha256:<64 hex>]   (--digest once a cutover has verified)
+#   heatwave-phase4.sh unfreeze [--digest sha256:<64 hex>]   (--digest once PostgreSQL has been sealed)
 #
-# cutover:  freeze writes -> copy PostgreSQL to MySQL -> verify -> deploy api-kt
+# cutover:  freeze writes -> seal PostgreSQL -> copy PostgreSQL to MySQL -> verify -> deploy api-kt
 #           green on MySQL -> parity against the live Node API -> verify again ->
 #           print the cloudflared switch.
 # rollback: stop api-kt green -> dump PostgreSQL -> copy MySQL to PostgreSQL (full replace) -> verify ->
@@ -27,6 +27,8 @@ FREEZE_FILE="${PHASE4_FREEZE_FILE:-/var/lib/brewdial/freeze/write-freeze}"
 CLOUDFLARED_CONFIG="${PHASE4_CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml}"
 # Exists only between a verified cutover and its rollback, unfreeze or next window.
 CUTOVER_MARKER="$FREEZE_FILE.cutover-verified"
+# Exists from the first seal until rollback or unfreeze lifts it.
+SEALED_MARKER="$FREEZE_FILE.sealed"
 BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
 DRAIN_TIMEOUT="${PHASE4_DRAIN_TIMEOUT:-120}"
@@ -203,14 +205,14 @@ wait_for_admitted_writes() {
 
 # Shows the report lines of a copy run and requires its success line.
 run_copy_tool() {
-  local label="$1" env_file="$2" mode="$3" log_file status=0
+  local label="$1" env_file="$2" mode="$3" expected="${4:-^COPY_VERIFY_OK }" log_file status=0
   log_file="$LOG_DIR/$STAMP-$label.log"
   docker run --rm --network host --env-file "$env_file" \
     -e SPRING_MAIN_WEB_APPLICATION_TYPE=none -e BREWDIAL_COPY_MODE="$mode" \
     "$IMAGE@$DIGEST" 2>&1 | redact >"$log_file" || status=$?
-  grep -E '^(TABLE|SEQUENCE)	|^[a-z_]+	[0-9]+	[0-9]+	([0-9a-f]{64}	[0-9a-f]{64}	)?(OK|MISMATCH)$|^COPY_(VERIFY_OK|VERIFY_MISMATCH|CHECK_FAILED|FAILED)' "$log_file" || true
+  grep -E '^(TABLE|SEQUENCE)	|^[a-z_]+	[0-9]+	[0-9]+	([0-9a-f]{64}	[0-9a-f]{64}	)?(OK|MISMATCH)$|^COPY_(VERIFY_OK|VERIFY_MISMATCH|CHECK_FAILED|FAILED)|^PG_WRITES_' "$log_file" || true
   [ "$status" = 0 ] || fail "$label exited with status $status (log: $log_file)"
-  grep -q '^COPY_VERIFY_OK ' "$log_file" || fail "$label did not report COPY_VERIFY_OK (log: $log_file)"
+  grep -q "$expected" "$log_file" || fail "$label did not report what it had to (log: $log_file)"
 }
 
 # The differences the README allows between the two runtimes: timestamp precision
@@ -347,6 +349,11 @@ cutover() {
   [ "$(freeze_probe)" = 503 ] || fail "the Node API does not honour $FREEZE_FILE (probe did not answer 503)"
   wait_for_admitted_writes
 
+  # The freeze is the polite 503. This is what correctness rests on, until rollback lifts it.
+  step seal "revoke PostgreSQL write privileges, proven by writes that must fail"
+  touch "$SEALED_MARKER"
+  run_copy_tool seal "$COPY_ENV" seal '^PG_WRITES_SEALED '
+
   step copy "PostgreSQL to MySQL, then counts, checksums and sequence"
   run_copy_tool copy "$COPY_ENV" "$COPY_MODE"
 
@@ -428,7 +435,8 @@ rollback() {
   run_copy_tool rollback-verify "$ROLLBACK_ENV" verify
 
   # PostgreSQL may take writes from here on, so a second rollback must not overwrite them.
-  rm -f "$CUTOVER_MARKER"
+  # The committed replace has lifted the seal.
+  rm -f "$CUTOVER_MARKER" "$SEALED_MARKER"
   step "done" "PostgreSQL holds the MySQL data"
   log "PHASE4_ROLLBACK_READY: writes stay frozen. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
@@ -457,25 +465,34 @@ unfreeze() {
       fail "the Node API is not healthy (probe answered $probe); nothing was changed, and the freeze file is $freeze_state"
       ;;
   esac
+  if [ -e "$CUTOVER_MARKER" ] || [ -e "$SEALED_MARKER" ]; then
+    check_tools
+    [ -n "$DIGEST" ] || fail "PostgreSQL is sealed, and the tool that lifts it needs the image: pass --digest"
+    check_digest
+    check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
+  fi
   # Reopening a stale PostgreSQL would strand whatever MySQL took after the cutover.
   if [ -e "$CUTOVER_MARKER" ]; then
-    check_tools
-    [ -n "$DIGEST" ] || fail "a cutover has verified, so this must compare the databases first: pass --digest"
-    check_digest
     check_marker_digest
-    check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
     RECOVERY="MySQL may hold writes that PostgreSQL lacks, so writes stay frozen. Run rollback to carry them over."
     run_copy_tool unfreeze-verify "$COPY_ENV" verify
     RECOVERY=""
+  fi
+  local was_sealed=0
+  if [ -e "$SEALED_MARKER" ]; then
+    was_sealed=1
+    run_copy_tool unseal "$COPY_ENV" unseal '^PG_WRITES_OPEN '
   fi
   rm -f "$FREEZE_FILE"
   probe="$(freeze_probe)"
   if [ "$probe" != 404 ]; then
     touch "$FREEZE_FILE"
+    [ "$was_sealed" = 0 ] || run_copy_tool reseal "$COPY_ENV" seal '^PG_WRITES_SEALED '
     node_is_frozen \
-      || fail "probe answered $probe after the freeze was removed, and does not answer 503 now that it is back: writes may be open, so check the Node API before a rollback"
-    fail "probe answered $probe, expected 404; the freeze is back, the probe answers 503, and rollback stays available"
+      || fail "probe answered $probe after the freeze was removed, and does not show a freeze now that it is back: check the Node API before a rollback"
+    fail "probe answered $probe, expected 404; the freeze and the seal are back, and rollback stays available"
   fi
+  rm -f "$SEALED_MARKER"
   # PostgreSQL takes writes again, so MySQL is stale from here on.
   rm -f "$CUTOVER_MARKER"
   log "PHASE4_UNFROZEN"

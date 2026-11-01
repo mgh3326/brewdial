@@ -19,7 +19,7 @@ import kotlin.system.exitProcess
  * One-shot data copy with verification (runbook docs/runbooks/oci-heatwave-cutover.md).
  * It runs inside the normal api-kt image: DATABASE_URL is the target (Flyway
  * migrates it first), BREWDIAL_COPY_SOURCE_URL the source on the other database
- * vendor, BREWDIAL_COPY_MODE `copy`, `replace` or `verify` ([CopyMode]). It exits
+ * vendor, BREWDIAL_COPY_MODE one of [CopyMode]. It exits
  * when done: 0 when every table and sequence matches, non-zero otherwise.
  */
 @Component
