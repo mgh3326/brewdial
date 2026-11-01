@@ -1,5 +1,10 @@
 name: Kotlin API CI
 
+# The Kotlin API supports PostgreSQL and MySQL through JPA/Hibernate; the
+# vendor is picked by the DATABASE_URL scheme. Both test jobs run the same
+# Gradle suite, each against its own service container, and the final job
+# links them into one required check.
+
 on:
   push:
     branches: [main]
@@ -18,8 +23,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build Kotlin API
+  postgresql:
+    name: API tests (PostgreSQL 17)
     runs-on: ubuntu-latest
 
     services:
@@ -38,7 +43,11 @@ jobs:
           --health-retries 5
 
     env:
+      # Empty database: Flyway applies db/migration/postgresql/V1 itself.
       DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+      # node-pg-migrate database (the production shape): Flyway must baseline
+      # it at V1 and Hibernate must validate against it.
+      CONTRACT_DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_contract
 
     steps:
       - name: Checkout repository
@@ -61,8 +70,11 @@ jobs:
           pnpm --filter @brewdial/shared build
           pnpm --filter @brewdial/db build
 
-      - name: Run database migrations
-        run: pnpm db:migrate
+      - name: Create the node-pg-migrate contract database
+        run: |
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -d brewdial_test \
+            -c 'create database brewdial_contract'
+          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm db:migrate
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -71,10 +83,79 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Build Kotlin API
+      - name: Build and test Kotlin API (Flyway V1 on an empty database)
         working-directory: apps/api-kt
         run: ./gradlew --no-daemon build
 
-      - name: Contract tests vs Spring (full suite)
+      - name: Contract tests vs Spring (node-pg-migrate schema, Flyway baseline)
         working-directory: apps/api-kt
+        env:
+          DATABASE_URL: ${{ env.CONTRACT_DATABASE_URL }}
         run: scripts/contract-test.sh
+
+  mysql:
+    name: API tests (MySQL 8.4)
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        # OCI HeatWave runs the MySQL 8.4 LTS line.
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysqlpassword
+          MYSQL_DATABASE: brewdial_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysqlpassword"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Empty database: Flyway applies db/migration/mysql/V1.
+      DATABASE_URL: mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # RecommendationEngineTest compares against the compiled TypeScript engine.
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build shared package
+        run: |
+          pnpm install --frozen-lockfile --filter @brewdial/shared...
+          pnpm --filter @brewdial/shared build
+
+      - name: Setup Java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Build and test Kotlin API
+        working-directory: apps/api-kt
+        run: ./gradlew --no-daemon build
+
+  api-tests:
+    name: API tests (PostgreSQL + MySQL)
+    needs: [postgresql, mysql]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both database jobs passed
+        env:
+          POSTGRESQL: ${{ needs.postgresql.result }}
+          MYSQL: ${{ needs.mysql.result }}
+        run: |
+          echo "postgresql=${POSTGRESQL} mysql=${MYSQL}"
+          [ "${POSTGRESQL}" = success ] && [ "${MYSQL}" = success ]
