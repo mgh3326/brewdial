@@ -41,15 +41,15 @@ class ParityGoldenTest {
             val signals = case.get("signals")
             val target = deriveTasteTarget(
                 TasteSignals(
-                    savedBeanAttrs = signals.get("savedBeanAttrs").map(::beanAttributes),
-                    ratedBeanAttrs = signals.get("ratedBeanAttrs").map(::beanAttributes),
-                    likes = signals.get("likes").map { it.asText() },
-                    dislikes = signals.get("dislikes").map { it.asText() }
+                    savedBeanAttrs = signals.get("savedBeanAttrs").toList().map(::beanAttributes),
+                    ratedBeanAttrs = signals.get("ratedBeanAttrs").toList().map(::beanAttributes),
+                    likes = signals.get("likes").toList().map { it.asText() },
+                    dislikes = signals.get("dislikes").toList().map { it.asText() }
                 )
             )
             val actual = linkedMapOf(
                 "target" to target,
-                "scores" to case.get("beans").map { scoreBean(beanAttributes(it), target) }
+                "scores" to case.get("beans").toList().map { scoreBean(beanAttributes(it), target) }
             )
             assertJsonEquals(case.get("expected"), mapper.valueToTree(actual))
         }
@@ -83,7 +83,7 @@ class ParityGoldenTest {
         acidity = node.intOrNull("acidity"),
         body = node.intOrNull("body"),
         decaf = node.get("decaf")?.takeIf { !it.isNull }?.booleanValue(),
-        flavorCategories = node.get("flavorCategories")?.map { it.asText() },
+        flavorCategories = node.get("flavorCategories")?.toList()?.map { it.asText() },
         attrsSource = node.get("attrsSource")?.asText()
     )
 
