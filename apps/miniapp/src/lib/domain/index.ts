@@ -1,7 +1,7 @@
-// BrewDial domain core — vendored from packages/shared (single source of truth).
-// Re-sync these files if packages/shared/src changes. We vendor (rather than
-// import the @brewdial/shared workspace package) because the Apps-in-Toss `ait`
-// packaging step cannot resolve workspace-symlinked packages.
+// BrewDial domain core. The other files in this folder are generated from
+// packages/shared/src by scripts/sync-miniapp-domain.mjs (run `pnpm domain:sync`).
+// The mini-app keeps a copy rather than importing @brewdial/shared because the
+// Apps-in-Toss `ait` packaging step cannot resolve workspace-symlinked packages.
 export * from './types';
 export * from './schemas';
 export * from './feedback-rules';

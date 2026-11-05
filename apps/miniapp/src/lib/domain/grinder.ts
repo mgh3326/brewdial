@@ -1,8 +1,12 @@
-// Vendored from packages/shared/src/grinder.ts (source of truth). Re-sync if it changes.
-// ROB-611: grinder registry + grind conversion helper. Robust cross-grinder anchor is
-// the RELATIVE position within each grinder's brew-method click band (not absolute microns).
+// GENERATED from packages/shared/src/grinder.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
+// ROB-611: grinder registry + grind conversion helper (app/server shared).
+// The robust cross-grinder anchor is the RELATIVE position within each grinder's
+// brew-method click band (NOT absolute microns, which are unreliable). Given a
+// recipe's grind (with one or more measured per-grinder clicks) and a target
+// grinder, suggest a dial-in START — never an exact answer.
 
-import type { GrindSpec } from './types';
+import type { GrindSpec } from './types.js';
 
 export interface GrinderBand {
   from: number;

@@ -1,8 +1,5 @@
-// Vendored from packages/shared/src/types.ts (source of truth).
-// Kept in-tree so the Apps-in-Toss bundle has no workspace-package import
-// (the ait packaging step's collect-package-version plugin can't resolve
-// workspace symlinks). Re-sync if packages/shared changes.
-
+// GENERATED from packages/shared/src/types.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
 export type BrewMethod = 'v60' | 'espresso' | 'aeropress' | 'kalita' | 'other';
 
 export type RecipeCode = `COF-${string}`;
@@ -23,6 +20,39 @@ export interface BeanSnapshot {
   origin?: string;
   process?: string;
   notes?: string;
+}
+
+// ── ROB-654: structured bean attributes (agent-written; DB stores inputs only,
+// the taste profile / ranking / match reasons are computed at read time).
+// flavorCategories = SCA flavor wheel inner ring (9). LLM single-rubric scoring is
+// canonical for the 1..5 axes; roaster's own numbers live in attrsNotes as evidence.
+export const BEAN_FLAVOR_CATEGORIES = [
+  'fruity',
+  'floral',
+  'sweet',
+  'nutty_cocoa',
+  'spices',
+  'roasted',
+  'cereal',
+  'sour_fermented',
+  'green'
+] as const;
+export type BeanFlavorCategory = (typeof BEAN_FLAVOR_CATEGORIES)[number];
+
+export const BEAN_ATTRS_SOURCES = ['roaster_page', 'ai_extracted', 'manual'] as const;
+export type BeanAttrsSource = (typeof BEAN_ATTRS_SOURCES)[number];
+
+export interface BeanAttributes {
+  roastLevelOrd?: number; // 1 (light) .. 5 (dark)
+  agtronMin?: number;
+  agtronMax?: number;
+  acidity?: number; // 1 (low) .. 5 (high)
+  body?: number; // 1 (light) .. 5 (heavy)
+  decaf?: boolean;
+  flavorCategories?: BeanFlavorCategory[];
+  attrsSource?: BeanAttrsSource;
+  sourceUrl?: string;
+  attrsNotes?: string; // original roaster notation, verbatim (drift detection)
 }
 
 // ── ROB-611: grinder-portable grind. params.grind is string (legacy free text)
@@ -213,8 +243,7 @@ export interface CounterDoc {
 
 export type BrewDialDoc = RecipeDoc | FeedbackDoc | PreferenceDoc | CounterDoc;
 
-// ── ROB-654 v2 S1: 정규 취향 태그(교정 UI 화이트리스트). Vendored from
-// packages/shared/src/types.ts (source of truth). Re-sync if shared changes.
+// ── ROB-654 v2 S1: 정규 취향 태그(교정 UI 화이트리스트).
 export const TASTE_TAGS = [
   '저산미',
   '고산미',
@@ -222,6 +251,6 @@ export const TASTE_TAGS = [
   '라이트 로스팅',
   '고소함',
   '초콜릿/단맛',
-  '저녁은 디카페인',
+  '저녁은 디카페인'
 ] as const;
 export type TasteTag = (typeof TASTE_TAGS)[number];

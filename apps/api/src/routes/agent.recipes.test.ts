@@ -116,6 +116,27 @@ test('POST /api/agent/recipes with injected owner_id/is_official/created_by → 
   createdCodes.push(row['code'] as string)
 })
 
+test('POST /api/agent/recipes keeps notes whitespace, trims title and adjustmentFromPrevious (#602)', async () => {
+  // Notes carry the xBloom machine tag, so their whitespace is data. Both API
+  // implementations (Hono and Spring) must store them byte-for-byte.
+  const notes = '  line one\n  line two\n\n[xbloom]  '
+  const res = await request(agentReq('/api/agent/recipes', {
+    method: 'POST',
+    body: JSON.stringify({
+      method: 'v60',
+      title: '  Agent Notes Whitespace  ',
+      notes,
+      adjustmentFromPrevious: '  finer  ',
+    }),
+  }))
+  expect(res.status).toBe(201)
+  const row: Record<string, unknown> = await res.json()
+  createdCodes.push(row['code'] as string)
+  expect(row['notes']).toBe(notes)
+  expect(row['title']).toBe('Agent Notes Whitespace')
+  expect(row['adjustment_from_previous']).toBe('finer')
+})
+
 // ─── GET /api/agent/recipes/:code — any-status reads ─────────────────────────
 
 test('GET /api/agent/recipes/:code returns test-status recipe (any-status)', async () => {

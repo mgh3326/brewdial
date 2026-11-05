@@ -121,7 +121,10 @@ fun validateCreateRecipeInput(input: JsonNode?): ValidationResult<CreateRecipeIn
     } else {
         null
     }
-    val notes = pickString(objectInput, "notes", errors, "input")
+    // Recipe notes are a free-text payload (the xBloom machine tag rides in them), so
+    // their whitespace is data and is kept, as in packages/shared (#602). Every other
+    // field keeps the historical trim.
+    val notes = pickString(objectInput, "notes", errors, "input", trim = false)
     val adjustmentFromPrevious = pickString(objectInput, "adjustmentFromPrevious", errors, "input")
 
     val createdBy = if (objectInput.has("createdBy")) {
@@ -683,14 +686,21 @@ private fun validateRecipeCrossFields(
     }
 }
 
-private fun pickString(source: ObjectNode, key: String, errors: MutableList<String>, path: String): String? {
+private fun pickString(
+    source: ObjectNode,
+    key: String,
+    errors: MutableList<String>,
+    path: String,
+    trim: Boolean = true
+): String? {
     if (!source.has(key)) return null
     val value = source.get(key)
     if (value == null || !value.isTextual) {
         errors += "$path.$key must be a string"
         return null
     }
-    return value.asText().trim()
+    val text = value.asText()
+    return if (trim) text.trim() else text
 }
 
 private fun isPlainObject(value: JsonNode?): Boolean = value != null && value.isObject

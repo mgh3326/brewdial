@@ -41,12 +41,11 @@ flowchart LR
   end
 
   subgraph origin [Origin API host]
-    API["apps/api — Hono<br/>/api/* and /* dual mount"]
-    PG[(PostgreSQL 17)]
+    API["apps/api-kt — Spring Boot<br/>/api/* and /* dual mount"]
+    PG[(PostgreSQL 17 or MySQL HeatWave)]
   end
 
   subgraph packages [Shared libraries]
-    DB["packages/db<br/>Kysely + migrations"]
     SHARED["packages/shared<br/>types + validation"]
   end
 
@@ -61,10 +60,9 @@ flowchart LR
   AGENT --> MCP
   MCP -->|Bearer AGENT_TOKEN<br/>/api/agent/*| CF_TUNNEL
   CF_TUNNEL --> API
-  API --> DB
-  DB --> PG
-  API --> SHARED
-  DB --> SHARED
+  API --> PG
+  API -. parity fixtures .- SHARED
+  MINI --> SHARED
   MCP --> SHARED
 ```
 
@@ -79,7 +77,7 @@ BrewDial did not start here. Each move was a deliberate cut of a trust boundary:
    MCP clients talked to the database with separate roles. That worked, but put
    authorization policy next to the data plane and gave clients a direct path
    into storage.
-3. **Own API + origin isolation (current)** — A Hono API now owns every write
+3. **Own API + origin isolation (current)** — An API of its own now owns every write
    path. Clients no longer hold database credentials. The API process and
    Postgres bind to localhost on the origin host; **Cloudflare Tunnel** is the
    only ingress. Edge auth (Cloudflare Access for humans), **user identity** on
@@ -89,13 +87,17 @@ BrewDial did not start here. Each move was a deliberate cut of a trust boundary:
 
 Cutover was staged by consumer (web SPA, then MCP, then mini-app share the same
 API contract) rather than a single big-bang flip, so each client could move when
-its path was verified.
+its path was verified. The API itself was first written in TypeScript (Hono,
+`apps/api`) and then ported to Kotlin (`apps/api-kt`), which is the only API in
+production since the HeatWave cutover. `apps/api` stays in the repo as the HTTP
+contract test suite that CI runs against both implementations.
 
 ### Workspace layout
 
 ```text
 apps/
-  api/        # @brewdial/api — Hono HTTP API (Node)
+  api-kt/     # Kotlin / Spring Boot HTTP API (production; see apps/api-kt/README.md)
+  api/        # @brewdial/api — former Hono API, kept as the HTTP contract test suite
   mcp/        # @brewdial/mcp — MCP server over stdio (13 tools)
   miniapp/    # @brewdial/miniapp — React + Vite SPA (+ App-in-Toss build)
 packages/
@@ -120,6 +122,26 @@ MCP tools (stdio): `brew.create_recipe`, `brew.update_recipe`,
 Bean preference recommendations use a **deterministic scoring model** over
 structured bean attributes, save history, and the operator's own feedback — not
 an opaque LLM call — so match reasons stay inspectable.
+
+### One behavior, several copies
+
+`packages/shared` is the source of truth for domain rules (types, validation,
+recommendation scoring, grinder and dripper conversion). Two other places must
+behave the same way, and CI checks both:
+
+- **Mini-app copy.** The App-in-Toss `ait` build cannot resolve workspace
+  packages, so `apps/miniapp/src/lib/domain/*` is a generated copy of
+  `packages/shared/src`. Do not edit it: change `packages/shared`, run
+  `pnpm domain:sync` and commit the result. `pnpm domain:check` fails CI when the
+  copy is stale.
+- **Kotlin port.** `apps/api-kt` re-implements validation and recommendation.
+  `packages/shared/src/__fixtures__/parity/*.json` holds input cases with the
+  output of the TypeScript code. `parity-golden.test.ts` (Vitest) and
+  `ParityGoldenTest` (JUnit) both run them. After an intended behavior change in
+  `packages/shared`, run `pnpm --filter @brewdial/shared parity:update` and make
+  the Kotlin side pass the updated fixtures.
+- **HTTP contract.** The Vitest suites in `apps/api/src/routes` run against the
+  Spring app as well (`apps/api-kt/scripts/contract-test.sh`).
 
 ## Requirements
 
@@ -166,7 +188,7 @@ commit real secrets):
 | Variable | Used by | Purpose |
 |---|---|---|
 | `DATABASE_URL` | api, db migrations/tests | Postgres connection string |
-| `PORT` | api | Listen port (default `3020`) |
+| `PORT` | api-kt, api | Listen port (default `3021` for api-kt, `3020` for api) |
 | `HOST` | api | Bind address (default `127.0.0.1`) |
 | `AGENT_TOKEN` | api (`/api/agent/*`), mcp | Bearer token for the agent surface |
 | `API_BASE_URL` | mcp | API origin, e.g. `https://api.brewdial.robinco.dev` |
@@ -182,9 +204,12 @@ pnpm db:migrate
 ### Run services
 
 ```bash
-# API (default http://127.0.0.1:3020)
+# Production API: Kotlin / Spring Boot (default http://127.0.0.1:3021)
 export DATABASE_URL='postgres://USER@localhost:5432/brewdial_dev'
 export AGENT_TOKEN='dev-only-token'
+(cd apps/api-kt && ./gradlew bootRun)
+
+# Former Hono API, for contract-test work (default http://127.0.0.1:3020)
 pnpm api:dev
 
 # Web SPA (Vite) — points at VITE_API_BASE_URL
@@ -197,10 +222,10 @@ pnpm mcp:dev
 Health check against a running local API:
 
 ```bash
-curl -sS http://127.0.0.1:3020/api/health
+curl -sS http://127.0.0.1:3021/api/health
 # {"ok":true,"service":"brewdial-api","ts":"..."}
 
-curl -sS http://127.0.0.1:3020/api/db/health
+curl -sS http://127.0.0.1:3021/api/db/health
 # {"ok":true,"db":"up"}
 ```
 

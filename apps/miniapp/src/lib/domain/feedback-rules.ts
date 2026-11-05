@@ -1,5 +1,6 @@
-// Vendored from packages/shared/src/feedback-rules.ts. Re-sync if it changes.
-import type { FeedbackRatings } from './types';
+// GENERATED from packages/shared/src/feedback-rules.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
+import type { FeedbackRatings } from './types.js';
 
 export interface FeedbackRatingAnalysis {
   dominantIssues: string[];
