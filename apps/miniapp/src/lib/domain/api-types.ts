@@ -1,4 +1,5 @@
-// Vendored from packages/shared/src/api-types.ts. Re-sync if it changes.
+// GENERATED from packages/shared/src/api-types.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
 import type {
   ActualBrewParams,
   BrewMethod,
@@ -11,7 +12,7 @@ import type {
   RecipeDoc,
   RecipeParams,
   RecipeStep
-} from './types';
+} from './types.js';
 
 export interface CreateRecipeInput {
   beanId?: string;

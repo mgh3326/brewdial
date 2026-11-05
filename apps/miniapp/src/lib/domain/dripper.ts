@@ -1,9 +1,13 @@
-// Vendored from packages/shared/src/dripper.ts (source of truth). Re-sync if it changes.
-// ROB-612: dripper registry + adaptation helper. Flow restriction is modeled on a
-// continuum (0 = fast/bed-controlled .. 1 = slow/dripper-controlled); guidance is
-// DIRECTIONAL only (anchors fixed; grind/pour move by direction, confirmed by drawdown).
+// GENERATED from packages/shared/src/dripper.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
+// ROB-612: dripper registry + adaptation helper (app/server shared).
+// Drippers have NO single scalar invariant. We model flow restriction on a
+// continuum (0 = fast / bed-controlled like V60·Origami cone .. 1 = slow /
+// dripper-controlled like Kalita·Melitta) and give DIRECTIONAL guidance only:
+// fixed anchors (ratio/temp/time) stay; grind & pour move by direction, confirmed
+// by drawdown. The ★ size/bed match guards the 40g large-dose case.
 
-import type { Confidence, DripperClass, GrindShift, PourShift } from './types';
+import type { Confidence, DripperClass, GrindShift, PourShift } from './types.js';
 
 export interface DripperSizeModel {
   model: string;
@@ -41,6 +45,7 @@ export interface DripperAdaptation {
 export const DRIPPER_DISCLAIMER =
   '드리퍼 이식은 단일 숫자 매핑이 불가능해요. 비율·온도·목표 시간은 고정하고, 분쇄·푸어는 방향만 잡은 뒤 드로다운/맛으로 확정하세요.';
 
+// Fallback flow-restriction position when a registry row has no continuumPosition.
 function classPos(cls: DripperClass, explicit?: number): number {
   if (explicit != null && Number.isFinite(explicit)) return explicit;
   switch (cls) {
@@ -59,6 +64,8 @@ function classPos(cls: DripperClass, explicit?: number): number {
 
 const DELTA_THRESHOLD = 0.2;
 
+// Suggest how to move a recipe from its origin dripper to `target`.
+//   doseG: the recipe's dose (drives the size/bed-overflow check).
 export function suggestDripperAdaptation(
   origin: DripperInfo,
   doseG: number | undefined,
@@ -66,6 +73,8 @@ export function suggestDripperAdaptation(
 ): DripperAdaptation {
   const delta = classPos(target.class, target.continuumPosition) - classPos(origin.class, origin.continuumPosition);
 
+  // More dripper-restricted (slower hardware) → coarser + fewer pours so the bed
+  // doesn't choke; faster hardware → finer + more pours to hold the drawdown.
   let grindShift: GrindShift = 'none';
   let pourShift: PourShift = 'none';
   if (delta > DELTA_THRESHOLD) {
@@ -76,6 +85,7 @@ export function suggestDripperAdaptation(
     pourShift = 'more_pours';
   }
 
+  // ★ Size / bed match (the 40g large-dose guard).
   const minG = target.recommendedDoseRange?.minG;
   const maxG = target.recommendedDoseRange?.maxG;
   let sizeMatch: DripperAdaptation['sizeMatch'] = 'ok';
@@ -94,6 +104,8 @@ export function suggestDripperAdaptation(
     }
   }
 
+  // Heuristic guidance → cap confidence. 'high' only for a same-class, well-sized
+  // move; 'low' once the bed overflows (the direction table stops being reliable).
   let confidence: Confidence = 'medium';
   if (bedOverflow) confidence = 'low';
   else if (target.class === origin.class && sizeMatch === 'ok') confidence = 'high';

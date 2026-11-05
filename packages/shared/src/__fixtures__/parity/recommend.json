@@ -1,0 +1,891 @@
+{
+  "description": "Recommendation parity cases. Inputs are hand-written; every `expected` is generated from packages/shared/src/recommend.ts by `pnpm --filter @brewdial/shared parity:update`. The Kotlin RecommendationEngine must produce the same values (ParityGoldenTest).",
+  "cases": [
+    {
+      "name": "saved dark beans + full tag set",
+      "signals": {
+        "savedBeanAttrs": [
+          {
+            "roastLevelOrd": 5,
+            "acidity": 1,
+            "body": 4,
+            "flavorCategories": [
+              "nutty_cocoa",
+              "sweet"
+            ]
+          },
+          {
+            "roastLevelOrd": 5,
+            "acidity": 1,
+            "body": 4,
+            "decaf": true,
+            "flavorCategories": [
+              "nutty_cocoa",
+              "sweet"
+            ]
+          },
+          {
+            "roastLevelOrd": 4,
+            "acidity": 1,
+            "body": 4,
+            "decaf": true,
+            "flavorCategories": [
+              "nutty_cocoa",
+              "sweet"
+            ]
+          }
+        ],
+        "ratedBeanAttrs": [],
+        "likes": [
+          "저산미",
+          "고소함",
+          "초콜릿/단맛",
+          "다크 로스팅",
+          "저녁은 디카페인"
+        ],
+        "dislikes": [
+          "고산미",
+          "라이트 로스팅"
+        ]
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 5,
+          "acidity": 1,
+          "body": 4,
+          "flavorCategories": [
+            "nutty_cocoa",
+            "sweet"
+          ]
+        },
+        {
+          "roastLevelOrd": 4,
+          "acidity": 2,
+          "body": 3,
+          "decaf": true,
+          "flavorCategories": [
+            "nutty_cocoa",
+            "sweet"
+          ]
+        },
+        {
+          "roastLevelOrd": 3,
+          "acidity": 3,
+          "body": 4,
+          "flavorCategories": [
+            "fruity",
+            "sweet"
+          ]
+        },
+        {
+          "roastLevelOrd": 2,
+          "acidity": 4,
+          "body": 2,
+          "flavorCategories": [
+            "fruity",
+            "floral"
+          ]
+        },
+        {
+          "decaf": true
+        },
+        {}
+      ],
+      "expected": {
+        "target": {
+          "acidity": 1,
+          "body": 4,
+          "roast": 5,
+          "flavorAffinity": [
+            "nutty_cocoa",
+            "sweet"
+          ],
+          "penalize": [
+            "highAcidity",
+            "lightRoast"
+          ],
+          "confidence": "medium",
+          "summary": "저산미 · 풀바디 · 다크 로스팅 · 초콜릿·고소·단맛",
+          "evidence": [
+            "저장·고평점 원두 3종의 공통 프로필",
+            "명시 취향: 저산미·고소함·초콜릿/단맛·다크 로스팅·저녁은 디카페인"
+          ]
+        },
+        "scores": [
+          {
+            "band": "great",
+            "score": 1,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 1,
+                "target": 1,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 5,
+                "target": 5,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "초콜릿·고소·단맛",
+                "match": "hit"
+              }
+            ],
+            "why": "산미·로스팅·무게감이(가) 취향과 일치"
+          },
+          {
+            "band": "great",
+            "score": 0.7875000000000001,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 2,
+                "target": 1,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 4,
+                "target": 5,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 3,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "초콜릿·고소·단맛",
+                "match": "hit"
+              }
+            ],
+            "why": "산미·로스팅·무게감이(가) 취향과 일치"
+          },
+          {
+            "band": "ok",
+            "score": 0.6,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 3,
+                "target": 1,
+                "match": "near"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "target": 5,
+                "match": "near"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "과일·단맛",
+                "match": "hit"
+              }
+            ],
+            "why": "일부 축이 취향과 맞아요"
+          },
+          {
+            "band": "adventure",
+            "score": 0.155,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 4,
+                "target": 1,
+                "match": "miss"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 2,
+                "target": 5,
+                "match": "miss"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 2,
+                "target": 4,
+                "match": "near"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "과일·플로럴",
+                "match": "miss"
+              }
+            ],
+            "why": "취향과 꽤 달라요 — 모험"
+          },
+          {
+            "band": "unknown",
+            "score": 0,
+            "axes": [],
+            "why": "속성 정보가 없어요"
+          },
+          {
+            "band": "unknown",
+            "score": 0,
+            "axes": [],
+            "why": "속성 정보가 없어요"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no signals and no tags",
+      "signals": {
+        "savedBeanAttrs": [],
+        "ratedBeanAttrs": [],
+        "likes": [],
+        "dislikes": []
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 3,
+          "acidity": 3,
+          "body": 3,
+          "flavorCategories": [
+            "fruity"
+          ]
+        }
+      ],
+      "expected": {
+        "target": {
+          "flavorAffinity": [],
+          "penalize": [],
+          "confidence": "none",
+          "summary": "",
+          "evidence": []
+        },
+        "scores": [
+          {
+            "band": "unknown",
+            "score": 0,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 3,
+                "match": "na"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "match": "na"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 3,
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "과일",
+                "match": "na"
+              }
+            ],
+            "why": "속성 정보가 없어요"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tags only",
+      "signals": {
+        "savedBeanAttrs": [],
+        "ratedBeanAttrs": [],
+        "likes": [
+          "저산미",
+          "다크 로스팅"
+        ],
+        "dislikes": [
+          "라이트 로스팅"
+        ]
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 1,
+          "acidity": 2
+        },
+        {
+          "roastLevelOrd": 4,
+          "acidity": 2,
+          "body": 5
+        },
+        {
+          "flavorCategories": [
+            "green"
+          ]
+        }
+      ],
+      "expected": {
+        "target": {
+          "acidity": 2,
+          "roast": 4,
+          "flavorAffinity": [],
+          "penalize": [
+            "lightRoast"
+          ],
+          "confidence": "low",
+          "summary": "저산미 · 다크 로스팅",
+          "evidence": [
+            "명시 취향: 저산미·다크 로스팅"
+          ]
+        },
+        "scores": [
+          {
+            "band": "ok",
+            "score": 0.6538461538461539,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 2,
+                "target": 2,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 1,
+                "target": 4,
+                "match": "miss"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "—",
+                "match": "na"
+              }
+            ],
+            "why": "일부 축이 취향과 맞아요"
+          },
+          {
+            "band": "great",
+            "score": 1,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 2,
+                "target": 2,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 5,
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "—",
+                "match": "na"
+              }
+            ],
+            "why": "산미·로스팅이(가) 취향과 일치"
+          },
+          {
+            "band": "unknown",
+            "score": 0,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "그린",
+                "match": "na"
+              }
+            ],
+            "why": "속성 정보가 없어요"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rated beans only, half-way means round up",
+      "signals": {
+        "savedBeanAttrs": [],
+        "ratedBeanAttrs": [
+          {
+            "roastLevelOrd": 2,
+            "acidity": 3,
+            "body": 2,
+            "flavorCategories": [
+              "floral",
+              "fruity"
+            ]
+          },
+          {
+            "roastLevelOrd": 3,
+            "acidity": 4,
+            "body": 3,
+            "flavorCategories": [
+              "fruity"
+            ]
+          }
+        ],
+        "likes": [],
+        "dislikes": []
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 3,
+          "acidity": 4,
+          "body": 3,
+          "flavorCategories": [
+            "fruity",
+            "floral"
+          ]
+        },
+        {
+          "roastLevelOrd": 5,
+          "acidity": 1,
+          "body": 5,
+          "flavorCategories": [
+            "roasted"
+          ]
+        },
+        {
+          "acidity": 5
+        }
+      ],
+      "expected": {
+        "target": {
+          "acidity": 4,
+          "body": 3,
+          "roast": 3,
+          "flavorAffinity": [
+            "fruity",
+            "floral"
+          ],
+          "penalize": [],
+          "confidence": "medium",
+          "summary": "고산미 · 미디엄 바디 · 미디엄 로스팅 · 과일·플로럴",
+          "evidence": [
+            "저장·고평점 원두 2종의 공통 프로필"
+          ]
+        },
+        "scores": [
+          {
+            "band": "great",
+            "score": 1,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "target": 3,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 3,
+                "target": 3,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "과일·플로럴",
+                "match": "hit"
+              }
+            ],
+            "why": "산미·로스팅·무게감이(가) 취향과 일치"
+          },
+          {
+            "band": "adventure",
+            "score": 0.325,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 1,
+                "target": 4,
+                "match": "miss"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 5,
+                "target": 3,
+                "match": "near"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 5,
+                "target": 3,
+                "match": "near"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "로스티",
+                "match": "miss"
+              }
+            ],
+            "why": "취향과 꽤 달라요 — 모험"
+          },
+          {
+            "band": "great",
+            "score": 0.7500000000000001,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 5,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "—",
+                "match": "na"
+              }
+            ],
+            "why": "산미이(가) 취향과 일치"
+          }
+        ]
+      }
+    },
+    {
+      "name": "five signals give high confidence, mixed weights and flavor ties",
+      "signals": {
+        "savedBeanAttrs": [
+          {
+            "roastLevelOrd": 3,
+            "acidity": 2,
+            "flavorCategories": [
+              "spices",
+              "cereal"
+            ]
+          },
+          {
+            "body": 5,
+            "flavorCategories": [
+              "cereal",
+              "spices"
+            ]
+          }
+        ],
+        "ratedBeanAttrs": [
+          {
+            "roastLevelOrd": 4,
+            "acidity": 3,
+            "body": 4
+          },
+          {
+            "roastLevelOrd": 2,
+            "acidity": 5,
+            "flavorCategories": [
+              "sour_fermented"
+            ]
+          },
+          {
+            "acidity": 1,
+            "body": 2
+          }
+        ],
+        "likes": [],
+        "dislikes": [
+          "고산미"
+        ]
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 3,
+          "acidity": 5,
+          "body": 4,
+          "flavorCategories": [
+            "spices"
+          ]
+        },
+        {
+          "roastLevelOrd": 3,
+          "acidity": 2,
+          "body": 4,
+          "flavorCategories": [
+            "sour_fermented",
+            "green"
+          ]
+        },
+        {
+          "flavorCategories": [
+            "cereal"
+          ]
+        }
+      ],
+      "expected": {
+        "target": {
+          "acidity": 3,
+          "body": 4,
+          "roast": 3,
+          "flavorAffinity": [
+            "spices",
+            "cereal",
+            "sour_fermented"
+          ],
+          "penalize": [
+            "highAcidity"
+          ],
+          "confidence": "high",
+          "summary": "중간 산미 · 풀바디 · 미디엄 로스팅 · 스파이스·곡물",
+          "evidence": [
+            "저장·고평점 원두 5종의 공통 프로필",
+            "명시 취향: "
+          ]
+        },
+        "scores": [
+          {
+            "band": "ok",
+            "score": 0.66,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 5,
+                "target": 3,
+                "match": "near"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "target": 3,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "스파이스",
+                "match": "hit"
+              }
+            ],
+            "why": "일부 축이 취향과 맞아요"
+          },
+          {
+            "band": "great",
+            "score": 0.825,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 2,
+                "target": 3,
+                "match": "hit"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "target": 3,
+                "match": "hit"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": 4,
+                "target": 4,
+                "match": "hit"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "발효·그린",
+                "match": "hit"
+              }
+            ],
+            "why": "산미·로스팅·무게감이(가) 취향과 일치"
+          },
+          {
+            "band": "great",
+            "score": 1,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "곡물",
+                "match": "hit"
+              }
+            ],
+            "why": "향미이(가) 취향과 일치"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown tags are ignored but still count as tags",
+      "signals": {
+        "savedBeanAttrs": [],
+        "ratedBeanAttrs": [],
+        "likes": [
+          "없는 태그"
+        ],
+        "dislikes": []
+      },
+      "beans": [
+        {
+          "roastLevelOrd": 3,
+          "acidity": 3
+        }
+      ],
+      "expected": {
+        "target": {
+          "flavorAffinity": [],
+          "penalize": [],
+          "confidence": "low",
+          "summary": "",
+          "evidence": [
+            "명시 취향: 없는 태그"
+          ]
+        },
+        "scores": [
+          {
+            "band": "unknown",
+            "score": 0,
+            "axes": [
+              {
+                "key": "acidity",
+                "label": "산미",
+                "value": 3,
+                "match": "na"
+              },
+              {
+                "key": "roast",
+                "label": "로스팅",
+                "value": 3,
+                "match": "na"
+              },
+              {
+                "key": "body",
+                "label": "무게감",
+                "value": "—",
+                "match": "na"
+              },
+              {
+                "key": "flavor",
+                "label": "향미",
+                "value": "—",
+                "match": "na"
+              }
+            ],
+            "why": "속성 정보가 없어요"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -48,6 +48,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check mini-app domain copy matches packages/shared
+        run: pnpm domain:check
+
       - name: Run type check
         run: pnpm check
 

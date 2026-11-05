@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.ObjectMapper
-import java.nio.file.Paths
 
 class RecommendationEngineTest {
     private val brily = BeanAttributes(
@@ -156,56 +155,5 @@ class RecommendationEngineTest {
 
         val acidityAxis = scoreBean(BeanAttributes(acidity = 3), target).axes.first { it["key"] == "acidity" }
         assertEquals(3, acidityAxis["target"])
-    }
-
-    @Test
-    fun crossGoldenMatchesTheCompiledTypeScriptImplementation() {
-        val target = deriveTasteTarget(signals)
-        val result = scoreBean(jaldoe, target)
-        val kotlinJson = ObjectMapper().writeValueAsString(
-            linkedMapOf(
-                "target" to linkedMapOf(
-                    "acidity" to Math.round(target.acidity!!),
-                    "body" to Math.round(target.body!!),
-                    "roast" to Math.round(target.roast!!),
-                    "flavorAffinity" to target.flavorAffinity,
-                    "penalize" to target.penalize,
-                    "confidence" to target.confidence,
-                    "summary" to target.summary,
-                    "evidence" to target.evidence
-                ),
-                "score" to linkedMapOf(
-                    "band" to result.band,
-                    "score" to result.score,
-                    "axes" to result.axes,
-                    "why" to result.why
-                )
-            )
-        )
-        val repositoryRoot = Paths.get(System.getProperty("user.dir")).toAbsolutePath().parent.parent
-        val script = """
-            import { deriveTasteTarget, scoreBean } from './packages/shared/dist/recommend.js';
-            const signals = {
-              savedBeanAttrs: [
-                { roastLevelOrd: 5, acidity: 1, body: 4, flavorCategories: ['nutty_cocoa', 'sweet'] },
-                { roastLevelOrd: 5, acidity: 1, body: 4, decaf: true, flavorCategories: ['nutty_cocoa', 'sweet'] },
-                { roastLevelOrd: 4, acidity: 1, body: 4, decaf: true, flavorCategories: ['nutty_cocoa', 'sweet'] }
-              ],
-              ratedBeanAttrs: [],
-              likes: ['저산미', '고소함', '초콜릿/단맛', '다크 로스팅', '저녁은 디카페인'],
-              dislikes: ['고산미', '라이트 로스팅']
-            };
-            const target = deriveTasteTarget(signals);
-            const score = scoreBean({ roastLevelOrd: 3, acidity: 3, body: 4, flavorCategories: ['fruity', 'sweet'] }, target);
-            console.log(JSON.stringify({ target, score }));
-        """.trimIndent()
-        val process = ProcessBuilder("node", "--input-type=module", "-e", script)
-            .directory(repositoryRoot.toFile())
-            .redirectErrorStream(true)
-            .start()
-        val typeScriptJson = process.inputStream.bufferedReader().use { it.readText().trim() }
-
-        assertEquals(0, process.waitFor(), typeScriptJson)
-        assertEquals(typeScriptJson, kotlinJson)
     }
 }

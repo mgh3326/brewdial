@@ -1,5 +1,6 @@
-// Vendored from packages/shared/src/schemas.ts. Re-sync if it changes.
-import type { PreferenceDoc } from './types';
+// GENERATED from packages/shared/src/schemas.ts by scripts/sync-miniapp-domain.mjs.
+// Do not edit: change packages/shared and run `pnpm domain:sync`.
+import type { PreferenceDoc } from './types.js';
 
 export const recipeCodePattern = /^COF-\d{4,}$/;
 

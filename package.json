@@ -10,6 +10,8 @@
     "check": "pnpm -r check",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
+    "domain:sync": "node scripts/sync-miniapp-domain.mjs",
+    "domain:check": "node scripts/sync-miniapp-domain.mjs --check",
     "web:build": "pnpm --filter @brewdial/miniapp web:build",
     "mcp": "pnpm --filter @brewdial/mcp mcp",
     "mcp:dev": "pnpm --filter @brewdial/mcp mcp:dev",
