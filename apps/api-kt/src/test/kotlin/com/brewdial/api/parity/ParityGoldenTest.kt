@@ -14,6 +14,7 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import tools.jackson.databind.node.ArrayNode
 import tools.jackson.databind.node.ObjectNode
 import java.nio.file.Files
@@ -26,7 +27,8 @@ import java.nio.file.Paths
  * test fails whenever the Kotlin port gives a different result for the same input.
  */
 class ParityGoldenTest {
-    private val mapper = ObjectMapper()
+    // The Kotlin module keeps `is`-prefixed Boolean names (isAffiliate), as the TS fixtures expect.
+    private val mapper = jacksonObjectMapper()
 
     private val fixtureDir: Path =
         Paths.get(System.getProperty("user.dir")).toAbsolutePath()
