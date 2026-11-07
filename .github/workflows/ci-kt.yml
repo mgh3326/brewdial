@@ -9,12 +9,22 @@ name: Kotlin API CI
 # unrelated PRs and strand them. So this always runs: `changes` compares the
 # paths, the database jobs skip when nothing they cover changed, and the final
 # job passes right away.
+#
+# On the main stage (Main CI calls this workflow) the database suite is never
+# narrowed by changed paths: `changes` reports relevant=true for every non-PR
+# event. The deployed-schema -> candidate path runs in the deploy stage there
+# and is skipped with `contract: false`; pull requests keep it unchanged.
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      contract:
+        description: Run the node-pg-migrate schema -> Flyway baseline contract path.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -39,16 +49,13 @@ jobs:
         id: paths
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            base=HEAD^1
+            echo "relevant=$(.github/scripts/api-paths-changed.sh HEAD^1)" >> "$GITHUB_OUTPUT"
           else
-            base="$BEFORE"
-            # A push can carry several commits. A failed fetch makes the script run the tests.
-            git fetch --quiet --depth=1 origin "$base" || true
+            # Main stage: the full suite runs on every push, never narrowed by paths.
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "relevant=$(.github/scripts/api-paths-changed.sh "$base")" >> "$GITHUB_OUTPUT"
 
   postgresql:
     name: API tests (PostgreSQL 17)
@@ -100,6 +107,7 @@ jobs:
           pnpm --filter @brewdial/db build
 
       - name: Create the node-pg-migrate contract database
+        if: github.event_name == 'pull_request' || inputs.contract
         run: |
           PGPASSWORD=postgrespassword psql -h localhost -U postgres -d brewdial_test \
             -c 'create database brewdial_contract'
@@ -117,6 +125,7 @@ jobs:
         run: ./gradlew --no-daemon build
 
       - name: Contract tests vs Spring (node-pg-migrate schema, Flyway baseline)
+        if: github.event_name == 'pull_request' || inputs.contract
         working-directory: apps/api-kt
         env:
           DATABASE_URL: ${{ env.CONTRACT_DATABASE_URL }}

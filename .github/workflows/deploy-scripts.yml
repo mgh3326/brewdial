@@ -3,18 +3,13 @@ name: Deploy scripts
 # The OCI host scripts have no other test run. Uses stubs only: no host access.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "deploy/oci/**"
-      - "deploy/mac/**"
-      - ".github/workflows/deploy-scripts.yml"
   pull_request:
     branches: [main]
     paths:
       - "deploy/oci/**"
       - "deploy/mac/**"
       - ".github/workflows/deploy-scripts.yml"
+  workflow_call:
 
 permissions:
   contents: read
