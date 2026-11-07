@@ -1,0 +1,137 @@
+name: Main CI
+
+# Main stage of the three-tier pipeline (operator decision
+# decision/2026-11-07/fleet-ci-three-tiers-r2). It runs on every push to main,
+# cancels an older run, and covers:
+#   - every basic check (Typecheck/Lint/Test, the DB integration suite, the
+#     deploy-script and shiftgate checks, the k3d install/migration gate);
+#   - the full PostgreSQL + MySQL integration suite against real databases,
+#     without -race and not narrowed by changed paths (the `changes` job in
+#     ci-kt.yml reports relevant=true for every non-PR event);
+#   - the migration and startup checks (`pnpm db:migrate`, the Hono HTTP
+#     contract suite that starts the built server, and the Spring context).
+#
+# One aggregation job posts the `ci-ok` commit status on the pushed sha.
+# The deploy stage (.github/workflows/deploy.yml) starts from a successful run
+# of this workflow for the same sha.
+#
+# `workflow_dispatch` and `workflow_call` exist so this stage can be run on any
+# ref before merge (ci.yml's manual entry calls it; workflow_run and
+# workflow_dispatch only work for a workflow file that exists on the default
+# branch).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: main-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  basic:
+    # The PR check set, moved explicitly and run without -race.
+    name: Typecheck, Lint & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: brewdial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check mini-app domain copy matches packages/shared
+        run: pnpm domain:check
+
+      - name: Run type check
+        run: pnpm check
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run DB migrations
+        run: pnpm db:migrate
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Blackbox contract tests vs Hono
+        run: pnpm --filter @brewdial/api test:http
+
+  api:
+    uses: ./.github/workflows/ci-kt.yml
+    with:
+      # The deployed-schema -> candidate migration path runs in the deploy stage.
+      contract: false
+
+  scripts:
+    uses: ./.github/workflows/deploy-scripts.yml
+
+  render:
+    uses: ./.github/workflows/shiftgate-render.yml
+
+  k8s:
+    uses: ./.github/workflows/k8s-validate.yml
+
+  ci-ok:
+    name: Aggregate main stage
+    needs: [basic, api, scripts, render, k8s]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the ci-ok commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          BASIC: ${{ needs.basic.result }}
+          API: ${{ needs.api.result }}
+          SCRIPTS: ${{ needs.scripts.result }}
+          RENDER: ${{ needs.render.result }}
+          K8S: ${{ needs.k8s.result }}
+        run: |
+          set -euo pipefail
+          state=success
+          for result in "$BASIC" "$API" "$SCRIPTS" "$RENDER" "$K8S"; do
+            echo "job result: ${result}"
+            [ "$result" = success ] || state=failure
+          done
+          echo "ci-ok=${state} sha=${SHA}"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state="${state}" \
+            -f context="ci-ok" \
+            -f description="main stage: basic + real-DB integration + install gate (${state})" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

@@ -4,16 +4,12 @@ name: shiftgate render check
 # and validates the generated HAProxy config with `haproxy -c`. No host access.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "deploy/oci/shiftgate/**"
-      - ".github/workflows/shiftgate-render.yml"
   pull_request:
     branches: [main]
     paths:
       - "deploy/oci/shiftgate/**"
       - ".github/workflows/shiftgate-render.yml"
+  workflow_call:
 
 permissions:
   contents: read

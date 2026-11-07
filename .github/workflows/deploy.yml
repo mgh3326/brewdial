@@ -1,0 +1,400 @@
+name: Deploy stage
+
+# Deploy stage of the three-tier pipeline (operator decision
+# decision/2026-11-07/fleet-ci-three-tiers-r2). This is the VERIFICATION stage:
+# it deploys, publishes, tags and pushes NOTHING. Its only write is the
+# `deploy-ok` commit status (with candidate evidence in the job summary).
+#
+# It starts from a successful "Main CI" run for the same sha (workflow_run on
+# its completion, checking out head_sha) and runs the heavy checks that do not
+# belong on main:
+#   - the language concurrency check (Node has no data-race detector, so the
+#     full suite runs under Vitest's parallel worker pool);
+#   - the linux/arm64 release build of every artifact the release workflows
+#     ship (image.yml: the Hono image, image-kt.yml: the Spring image), plus an
+#     install smoke that starts each image and hits its health path;
+#   - the deployed-schema -> candidate migration path (node-pg-migrate schema,
+#     then Flyway baseline + Hibernate validate + contract tests).
+#
+# It is never cancelled (cancel-in-progress: false). One run per repository at a
+# time; because GitHub keeps only one pending run per concurrency group, a
+# newer head replaces an older still-pending one.
+#
+# workflow_run only fires for runs on the default branch, so the same stage can
+# be run on any ref with workflow_dispatch (`ref` input, empty means the
+# dispatched ref) or through ci.yml's manual workflow_dispatch (`workflow_call`,
+# because this file is not on the default branch before merge). Both paths
+# still post deploy-ok on the resolved sha.
+
+on:
+  workflow_run:
+    workflows: ["Main CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref or sha to verify (empty means the dispatched ref).
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Ref or sha to verify (empty means the caller's ref).
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: deploy-stage
+  cancel-in-progress: false
+
+env:
+  DEPLOY_ENVIRONMENT: github-actions
+
+jobs:
+  prepare:
+    name: Resolve candidate
+    runs-on: ubuntu-latest
+    # workflow_run fires for any completion; only a successful push to main owns
+    # the deploy stage. The manual dispatch and workflow_call paths are always
+    # allowed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      short_sha: ${{ steps.target.outputs.short_sha }}
+      policy_revision: ${{ steps.target.outputs.policy_revision }}
+    steps:
+      - name: Checkout the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve the sha and the policy revision
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if [ "$EVENT" = workflow_run ] && [ "$sha" != "$HEAD_SHA" ]; then
+            echo "checked out ${sha}, but the main-stage head_sha is ${HEAD_SHA}" >&2
+            exit 1
+          fi
+          policy="$(git rev-parse HEAD:.mergewake/policy.yaml)"
+          {
+            echo "sha=${sha}"
+            echo "short_sha=$(git rev-parse --short=7 HEAD)"
+            echo "policy_revision=${policy}"
+          } >> "$GITHUB_OUTPUT"
+          echo "candidate sha=${sha}"
+          echo "policy_revision=${policy}"
+
+  concurrency:
+    name: Concurrency check (Node worker pool)
+    needs: prepare
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: brewdial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+    steps:
+      - name: Checkout the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared and database packages
+        run: |
+          pnpm --filter @brewdial/shared build
+          pnpm --filter @brewdial/db build
+
+      - name: Apply the migrations
+        run: pnpm db:migrate
+
+      # Node runs on one event loop and has no data-race detector. Vitest's
+      # parallel worker pool is the toolchain's concurrency mode, so the full
+      # suite runs once more under it. DB suites keep fileParallelism: false.
+      # No test is excluded as flaky (none known).
+      - name: Full suite under the parallel worker pool
+        run: pnpm -r test -- --pool=threads
+
+  release-images:
+    name: Release builds + install smoke (linux/arm64)
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: brewdial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+    steps:
+      - name: Checkout the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Setup Java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      # artifact of image.yml
+      - name: Build the Hono API image
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg "GIT_SHA=$(git rev-parse --short=7 HEAD)" \
+            --tag brewdial-api:deploy .
+
+      # artifact of image-kt.yml
+      - name: Build the Spring API image
+        working-directory: apps/api-kt
+        run: ./gradlew --no-daemon bootBuildImage --imageName brewdial-api-kt:deploy
+
+      - name: Check the target platform and runtime user
+        run: |
+          set -euo pipefail
+          for image in brewdial-api:deploy brewdial-api-kt:deploy; do
+            arch="$(docker image inspect "$image" --format '{{.Architecture}}')"
+            echo "$image architecture: ${arch}"
+            [ "$arch" = arm64 ] || { echo "$image is ${arch}, expected arm64"; exit 1; }
+          done
+          hono_user="$(docker image inspect brewdial-api:deploy --format '{{.Config.User}}')"
+          kt_user="$(docker image inspect brewdial-api-kt:deploy --format '{{.Config.User}}')"
+          echo "hono user: ${hono_user}"
+          echo "spring user: ${kt_user}"
+          [ "$hono_user" = node ] || { echo "Hono image must run as node"; exit 1; }
+          [ "$kt_user" = "1002:1001" ] || { echo "Spring image must run as the Paketo cnb user"; exit 1; }
+
+      - name: Start each built image and hit its health path
+        env:
+          DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker logs api-smoke >&2 || true
+            docker logs api-kt-smoke >&2 || true
+            docker rm -f api-smoke api-kt-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          wait_ok() {
+            local url="$1"
+            for _ in $(seq 1 60); do
+              if curl -fsS "$url" >/dev/null; then
+                echo "ok: ${url}"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "no healthy response from ${url}" >&2
+            return 1
+          }
+
+          # Host networking so DATABASE_URL's localhost reaches the runner's
+          # service container; -p is not used with --network host.
+          docker run -d --name api-smoke \
+            --network host \
+            -e HOST=0.0.0.0 \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e AGENT_TOKEN=test-token \
+            brewdial-api:deploy
+          wait_ok http://127.0.0.1:3020/api/health
+          wait_ok http://127.0.0.1:3020/api/db/health
+
+          docker run -d --name api-kt-smoke \
+            --network host \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e AGENT_TOKEN=test-token \
+            brewdial-api-kt:deploy
+          wait_ok http://127.0.0.1:3021/api/health
+          wait_ok http://127.0.0.1:3021/api/db/health
+          echo "both images installed and healthy (Flyway V1 applied on the empty database)"
+
+      - name: Record the artifact digests
+        id: digest
+        run: |
+          set -euo pipefail
+          api_id="$(docker image inspect brewdial-api:deploy --format '{{.Id}}')"
+          kt_id="$(docker image inspect brewdial-api-kt:deploy --format '{{.Id}}')"
+          digest="api=${api_id};api-kt=${kt_id}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "artifact digests: ${digest}"
+
+  migration:
+    name: Deployed schema -> candidate migration
+    needs: prepare
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: brewdial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Empty database: Flyway applies db/migration/postgresql/V1 itself.
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+      # node-pg-migrate database (the deployed shape): Flyway must baseline it
+      # at V1 and Hibernate must validate against it.
+      CONTRACT_DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_contract
+    steps:
+      - name: Checkout the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared and database packages
+        run: |
+          pnpm --filter @brewdial/shared build
+          pnpm --filter @brewdial/db build
+
+      - name: Create the node-pg-migrate contract database
+        run: |
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -d brewdial_test \
+            -c 'create database brewdial_contract'
+          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm db:migrate
+
+      - name: Setup Java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Contract tests vs Spring (node-pg-migrate schema, Flyway baseline)
+        working-directory: apps/api-kt
+        env:
+          DATABASE_URL: ${{ env.CONTRACT_DATABASE_URL }}
+        run: scripts/contract-test.sh
+
+  deploy-ok:
+    name: Post deploy-ok
+    needs: [prepare, concurrency, release-images, migration]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the deploy-ok commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+          POLICY: ${{ needs.prepare.outputs.policy_revision }}
+          CONCURRENCY: ${{ needs.concurrency.result }}
+          IMAGES: ${{ needs.release-images.result }}
+          MIGRATION: ${{ needs.migration.result }}
+          DIGEST: ${{ needs.release-images.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$SHA" ] || { echo "no candidate sha resolved" >&2; exit 1; }
+
+          result=success
+          for job_result in "$CONCURRENCY" "$IMAGES" "$MIGRATION"; do
+            echo "job result: ${job_result}"
+            [ "$job_result" = success ] || result=failure
+          done
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # GitHub caps a commit status description at 140 chars; the full
+          # candidate evidence (repo, sha, policy, suite, environment, run_id,
+          # result, artifact digest) is in the job summary below.
+          description="sha=${SHORT_SHA} policy=${POLICY:0:7} suite=deploy env=${DEPLOY_ENVIRONMENT} result=${result}"
+
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state="${result}" \
+            -f context="deploy-ok" \
+            -f description="${description}" \
+            -f target_url="${run_url}"
+
+          {
+            echo "## Deploy stage (verification only — nothing was deployed)"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| repo | \`${GITHUB_REPOSITORY}\` |"
+            echo "| sha | \`${SHA}\` |"
+            echo "| policy_revision | \`${POLICY}\` |"
+            echo "| suite | \`deploy\` |"
+            echo "| environment | \`${DEPLOY_ENVIRONMENT}\` |"
+            echo "| run_id | \`${GITHUB_RUN_ID}\` |"
+            echo "| result | \`${result}\` |"
+            echo "| artifact_digest | \`${DIGEST:-none}\` |"
+            echo "| concurrency | \`${CONCURRENCY}\` |"
+            echo "| release-images | \`${IMAGES}\` |"
+            echo "| migration | \`${MIGRATION}\` |"
+            echo ""
+            echo "Run: ${run_url}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "deploy-ok=${result} sha=${SHA} policy=${POLICY} digest=${DIGEST}"
