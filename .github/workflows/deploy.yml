@@ -243,18 +243,22 @@ jobs:
             return 1
           }
 
+          # Host networking so DATABASE_URL's localhost reaches the runner's
+          # service container; -p is not used with --network host.
           docker run -d --name api-smoke \
+            --network host \
             -e HOST=0.0.0.0 \
             -e DATABASE_URL="$DATABASE_URL" \
             -e AGENT_TOKEN=test-token \
-            -p 3020:3020 brewdial-api:deploy
+            brewdial-api:deploy
           wait_ok http://127.0.0.1:3020/api/health
           wait_ok http://127.0.0.1:3020/api/db/health
 
           docker run -d --name api-kt-smoke \
+            --network host \
             -e DATABASE_URL="$DATABASE_URL" \
             -e AGENT_TOKEN=test-token \
-            -p 3021:3021 brewdial-api-kt:deploy
+            brewdial-api-kt:deploy
           wait_ok http://127.0.0.1:3021/api/health
           wait_ok http://127.0.0.1:3021/api/db/health
           echo "both images installed and healthy (Flyway V1 applied on the empty database)"
