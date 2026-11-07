@@ -15,13 +15,16 @@ name: Main CI
 # The deploy stage (.github/workflows/deploy.yml) starts from a successful run
 # of this workflow for the same sha.
 #
-# `workflow_dispatch` exists so this stage can be measured on a topic branch;
-# workflow_run only fires from the default branch.
+# `workflow_dispatch` and `workflow_call` exist so this stage can be run on any
+# ref before merge (ci.yml's manual entry calls it; workflow_run and
+# workflow_dispatch only work for a workflow file that exists on the default
+# branch).
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -33,7 +36,61 @@ concurrency:
 
 jobs:
   basic:
-    uses: ./.github/workflows/ci.yml
+    # The PR check set, moved explicitly and run without -race.
+    name: Typecheck, Lint & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: brewdial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check mini-app domain copy matches packages/shared
+        run: pnpm domain:check
+
+      - name: Run type check
+        run: pnpm check
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run DB migrations
+        run: pnpm db:migrate
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Blackbox contract tests vs Hono
+        run: pnpm --filter @brewdial/api test:http
 
   api:
     uses: ./.github/workflows/ci-kt.yml

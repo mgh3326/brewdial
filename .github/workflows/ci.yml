@@ -1,9 +1,27 @@
 name: CI Gate
 
+# PR stage of the three-tier pipeline, unchanged and still the merge condition
+# (.mergewake/policy.yaml).
+#
+# `workflow_dispatch` is the manual ref path. GitHub only accepts a dispatch for
+# a workflow file that exists on the default branch, and main.yml/deploy.yml
+# only arrive with this PR, so this registered file runs one stage on the
+# chosen ref through a local reusable workflow (read from that ref):
+#   stage=pr     only the PR jobs (same as pull_request)
+#   stage=main   only Main CI (main.yml)
+#   stage=deploy only the deploy stage (deploy.yml)
+# It runs that stage and nothing else, so the run's duration is that stage's.
+
 on:
   pull_request:
     branches: [main]
-  workflow_call:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage to run on this ref.
+        required: true
+        type: choice
+        options: [pr, main, deploy]
 
 permissions:
   contents: read
@@ -11,6 +29,9 @@ permissions:
 jobs:
   ci:
     name: Typecheck, Lint & Test
+    # A direct dispatch runs only the stage asked for; every PR run keeps the
+    # full PR job.
+    if: github.event_name != 'workflow_dispatch' || inputs.stage == 'pr'
     runs-on: ubuntu-latest
 
     services:
@@ -64,3 +85,21 @@ jobs:
 
       - name: Blackbox contract tests vs Hono
         run: pnpm --filter @brewdial/api test:http
+
+  main-stage:
+    # Manual ref path: Main CI on the dispatched ref.
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'main'
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/main.yml
+
+  deploy-stage:
+    # Manual ref path: the deploy stage on the dispatched ref's sha.
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy'
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      ref: ${{ github.sha }}

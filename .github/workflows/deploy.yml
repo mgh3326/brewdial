@@ -21,8 +21,10 @@ name: Deploy stage
 # newer head replaces an older still-pending one.
 #
 # workflow_run only fires for runs on the default branch, so the same stage can
-# be run on any ref with workflow_dispatch (`ref` input). That path still posts
-# deploy-ok on the resolved sha.
+# be run on any ref with workflow_dispatch (`ref` input, empty means the
+# dispatched ref) or through ci.yml's manual workflow_dispatch (`workflow_call`,
+# because this file is not on the default branch before merge). Both paths
+# still post deploy-ok on the resolved sha.
 
 on:
   workflow_run:
@@ -32,8 +34,16 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag or SHA to verify with the deploy stage.
-        required: true
+        description: Ref or sha to verify (empty means the dispatched ref).
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Ref or sha to verify (empty means the caller's ref).
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -52,9 +62,11 @@ jobs:
     name: Resolve candidate
     runs-on: ubuntu-latest
     # workflow_run fires for any completion; only a successful push to main owns
-    # the deploy stage. The manual dispatch path is always allowed.
+    # the deploy stage. The manual dispatch and workflow_call paths are always
+    # allowed.
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
@@ -66,7 +78,7 @@ jobs:
       - name: Checkout the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref || github.sha }}
           fetch-depth: 0
 
       - name: Resolve the sha and the policy revision
