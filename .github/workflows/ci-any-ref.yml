@@ -1,0 +1,54 @@
+name: CI (any ref)
+
+# Runs the main stage (main.yml) on one exact commit, before merge. The ci-ok
+# commit status lands on the resolved sha with the same rule as a push to main,
+# so mergewake watch can bisect a red main. GitHub dispatches only workflow files
+# on the default branch, so the first live dispatch runs after this merges:
+#   gh workflow run ci-any-ref.yml -f ref=<40-hex sha or branch>
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact commit to test - a 40-hex sha or a branch name (no merge with main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: resolve ref
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Resolve the ref to a commit sha
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          # The ref goes into an API path, so accept only branch and sha characters.
+          if [[ ! "$INPUT_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "ref has characters outside [A-Za-z0-9._/-]: ${INPUT_REF}" >&2
+            exit 1
+          fi
+          sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${INPUT_REF}" --jq '.sha')"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ref did not resolve to a commit sha: ${INPUT_REF}" >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+  main:
+    name: main stage at target ref
+    needs: resolve
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/main.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}

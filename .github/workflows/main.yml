@@ -16,22 +16,31 @@ name: Main CI
 # of this workflow for the same sha.
 #
 # `workflow_dispatch` and `workflow_call` exist so this stage can be run on any
-# ref before merge (ci.yml's manual entry calls it; workflow_run and
-# workflow_dispatch only work for a workflow file that exists on the default
-# branch).
+# ref before merge (ci.yml's manual entry and ci-any-ref.yml call it; workflow_run
+# and workflow_dispatch only work for a workflow file that exists on the default
+# branch). With `ref` set (a resolved sha), the run checks out that sha and posts
+# `ci-ok` on it; without `ref`, the run is the push or manual run it always was.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Resolved commit sha to run the main stage on. Empty runs the caller's own sha.
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
   statuses: write
 
 concurrency:
-  group: main-ci-${{ github.ref }}
+  # A push to main keeps its per-ref group. An any-ref run is keyed on its
+  # resolved sha, so neither one cancels the other.
+  group: ${{ inputs.ref && format('main-ci-sha-{0}', inputs.ref) || format('main-ci-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -61,6 +70,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -97,15 +108,22 @@ jobs:
     with:
       # The deployed-schema -> candidate migration path runs in the deploy stage.
       contract: false
+      ref: ${{ inputs.ref }}
 
   scripts:
     uses: ./.github/workflows/deploy-scripts.yml
+    with:
+      ref: ${{ inputs.ref }}
 
   render:
     uses: ./.github/workflows/shiftgate-render.yml
+    with:
+      ref: ${{ inputs.ref }}
 
   k8s:
     uses: ./.github/workflows/k8s-validate.yml
+    with:
+      ref: ${{ inputs.ref }}
 
   ci-ok:
     name: Aggregate main stage
@@ -116,7 +134,7 @@ jobs:
       - name: Post the ci-ok commit status
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ inputs.ref || github.sha }}
           BASIC: ${{ needs.basic.result }}
           API: ${{ needs.api.result }}
           SCRIPTS: ${{ needs.scripts.result }}
