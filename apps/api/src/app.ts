@@ -10,6 +10,8 @@ import { me } from './routes/me.js'
 import { identityMiddleware } from './middleware/identity.js'
 import { agentAuth } from './middleware/agent-auth.js'
 import { agentRouter } from './routes/agent.js'
+import { createMcpRoute } from './routes/mcp.js'
+import type { JWTVerifyGetKey } from 'jose'
 
 // Toss mini-app WebView calls cross-origin from these EXACT origins and rejects
 // Access-Control-Allow-Origin: '*' — so we echo the specific origin + credentials.
@@ -54,10 +56,27 @@ api.route('/beans', beans)
 api.route('/', registries)
 api.route('/me', me)
 
-export const app = new Hono()
+export interface AppOptions {
+  /** Test seam for the /mcp Access verifier. Production uses the team's JWKS. */
+  mcpJwks?: JWTVerifyGetKey
+}
 
-// Request log (method, path, status, duration) → journald. No headers/body, so no secret leak.
-app.use('*', logger())
+export function createApp(options: AppOptions = {}): Hono {
+  const app = new Hono()
 
-app.route('/api', api) // canonical: /api/beans, /api/agent/* (MCP, ops)
-app.route('/', api) // mini-app/web client base omits /api: /beans, /me/collections
+  // Request log (method, path, status, duration) → journald. No headers/body, so no secret leak.
+  app.use('*', logger())
+
+  // /mcp is registered before the API mounts, so the sub-app's CORS and
+  // identity middleware never run for it. Its tool calls re-enter this app.
+  app.route(
+    '/',
+    createMcpRoute({ dispatch: async (request) => app.fetch(request), jwks: options.mcpJwks }),
+  )
+
+  app.route('/api', api) // canonical: /api/beans, /api/agent/* (MCP, ops)
+  app.route('/', api) // mini-app/web client base omits /api: /beans, /me/collections
+  return app
+}
+
+export const app = createApp()

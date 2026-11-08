@@ -33,6 +33,7 @@ on:
     paths:
       - "Dockerfile"
       - "apps/api/**"
+      - "apps/mcp/**"
       - "packages/db/**"
       - "packages/shared/**"
       - "deploy/oci/shiftgate/**"

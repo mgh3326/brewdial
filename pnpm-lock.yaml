@@ -13,18 +13,27 @@ importers:
       '@brewdial/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@brewdial/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@brewdial/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.15)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       '@sentry/node':
         specifier: ^8.0.0
         version: 8.55.2
       hono:
         specifier: ^4.6.0
         version: 4.12.15
+      jose:
+        specifier: 6.2.13
+        version: 6.2.13
       kysely:
         specifier: ^0.27.6
         version: 0.27.6
@@ -5329,6 +5338,9 @@ packages:
 
   joi@17.13.4:
     resolution: {integrity: sha512-1RuuER6kmt8K8I3nIWvPZKi5RQCb568ZPyY4Pwjlua+yo+63ZTmIwxLZH0heBmiKN4uxjvCiarDrjaeH84xicQ==}
+
+  jose@6.2.13:
+    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   jose@6.2.2:
     resolution: {integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==}
@@ -14943,6 +14955,8 @@ snapshots:
       '@sideway/address': 4.1.5
       '@sideway/formula': 3.0.1
       '@sideway/pinpoint': 2.0.0
+
+  jose@6.2.13: {}
 
   jose@6.2.2: {}
 
