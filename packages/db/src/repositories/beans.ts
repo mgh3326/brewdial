@@ -1,5 +1,7 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
+import { dbVendor } from '../db.js'
+import type { DbVendor } from '../vendor.js'
 
 // Row shape matching the client mapper's BeanSummaryRow
 // (apps/miniapp/src/lib/data/beans.ts — BeanSummaryRow interface).
@@ -53,8 +55,14 @@ const BEAN_COLS: ReadonlyArray<keyof DB['bean_summaries']> = [
   'attrs_notes',
 ]
 
-export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
-  return db
+// MySQL has no boolean `has_ai` (the view returns 0/1) and no `NULLS LAST`; the
+// vendor branches below keep the PostgreSQL statements byte-for-byte unchanged.
+function mysqlBeanRow(row: BeanRow): BeanRow {
+  return { ...row, has_ai: row.has_ai == null ? null : Number(row.has_ai) !== 0 }
+}
+
+export async function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
+  const visible = db
     .selectFrom('bean_summaries')
     .select(BEAN_COLS)
     // ROB-1291: attribute-bearing beans (Kurly catalog backfill) are listable even
@@ -63,24 +71,48 @@ export function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
       eb('recipe_count', '>', '0'),
       eb('attrs_source', 'is not', null),
     ]))
-    // DESC alone puts NULLs FIRST in Postgres — recipe-less (attr-only) beans would
-    // flood the top of the list. Force them below, then stable name order.
+  if (dbVendor() === 'mysql') {
+    // MySQL sorts NULL below every value, so DESC already puts recipe-less beans last.
+    const rows = await visible
+      .orderBy('latest_recipe_at', 'desc')
+      .orderBy('name', 'asc')
+      .execute() as unknown as BeanRow[]
+    return rows.map(mysqlBeanRow)
+  }
+  // DESC alone puts NULLs FIRST in Postgres — recipe-less (attr-only) beans would
+  // flood the top of the list. Force them below, then stable name order.
+  return visible
     .orderBy(sql`latest_recipe_at desc nulls last`)
     .orderBy('name', 'asc')
     .execute() as unknown as Promise<BeanRow[]>
 }
 
-export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<BeanRow[]> {
+// Case-insensitive, accent-sensitive contains match. The MySQL schema uses
+// utf8mb4_0900_as_cs, which is case-sensitive, so both sides are lower()-ed there.
+function containsCi(
+  eb: ExpressionBuilder<DB, 'bean_summaries'>,
+  column: 'name' | 'roaster',
+  pattern: string,
+  vendor: DbVendor,
+) {
+  if (vendor === 'mysql') {
+    return sql<boolean>`lower(${sql.ref(column)}) like lower(${pattern})`
+  }
+  return eb(column, 'ilike', pattern)
+}
+
+export async function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<BeanRow[]> {
   // Default limit 10 to match MCP find_bean disambiguation order.
   // Intentional divergence: we cap at 25 (MCP has no max); callers should not rely on >25 rows.
   const clampedLimit = Math.min(25, Math.max(1, limit ?? 10))
   const pattern = `%${q.trim()}%`
-  return db
+  const vendor = dbVendor()
+  const rows = await db
     .selectFrom('bean_summaries')
     .select(BEAN_COLS)
     .where((eb) => eb.or([
-      eb('name', 'ilike', pattern),
-      eb('roaster', 'ilike', pattern),
+      containsCi(eb, 'name', pattern, vendor),
+      containsCi(eb, 'roaster', pattern, vendor),
     ]))
     // ROB-1291: same visibility rule as listBeans — recipes OR structured attrs.
     .where((eb) => eb.or([
@@ -93,15 +125,18 @@ export function findBeans(db: Kysely<DB>, q: string, limit?: number): Promise<Be
     .orderBy('recipe_count', 'desc')
     .orderBy('name', 'asc')
     .limit(clampedLimit)
-    .execute() as unknown as Promise<BeanRow[]>
+    .execute() as unknown as BeanRow[]
+  return vendor === 'mysql' ? rows.map(mysqlBeanRow) : rows
 }
 
-export function getBean(db: Kysely<DB>, id: string): Promise<BeanRow | undefined> {
-  return db
+export async function getBean(db: Kysely<DB>, id: string): Promise<BeanRow | undefined> {
+  const row = await db
     .selectFrom('bean_summaries')
     .select(BEAN_COLS)
     .where('id', '=', id)
-    .executeTakeFirst() as unknown as Promise<BeanRow | undefined>
+    .executeTakeFirst() as unknown as BeanRow | undefined
+  if (row === undefined || dbVendor() !== 'mysql') return row
+  return mysqlBeanRow(row)
 }
 
 // ROB-654: agent-writable structured attributes on the shared `beans` registry.

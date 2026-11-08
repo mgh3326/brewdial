@@ -1,0 +1,7 @@
+# API test files that run against MySQL 8.4 in the "API tests (MySQL 8.4, Node)" CI job.
+# Paths are relative to apps/api. Read-path tests only: N1b (hk 3581) adds the write
+# paths and grows this list to every file, then deletes it.
+src/routes/health.test.ts
+src/routes/beans.test.ts
+src/routes/beans.search.test.ts
+src/routes/recipes.test.ts
