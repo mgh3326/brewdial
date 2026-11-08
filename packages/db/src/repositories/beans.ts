@@ -58,7 +58,12 @@ const BEAN_COLS: ReadonlyArray<keyof DB['bean_summaries']> = [
 // MySQL has no boolean `has_ai` (the view returns 0/1) and no `NULLS LAST`; the
 // vendor branches below keep the PostgreSQL statements byte-for-byte unchanged.
 function mysqlBeanRow(row: BeanRow): BeanRow {
-  return { ...row, has_ai: row.has_ai == null ? null : Number(row.has_ai) !== 0 }
+  const flavorCategories = row.flavor_categories
+  return {
+    ...row,
+    has_ai: row.has_ai == null ? null : Number(row.has_ai) !== 0,
+    flavor_categories: typeof flavorCategories === 'string' ? JSON.parse(flavorCategories) as string[] : flavorCategories,
+  }
 }
 
 export async function listBeans(db: Kysely<DB>): Promise<BeanRow[]> {
@@ -193,7 +198,8 @@ export async function updateBeanAttributes(
   if (patch.acidity !== undefined) set.acidity = patch.acidity
   if (patch.body !== undefined) set.body = patch.body
   if (patch.decaf !== undefined) set.decaf = patch.decaf
-  if (patch.flavorCategories !== undefined) set.flavor_categories = patch.flavorCategories
+  if (patch.flavorCategories !== undefined) set.flavor_categories = dbVendor() === 'mysql' && patch.flavorCategories != null
+    ? JSON.stringify(patch.flavorCategories) : patch.flavorCategories
   if (patch.attrsSource !== undefined) set.attrs_source = patch.attrsSource
   if (patch.sourceUrl !== undefined) set.source_url = patch.sourceUrl
   if (patch.attrsNotes !== undefined) set.attrs_notes = patch.attrsNotes
@@ -366,6 +372,7 @@ export async function insertBeanPurchaseLink(
   }
 
   const values: Record<string, unknown> = {
+    id: crypto.randomUUID(),
     bean_id: input.beanId,
     vendor: input.vendor,
     url: input.url,
@@ -376,10 +383,12 @@ export async function insertBeanPurchaseLink(
   if (input.sortOrder !== undefined) values.sort_order = input.sortOrder
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await (db.insertInto('bean_purchase_links') as any)
-    .values(values)
-    .returning(PURCHASE_LINK_COLS)
-    .executeTakeFirst() as BeanPurchaseLinkRow | undefined
+  const id = values.id as string
+  const row = await db.transaction().execute(async (trx) => {
+    await (trx.insertInto('bean_purchase_links') as any).values(values).execute()
+    return trx.selectFrom('bean_purchase_links').select(PURCHASE_LINK_COLS).where('id', '=', id)
+      .executeTakeFirst() as unknown as BeanPurchaseLinkRow | undefined
+  })
   if (!row) throw new Error('failed to insert bean purchase link')
   return row
 }

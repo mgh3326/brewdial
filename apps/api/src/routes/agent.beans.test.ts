@@ -19,12 +19,11 @@ let beanId: string
 beforeAll(async () => {
   process.env.AGENT_TOKEN = 'test-token'
   const db = getDb()
-  const row = await db
+  beanId = randomUUID()
+  await db
     .insertInto('beans')
-    .values({ name: `Agent Attr Bean ${SEED}`, roaster: `Roaster ${SEED}` })
-    .returning('id')
-    .executeTakeFirstOrThrow()
-  beanId = row.id
+    .values({ id: beanId, name: `Agent Attr Bean ${SEED}`, roaster: `Roaster ${SEED}` })
+    .execute()
 })
 
 afterAll(async () => {

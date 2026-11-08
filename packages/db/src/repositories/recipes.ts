@@ -1,5 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
+import { withOwnerWrites } from '../owner-writes.js'
+import { dbVendor } from '../db.js'
 
 // pg serializes a top-level JS array as a Postgres array literal (e.g. `steps` -> `{...}`),
 // which a jsonb column rejects (22P02 "invalid input syntax for type json"). JSON-serialize
@@ -130,15 +132,14 @@ export interface InsertAgentRecipePayload {
 
 /**
  * Insert a recipe on behalf of an agent. Runs inside a transaction that first
- * sets the `bd.owner_write_ok` session flag so the guard allows `created_by='agent'`.
+ * enables the owner-write guard for the duration of the transaction.
  */
 export async function insertAgentRecipe(
   db: Kysely<DB>,
   payload: InsertAgentRecipePayload
 ): Promise<RecipeRow> {
-  return db.transaction().execute(async (trx) => {
-    // Set the owner-write flag so the guard permits created_by='agent'.
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+  return withOwnerWrites(db, async (trx) => {
+    const id = crypto.randomUUID()
 
     const values: Record<string, unknown> = {
       method: payload.method,
@@ -147,6 +148,7 @@ export async function insertAgentRecipe(
       version: 1,
       status: 'active',
       owner_id: null,
+      id,
     }
     // Leave bean_id null when caller didn't supply one so the
     // recipes_link_bean BEFORE-INSERT trigger can link/dedup by bean_snapshot.
@@ -154,18 +156,19 @@ export async function insertAgentRecipe(
     if (payload.beanSnapshot !== undefined) values.bean_snapshot = asJsonb(payload.beanSnapshot)
     if (payload.params !== undefined) values.params = asJsonb(payload.params)
     if (payload.steps !== undefined) values.steps = asJsonb(payload.steps)
-    if (payload.intent !== undefined) values.intent = payload.intent
+    if (payload.intent !== undefined) values.intent = dbVendor() === 'mysql' ? JSON.stringify(payload.intent) : payload.intent
     if (payload.notes !== undefined) values.notes = payload.notes
     if (payload.adjustmentFromPrevious !== undefined)
       values.adjustment_from_previous = payload.adjustmentFromPrevious
     if (payload.dripperPortability !== undefined)
       values.dripper_portability = asJsonb(payload.dripperPortability)
 
-    return trx
+    await trx
       .insertInto('recipes')
       .values(values as Parameters<ReturnType<typeof trx.insertInto<'recipes'>>['values']>[0])
-      .returning(RECIPE_COLS)
-      .executeTakeFirstOrThrow() as unknown as Promise<RecipeRow>
+      .execute()
+    return await trx.selectFrom('recipes').select(RECIPE_COLS).where('id', '=', id)
+      .executeTakeFirstOrThrow() as unknown as RecipeRow
   })
 }
 
@@ -242,17 +245,15 @@ export async function updateRecipe(
   if (patch.params !== undefined) set.params = asJsonb(patch.params)
   if (patch.steps !== undefined) set.steps = asJsonb(patch.steps)
   if (patch.notes !== undefined) set.notes = patch.notes
-  if (patch.intent !== undefined) set.intent = patch.intent
+  if (patch.intent !== undefined) set.intent = dbVendor() === 'mysql' ? JSON.stringify(patch.intent) : patch.intent
   if (patch.beanSnapshot !== undefined) set.bean_snapshot = asJsonb(patch.beanSnapshot)
   if (patch.adjustmentFromPrevious !== undefined) set.adjustment_from_previous = patch.adjustmentFromPrevious
   if (patch.dripperPortability !== undefined) set.dripper_portability = asJsonb(patch.dripperPortability)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await (db.updateTable('recipes') as any)
-    .set(set)
-    .where('code', '=', code)
-    .returning(RECIPE_COLS)
-    .executeTakeFirst() as RecipeRow | undefined
+  const row = await db.transaction().execute(async (trx) => {
+    await (trx.updateTable('recipes') as any).set(set).where('code', '=', code).execute()
+    return trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).executeTakeFirst() as unknown as RecipeRow | undefined
+  })
   if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
   return row
 }
@@ -271,12 +272,10 @@ export async function setRecipeStatus(
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`invalid status: ${status}`), { code: 'INVALID_STATUS' })
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await (db.updateTable('recipes') as any)
-    .set({ status })
-    .where('code', '=', code)
-    .returning(RECIPE_COLS)
-    .executeTakeFirst() as RecipeRow | undefined
+  const row = await db.transaction().execute(async (trx) => {
+    await (trx.updateTable('recipes') as any).set({ status }).where('code', '=', code).execute()
+    return trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).executeTakeFirst() as unknown as RecipeRow | undefined
+  })
   if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
   return row
 }
@@ -295,19 +294,19 @@ export async function supersedeRecipe(
 ): Promise<{ old: RecipeRow; replacement: RecipeRow }> {
   return db.transaction().execute(async (trx) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const oldRow = await (trx.updateTable('recipes') as any)
+    await (trx.updateTable('recipes') as any)
       .set({ status: 'superseded', superseded_by: newCode })
       .where('code', '=', oldCode)
-      .returning(RECIPE_COLS)
-      .executeTakeFirst() as RecipeRow | undefined
+      .execute()
+    const oldRow = await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', oldCode).executeTakeFirst() as unknown as RecipeRow | undefined
     if (!oldRow) throw Object.assign(new Error(`recipe not found: ${oldCode}`), { code: 'NOT_FOUND' })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const newRow = await (trx.updateTable('recipes') as any)
+    await (trx.updateTable('recipes') as any)
       .set({ supersedes: oldCode })
       .where('code', '=', newCode)
-      .returning(RECIPE_COLS)
-      .executeTakeFirst() as RecipeRow | undefined
+      .execute()
+    const newRow = await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', newCode).executeTakeFirst() as unknown as RecipeRow | undefined
     if (!newRow) throw Object.assign(new Error(`recipe not found: ${newCode}`), { code: 'NOT_FOUND' })
 
     return { old: oldRow, replacement: newRow }
@@ -319,6 +318,7 @@ export async function insertManualRecipe(
   payload: InsertManualRecipePayload
 ): Promise<RecipeRow> {
   const values: Record<string, unknown> = {
+    id: crypto.randomUUID(),
     method: payload.method,
     title: payload.title,
     created_by: 'manual',
@@ -331,7 +331,7 @@ export async function insertManualRecipe(
   if (payload.beanSnapshot !== undefined) values.bean_snapshot = asJsonb(payload.beanSnapshot)
   if (payload.params !== undefined) values.params = asJsonb(payload.params)
   if (payload.steps !== undefined) values.steps = asJsonb(payload.steps)
-  if (payload.intent !== undefined) values.intent = payload.intent
+  if (payload.intent !== undefined) values.intent = dbVendor() === 'mysql' ? JSON.stringify(payload.intent) : payload.intent
   if (payload.notes !== undefined) values.notes = payload.notes
   if (payload.adjustmentFromPrevious !== undefined)
     values.adjustment_from_previous = payload.adjustmentFromPrevious
@@ -340,23 +340,26 @@ export async function insertManualRecipe(
 
   // ROB-634: personal recipes are private to their anonymous owner.
   if (payload.ownerId) {
-    return db.transaction().execute(async (trx) => {
-      await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
-      return trx
+    return withOwnerWrites(db, async (trx) => {
+      const id = values.id as string
+      await trx
         .insertInto('recipes')
         .values(
           { ...values, owner_id: payload.ownerId } as Parameters<
             ReturnType<typeof trx.insertInto<'recipes'>>['values']
           >[0]
         )
-        .returning(RECIPE_COLS)
-        .executeTakeFirstOrThrow() as unknown as RecipeRow
+        .execute()
+      return await trx.selectFrom('recipes').select(RECIPE_COLS).where('id', '=', id).executeTakeFirstOrThrow() as unknown as RecipeRow
     })
   }
 
-  return db
+  const id = values.id as string
+  return db.transaction().execute(async (trx) => {
+    await trx
     .insertInto('recipes')
     .values(values as Parameters<ReturnType<typeof db.insertInto<'recipes'>>['values']>[0])
-    .returning(RECIPE_COLS)
-    .executeTakeFirstOrThrow() as unknown as RecipeRow
+    .execute()
+    return await trx.selectFrom('recipes').select(RECIPE_COLS).where('id', '=', id).executeTakeFirstOrThrow() as unknown as RecipeRow
+  })
 }

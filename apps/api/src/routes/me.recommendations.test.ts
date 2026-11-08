@@ -1,15 +1,15 @@
 import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { getDb, closeDb, getGlobalPreference, setGlobalPreference } from '@brewdial/db';
+import { getDb, closeDb, dbVendor, getGlobalPreference, setGlobalPreference } from '@brewdial/db';
 
 const SEED = randomUUID().replace(/-/g, '').slice(0, 8);
 let beanId: string;
 
 beforeAll(async () => {
   const db = getDb();
-  const b = await db.insertInto('beans').values({ name: `RecBean ${SEED}`, roast_level_ord: 5, acidity: 1, body: 4, flavor_categories: ['nutty_cocoa', 'sweet'], attrs_source: 'ai_extracted' }).returning('id').executeTakeFirstOrThrow();
-  beanId = b.id;
+  beanId = randomUUID();
+  await db.insertInto('beans').values({ id: beanId, name: `RecBean ${SEED}`, roast_level_ord: 5, acidity: 1, body: 4, flavor_categories: dbVendor() === 'mysql' ? JSON.stringify(['nutty_cocoa', 'sweet']) as any : ['nutty_cocoa', 'sweet'], attrs_source: 'ai_extracted' }).execute();
   // give it an active public recipe so it appears in listBeans (recipe_count>0)
   await db.insertInto('recipes').values({ method: 'v60', title: `RecBean rec ${SEED}`, bean_id: beanId, owner_id: null }).execute();
 });
