@@ -140,6 +140,9 @@ jobs:
       - name: Run API tests on MySQL
         run: pnpm --filter @brewdial/api test
 
+      - name: Build MCP package
+        run: pnpm --filter @brewdial/mcp build
+
       - name: Blackbox contract tests vs Hono on MySQL
         run: pnpm --filter @brewdial/api test:http
 
