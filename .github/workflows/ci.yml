@@ -86,6 +86,62 @@ jobs:
       - name: Blackbox contract tests vs Hono
         run: pnpm --filter @brewdial/api test:http
 
+  api-tests-mysql:
+    # Same PR trigger as `ci`. The PostgreSQL job above is unchanged.
+    name: API tests (MySQL 8.4, Node)
+    if: github.event_name != 'workflow_dispatch' || inputs.stage == 'pr'
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        # OCI HeatWave runs the MySQL 8.4 LTS line.
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysqlpassword
+          MYSQL_DATABASE: brewdial_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysqlpassword"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The API imports @brewdial/db from its build output.
+      - name: Build db package
+        run: pnpm --filter @brewdial/db build
+
+      - name: Run DB migrations
+        run: pnpm db:migrate
+
+      # Second run in the same job: must log "nothing to apply".
+      - name: Run DB migrations again (applies nothing)
+        run: pnpm db:migrate
+
+      - name: Run API read-path tests on MySQL
+        run: |
+          files=$(grep -v -E '^[[:space:]]*(#|$)' apps/api/mysql-tests.txt)
+          pnpm --filter @brewdial/api exec vitest run $files
+
   main-stage:
     # Manual ref path: Main CI on the dispatched ref.
     if: github.event_name == 'workflow_dispatch' && inputs.stage == 'main'
