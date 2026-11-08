@@ -87,6 +87,10 @@ export interface RecipeParams {
   targetTimeSec?: number;
 }
 
+// Update-path params (PATCH /agent/recipes/:code, MCP update_recipe): keys merge by
+// top-level name, and a key set to null is removed from the stored params.
+export type RecipeParamsPatch = { [K in keyof RecipeParams]?: RecipeParams[K] | null };
+
 // ── ROB-611 backward-compat read accessors (every grind reader must use these).
 export function readGrind(g: GrindField | undefined): GrindSpec {
   if (g == null) return { target: {} };

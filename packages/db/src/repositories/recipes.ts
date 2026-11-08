@@ -2,6 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
 import { withOwnerWrites } from '../owner-writes.js'
 import { dbVendor } from '../db.js'
+import type { RecipeParamsPatch } from '@brewdial/shared'
 
 // pg serializes a top-level JS array as a Postgres array literal (e.g. `steps` -> `{...}`),
 // which a jsonb column rejects (22P02 "invalid input syntax for type json"). JSON-serialize
@@ -216,7 +217,7 @@ export interface InsertManualRecipePayload {
 
 export interface UpdateRecipePatch {
   title?: string
-  params?: unknown
+  params?: RecipeParamsPatch
   steps?: unknown
   notes?: string
   intent?: string[]
@@ -225,37 +226,140 @@ export interface UpdateRecipePatch {
   dripperPortability?: unknown
 }
 
+export interface UpdateRecipeOptions {
+  /** The version the caller last read. A different stored version → VERSION_CONFLICT, nothing written. */
+  expectedVersion?: number
+  /** Return before/after/changed and write nothing (no version bump). */
+  dryRun?: boolean
+}
+
+export type UpdateRecipeResult =
+  | { kind: 'updated'; row: RecipeRow }
+  | { kind: 'dryRun'; before: RecipeRow; after: RecipeRow; changed: string[] }
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+// Stable JSON for comparing stored and patched values (jsonb does not keep key order).
+function canonical(v: unknown): string | undefined {
+  return JSON.stringify(v, (_key, val: unknown) =>
+    isRecord(val)
+      ? Object.fromEntries(Object.entries(val).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : val
+  )
+}
+
+// Params merge by top-level key: present keys replace, null removes, absent keys keep the
+// stored value (including legacy keys the validator does not know). A non-object patch is
+// written as-is, as before.
+function mergeParams(stored: unknown, patch: unknown): unknown {
+  if (!isRecord(patch)) return patch
+  const merged: Record<string, unknown> = isRecord(stored) ? { ...stored } : {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete merged[key]
+    else if (value !== undefined) merged[key] = value
+  }
+  return merged
+}
+
+function paramValue(params: unknown, key: string): unknown {
+  return isRecord(params) ? params[key] : undefined
+}
+
+// The row as it would be after the patch (no write, version unchanged).
+function applyPatch(current: RecipeRow, patch: UpdateRecipePatch): RecipeRow {
+  return {
+    ...current,
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.params !== undefined ? { params: mergeParams(current.params, patch.params) } : {}),
+    ...(patch.steps !== undefined ? { steps: patch.steps } : {}),
+    ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+    ...(patch.intent !== undefined ? { intent: patch.intent } : {}),
+    ...(patch.beanSnapshot !== undefined ? { bean_snapshot: patch.beanSnapshot } : {}),
+    ...(patch.adjustmentFromPrevious !== undefined ? { adjustment_from_previous: patch.adjustmentFromPrevious } : {}),
+    ...(patch.dripperPortability !== undefined ? { dripper_portability: patch.dripperPortability } : {}),
+  }
+}
+
+// Field names use the PATCH body's spelling; params entries are reported as params.<key>.
+function changedFields(before: RecipeRow, after: RecipeRow, patch: UpdateRecipePatch): string[] {
+  const changed: string[] = []
+  const check = (name: string, column: keyof RecipeRow) => {
+    if (canonical(before[column]) !== canonical(after[column])) changed.push(name)
+  }
+  if (patch.title !== undefined) check('title', 'title')
+  if (patch.steps !== undefined) check('steps', 'steps')
+  if (patch.notes !== undefined) check('notes', 'notes')
+  if (patch.intent !== undefined) check('intent', 'intent')
+  if (patch.beanSnapshot !== undefined) check('beanSnapshot', 'bean_snapshot')
+  if (patch.adjustmentFromPrevious !== undefined) check('adjustmentFromPrevious', 'adjustment_from_previous')
+  if (patch.dripperPortability !== undefined) check('dripperPortability', 'dripper_portability')
+  if (isRecord(patch.params)) {
+    for (const key of Object.keys(patch.params)) {
+      if (canonical(paramValue(before.params, key)) !== canonical(paramValue(after.params, key))) {
+        changed.push(`params.${key}`)
+      }
+    }
+  }
+  return changed
+}
+
 /**
- * Update a recipe's editable fields and bump the version by 1.
- * NEVER writes owner_id / is_official / created_by (guard-protected columns).
- * Returns the updated RecipeRow, or throws if the code does not exist.
+ * Update a recipe's editable fields and bump the version by 1, in one transaction.
+ * The row is locked (`for update`), so the read, the expectedVersion check, the merge and the
+ * write are one unit on both PostgreSQL and MySQL. NEVER writes owner_id / is_official / created_by.
+ * dryRun returns { before, after, changed } and writes nothing (no version bump).
+ * Throws NOT_FOUND for an unknown code, and VERSION_CONFLICT (with currentVersion) when
+ * expectedVersion differs from the stored version.
  */
 export async function updateRecipe(
   db: Kysely<DB>,
   code: string,
-  patch: UpdateRecipePatch
-): Promise<RecipeRow> {
-  const current = await getRecipeAnyStatus(db, code)
-  if (!current) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+  patch: UpdateRecipePatch,
+  options: UpdateRecipeOptions = {}
+): Promise<UpdateRecipeResult> {
+  return db.transaction().execute(async (trx): Promise<UpdateRecipeResult> => {
+    const current = (await trx
+      .selectFrom('recipes')
+      .select(RECIPE_COLS)
+      .where('code', '=', code)
+      .forUpdate()
+      .executeTakeFirst()) as unknown as RecipeRow | undefined
+    if (!current) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+    if (options.expectedVersion !== undefined && options.expectedVersion !== current.version) {
+      throw Object.assign(
+        new Error(`version conflict: ${code} is at version ${current.version}, expected ${options.expectedVersion}`),
+        { code: 'VERSION_CONFLICT', currentVersion: current.version }
+      )
+    }
 
-  const set: Record<string, unknown> = {
-    version: (current.version ?? 1) + 1,
-  }
-  if (patch.title !== undefined) set.title = patch.title
-  if (patch.params !== undefined) set.params = asJsonb(patch.params)
-  if (patch.steps !== undefined) set.steps = asJsonb(patch.steps)
-  if (patch.notes !== undefined) set.notes = patch.notes
-  if (patch.intent !== undefined) set.intent = dbVendor() === 'mysql' ? JSON.stringify(patch.intent) : patch.intent
-  if (patch.beanSnapshot !== undefined) set.bean_snapshot = asJsonb(patch.beanSnapshot)
-  if (patch.adjustmentFromPrevious !== undefined) set.adjustment_from_previous = patch.adjustmentFromPrevious
-  if (patch.dripperPortability !== undefined) set.dripper_portability = asJsonb(patch.dripperPortability)
+    const after = applyPatch(current, patch)
+    if (options.dryRun) {
+      return { kind: 'dryRun', before: current, after, changed: changedFields(current, after, patch) }
+    }
 
-  const row = await db.transaction().execute(async (trx) => {
+    const set: Record<string, unknown> = {
+      version: (current.version ?? 1) + 1,
+    }
+    if (patch.title !== undefined) set.title = patch.title
+    if (patch.params !== undefined) set.params = asJsonb(after.params)
+    if (patch.steps !== undefined) set.steps = asJsonb(patch.steps)
+    if (patch.notes !== undefined) set.notes = patch.notes
+    if (patch.intent !== undefined) set.intent = dbVendor() === 'mysql' ? JSON.stringify(patch.intent) : patch.intent
+    if (patch.beanSnapshot !== undefined) set.bean_snapshot = asJsonb(patch.beanSnapshot)
+    if (patch.adjustmentFromPrevious !== undefined) set.adjustment_from_previous = patch.adjustmentFromPrevious
+    if (patch.dripperPortability !== undefined) set.dripper_portability = asJsonb(patch.dripperPortability)
+
     await (trx.updateTable('recipes') as any).set(set).where('code', '=', code).execute()
-    return trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).executeTakeFirst() as unknown as RecipeRow | undefined
+    const row = (await trx
+      .selectFrom('recipes')
+      .select(RECIPE_COLS)
+      .where('code', '=', code)
+      .executeTakeFirst()) as unknown as RecipeRow | undefined
+    if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
+    return { kind: 'updated', row }
   })
-  if (!row) throw Object.assign(new Error(`recipe not found: ${code}`), { code: 'NOT_FOUND' })
-  return row
 }
 
 const VALID_STATUSES = new Set(['active', 'archived', 'superseded', 'test', 'reference'])

@@ -20,6 +20,7 @@ import type {
   PourShift,
   QuickFeedbackTag,
   RecipeParams,
+  RecipeParamsPatch,
   RecipeStep
 } from './types.js';
 import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, QUICK_FEEDBACK_TAGS, TASTE_TAGS } from './types.js';
@@ -43,6 +44,8 @@ const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
 const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grinder', 'brewer'] as const;
+// Update path only: a null for one of these keys removes it from the stored params.
+const RECIPE_PARAM_NULLABLE_KEYS = new Set<string>([...RECIPE_PARAM_NUMBER_KEYS, ...RECIPE_PARAM_STRING_KEYS, 'grind']);
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -163,6 +166,24 @@ function validateRecipeParams(
       errors.push('params.grind must be a string or a GrindSpec object');
     }
   }
+  return out;
+}
+
+// Update path (partial PATCH): null on a known param key means "remove this key" on merge.
+// The nulls are split off before the strict create validator runs, so create still rejects them.
+function validateRecipeParamsPatch(
+  raw: unknown,
+  errors: string[]
+): RecipeParamsPatch | undefined {
+  if (!isPlainObject(raw)) return validateRecipeParams(raw, errors);
+  const present: Record<string, unknown> = {};
+  const removals: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === null && RECIPE_PARAM_NULLABLE_KEYS.has(key)) removals.push(key);
+    else present[key] = value;
+  }
+  const out: RecipeParamsPatch = { ...validateRecipeParams(present, errors) };
+  for (const key of removals) Object.assign(out, { [key]: null });
   return out;
 }
 
@@ -604,19 +625,58 @@ export function validateCreateRecipeInput(
 // validated (no required method/title), through the SAME validators as create so
 // agent-supplied params/grind/steps/beanSnapshot/dripperPortability cannot reach
 // the DB unchecked on the update path.
+export interface UpdateRecipeControls {
+  expectedVersion?: number;
+  dryRun?: boolean;
+}
+
+export interface UpdateRecipeValue extends Omit<Partial<CreateRecipeInput>, 'params'> {
+  params?: RecipeParamsPatch;
+  expectedVersion?: number;
+  dryRun?: boolean;
+}
+
+// Concurrency and preview controls for PATCH /agent/recipes/:code and MCP update_recipe.
+// expectedVersion: the stored version the caller last read (mismatch → 409 version_conflict).
+// dryRun: return before/after/changed and write nothing.
+export function validateUpdateRecipeControls(
+  input: Record<string, unknown>
+): ValidationResult<UpdateRecipeControls> {
+  const errors: string[] = [];
+  const value: UpdateRecipeControls = {};
+  if (input.expectedVersion !== undefined) {
+    const v = input.expectedVersion;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) errors.push('expectedVersion must be an integer >= 1');
+    else value.expectedVersion = v;
+  }
+  if (input.dryRun !== undefined) {
+    if (typeof input.dryRun !== 'boolean') errors.push('dryRun must be a boolean');
+    else value.dryRun = input.dryRun;
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
+}
+
 export function validateUpdateRecipeInput(
   input: unknown
-): ValidationResult<Partial<CreateRecipeInput>> {
+): ValidationResult<UpdateRecipeValue> {
   const errors: string[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
 
-  const value: Partial<CreateRecipeInput> = {};
+  const value: UpdateRecipeValue = {};
+  const controls = validateUpdateRecipeControls(input);
+  if (controls.ok) {
+    if (controls.value.expectedVersion !== undefined) value.expectedVersion = controls.value.expectedVersion;
+    if (controls.value.dryRun !== undefined) value.dryRun = controls.value.dryRun;
+  } else {
+    errors.push(...controls.errors);
+  }
   if (input.title !== undefined) {
     if (!isNonEmptyString(input.title)) errors.push('title must be a non-empty string');
     else value.title = (input.title as string).trim();
   }
   if (input.params !== undefined) {
-    const p = validateRecipeParams(input.params, errors);
+    const p = validateRecipeParamsPatch(input.params, errors);
     if (p !== undefined) value.params = p;
   }
   if (input.steps !== undefined) {

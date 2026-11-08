@@ -80,6 +80,96 @@ describe('handleUpdateRecipe', () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('No updatable fields');
   });
+
+  describe('merge, expectedVersion and dryRun', () => {
+    const jsonResponse = (status: number, body: unknown): Response =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    const recipeRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+      id: 'r1',
+      code: 'COF-0001',
+      method: 'v60',
+      title: 'Test',
+      version: 2,
+      params: { tempC: 92 },
+      steps: [],
+      bean_id: null,
+      bean_snapshot: null,
+      intent: null,
+      notes: null,
+      adjustment_from_previous: null,
+      created_by: 'agent',
+      owner_id: null,
+      is_official: false,
+      dripper_portability: null,
+      status: 'active',
+      supersedes: null,
+      superseded_by: null,
+      parent_code: null,
+      created_at: '2026-11-01T00:00:00.000Z',
+      updated_at: '2026-11-01T00:00:00.000Z',
+      ...overrides,
+    });
+
+    it('sends expectedVersion and null param keys (removals) in the PATCH body', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, recipeRow({ version: 3 })));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await handleUpdateRecipe(mockConfig, {
+        code: 'COF-0001',
+        params: { tempC: 88, grinder: null },
+        expectedVersion: 2,
+      });
+      expect(r.isError).toBeFalsy();
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.method).toBe('PATCH');
+      expect(JSON.parse(init.body as string)).toEqual({ params: { tempC: 88, grinder: null }, expectedVersion: 2 });
+    });
+
+    it('returns the dry-run before/after/changed payload', async () => {
+      const before = recipeRow({ params: { tempC: 92, grinder: 'Comandante' } });
+      const after = recipeRow({ params: { tempC: 88, grinder: 'Comandante' } });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(jsonResponse(200, { dryRun: true, before, after, changed: ['params.tempC'] }))
+      );
+      const r = await handleUpdateRecipe(mockConfig, { code: 'COF-0001', params: { tempC: 88 }, dryRun: true });
+      expect(r.isError).toBeFalsy();
+      const out = JSON.parse(r.content[0].text);
+      expect(out).toMatchObject({
+        ok: true,
+        dryRun: true,
+        changed: ['params.tempC'],
+        before: { version: 2, params: { tempC: 92, grinder: 'Comandante' } },
+        after: { version: 2, params: { tempC: 88, grinder: 'Comandante' } },
+      });
+    });
+
+    it('reports a version conflict with the current version and no success', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(409, { error: 'version_conflict', currentVersion: 5 })));
+      const r = await handleUpdateRecipe(mockConfig, { code: 'COF-0001', title: 'x', expectedVersion: 4 });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('version conflict');
+      expect(r.content[0].text).toContain('at version 5');
+      expect(r.content[0].text).toContain('expectedVersion 5');
+    });
+
+    it('rejects a non-integer expectedVersion before calling the API', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await handleUpdateRecipe(mockConfig, { code: 'COF-0001', title: 'x', expectedVersion: 1.5 });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('expectedVersion must be an integer >= 1');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a call that carries only controls (no field to change)', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await handleUpdateRecipe(mockConfig, { code: 'COF-0001', dryRun: true });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('No updatable fields');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('handleArchiveRecipe', () => {

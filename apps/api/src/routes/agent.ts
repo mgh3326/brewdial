@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput } from '@brewdial/shared'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -39,22 +39,33 @@ agentRouter.get('/recipes/:code', async (c) => {
   return c.json(row)
 })
 
-// PATCH /agent/recipes/:code — update editable fields; version is bumped by 1
+// PATCH /agent/recipes/:code — update editable fields; version is bumped by 1.
+// params merge by top-level key (null removes a key). expectedVersion: stale → 409 and no write.
+// dryRun: 200 with before/after/changed and no write.
 agentRouter.patch('/recipes/:code', async (c) => {
   const db = getDb()
   const code = c.req.param('code')
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'invalid body' }, 400)
 
+  const controls = validateUpdateRecipeControls(body)
+  if (!controls.ok) return c.json({ error: 'validation failed', details: controls.errors }, 400)
+
   // Strip guard-protected fields — server must never write these on update
   const { title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious, dripperPortability } = body as Record<string, unknown>
   const patch = { title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious, dripperPortability } as Parameters<typeof updateRecipe>[2]
 
   try {
-    const row = await updateRecipe(db, code, patch)
-    return c.json(row)
+    const result = await updateRecipe(db, code, patch, controls.value)
+    if (result.kind === 'dryRun') {
+      return c.json({ dryRun: true, before: result.before, after: result.after, changed: result.changed })
+    }
+    return c.json(result.row)
   } catch (err: unknown) {
     if (err instanceof Error && (err as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
+    if (err instanceof Error && 'code' in err && err.code === 'VERSION_CONFLICT' && 'currentVersion' in err) {
+      return c.json({ error: 'version_conflict', currentVersion: err.currentVersion }, 409)
+    }
     throw err
   }
 })
