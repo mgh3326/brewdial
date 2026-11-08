@@ -348,7 +348,8 @@ export function describeDatabaseUrl(raw: string): { label: string; local: boolea
 export async function assertReferenceStatusSupported(db: Kysely<DB>): Promise<void> {
   const r = dbVendor() === 'mysql'
     ? await sql<{ def: string }>`select check_clause as def from information_schema.check_constraints
-        where constraint_schema = database() and constraint_name = 'recipes_status_check'`.execute(db)
+        where constraint_schema = database()
+          and check_clause like '%status%' and check_clause like '%reference%'`.execute(db)
     : await sql<{ def: string }>`
     select pg_get_constraintdef(oid) as def from pg_constraint
     where conname = 'recipes_status_check' and conrelid = 'recipes'::regclass`.execute(db)

@@ -1,7 +1,7 @@
 import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { getDb, closeDb } from '@brewdial/db'
+import { getDb, closeDb, dbVendor } from '@brewdial/db'
 
 
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -30,9 +30,9 @@ beforeAll(async () => {
   if (!existing) {
     await db.insertInto('preferences').values({
       id: 'global',
-      likes: [],
-      dislikes: [],
-      default_params: {},
+      likes: dbVendor() === 'mysql' ? '[]' as any : [],
+      dislikes: dbVendor() === 'mysql' ? '[]' as any : [],
+      default_params: dbVendor() === 'mysql' ? '{}' as any : {},
     }).execute()
   }
 })
