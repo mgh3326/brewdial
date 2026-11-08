@@ -6,14 +6,30 @@ import { dbVendor } from '../db.js'
 // Upserts on (app_user_id, recipe_code) — matches rpc_save_recipe semantics.
 export async function saveRecipe(db: Kysely<DB>, appUserId: string, code: string): Promise<void> {
   if (dbVendor() === 'mysql') {
-    const recipe = await db.selectFrom('recipes').selectAll().where('code', '=', code)
-      .where('status', 'not in', ['test', 'reference']).executeTakeFirst()
-    if (!recipe) return
-    const query = (db.insertInto('saved_recipes') as any).values({
-      id: crypto.randomUUID(), app_user_id: appUserId, recipe_code: recipe.code,
-      snapshot: JSON.stringify(recipe),
+    await db.transaction().execute(async (trx) => {
+      const result = await sql<{ code: string; snapshot: unknown }>`
+        select r.code, json_object(
+          'id', r.id, 'code', r.code, 'method', r.method, 'title', r.title, 'version', r.version,
+          'params', r.params, 'steps', r.steps, 'bean_id', r.bean_id, 'bean_snapshot', r.bean_snapshot,
+          'intent', r.intent, 'notes', r.notes, 'adjustment_from_previous', r.adjustment_from_previous,
+          'created_by', r.created_by, 'owner_id', r.owner_id,
+          'is_official', json_extract(if(r.is_official, 'true', 'false'), '$'),
+          'dripper_portability', r.dripper_portability, 'status', r.status,
+          'supersedes', r.supersedes, 'superseded_by', r.superseded_by, 'parent_code', r.parent_code,
+          'created_at', concat(date_format(r.created_at, '%Y-%m-%dT%H:%i:%s'),
+            if(microsecond(r.created_at) = 0, '', concat('.', trim(trailing '0' from date_format(r.created_at, '%f')))), '+00:00'),
+          'updated_at', concat(date_format(r.updated_at, '%Y-%m-%dT%H:%i:%s'),
+            if(microsecond(r.updated_at) = 0, '', concat('.', trim(trailing '0' from date_format(r.updated_at, '%f')))), '+00:00')
+        ) as snapshot
+        from recipes r where r.code = ${code} and r.status not in ('test', 'reference')`.execute(trx)
+      const recipe = result.rows[0]
+      if (!recipe) return
+      const snapshot = typeof recipe.snapshot === 'string' ? recipe.snapshot : JSON.stringify(recipe.snapshot)
+      const query = (trx.insertInto('saved_recipes') as any).values({
+        id: crypto.randomUUID(), app_user_id: appUserId, recipe_code: recipe.code, snapshot,
+      })
+      await query.onDuplicateKeyUpdate({ snapshot }).execute()
     })
-    await query.onDuplicateKeyUpdate({ snapshot: JSON.stringify(recipe) }).execute()
     return
   }
   await sql`
