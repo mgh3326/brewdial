@@ -158,7 +158,7 @@ Do this after phase 2 has been stable for the observation period.
 - **HeatWave.** 사설 서브넷에서 MySQL 8.4 LTS 이상을 사용한다. 호스트 서브넷에서 TCP 3306만 허용한다. `brewdial` 데이터베이스와 애플리케이션 사용자를 만들고 필요한 권한을 부여한다. 트리거 생성 권한과 바이너리 로그 설정을 미리 확인한다.
 - **호스트의 스크립트.** `/opt/brewdial`에 `deploy/oci/heatwave-phase4.sh`가 포함된 커밋을 설치한다.
 - **서비스 설정.** 이 PR의 `deploy/oci/shiftgate/services.yaml`을 호스트의 `/etc/shiftgate/services.yaml`에 복사한다. 새 서비스는 `brewdial-api-mysql`이다.
-- **새 서비스 환경 파일.** `/etc/shiftgate/brewdial-api-mysql.env`를 `0600`으로 만들고 `AGENT_TOKEN`, `SENTRY_DSN`, HeatWave의 `DATABASE_URL=mysql://…`를 넣는다. `DATABASE_URL`은 복사 도구의 대상 URL과 같은 값이어야 한다.
+- **새 서비스 환경 파일.** `/etc/shiftgate/brewdial-api-mysql.env`를 `0600`으로 만들고 `AGENT_TOKEN`, `SENTRY_DSN`, HeatWave의 `DATABASE_URL=mysql://…`를 넣는다. `DATABASE_URL`은 복사 도구의 대상 URL과 같은 값이어야 한다. 기존 `/etc/shiftgate/brewdial-api.env`에 설정된 `BREWDIAL_MCP_CF_TEAM_DOMAIN`, `BREWDIAL_MCP_CF_AUD`, `BREWDIAL_MCP_ALLOWED_EMAILS` 값도 새 파일에 복사한다. 값은 화면이나 로그에 출력하지 않는다.
 - **복사 환경 파일.** `/etc/shiftgate/brewdial-copy.env`를 `0600`으로 만들고 `DATABASE_URL`에는 HeatWave 대상 URL, `BREWDIAL_COPY_SOURCE_URL`에는 PostgreSQL 원본 URL을 둔다. 롤백 파일은 두 URL의 방향을 바꾸어 만든다. 비밀 값을 터미널이나 명령 인수에 출력하지 않는다.
 
   ```sh
@@ -214,17 +214,17 @@ sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<Node �
 스크립트가 출력하는 명령은 Cloudflared 설정의 모든 `8020` 경로를 `8021`로 바꾼다. 유지보수 창 담당자가 실행한다.
 
 ```sh
-sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
+sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://localhost:8020#http://localhost:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
 ```
 
 공개 API의 상태 및 데이터베이스 건강 경로와 읽기 요청을 확인하고, MCP를 통한 쓰기도 확인한다. 오류 감시를 확인한 뒤 백업 타이머를 HeatWave에 맞게 전환한다. 롤백 기간 동안에는 PostgreSQL을 삭제하거나 기존 서비스 이미지를 제거하지 않는다.
 
 ### 4.5 롤백
 
-롤백에는 cutover에 사용한 Node 이미지 digest를 전달한다.
+롤백에는 cutover에 사용한 Node 이미지와 복사 도구의 digest를 모두 전달한다.
 
 ```sh
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<Node 이미지 digest>
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<Node 이미지 digest> --copy-digest sha256:<복사 도구 이미지 digest>
 ```
 
 스크립트는 MySQL의 Node 서비스와 기존 PostgreSQL의 Node 서비스를 중지한다. 완료 마커가 없으면 MySQL이 트래픽을 받지 않았으므로 PostgreSQL을 복사하지 않고 기존 서비스를 시작한다. 완료 마커가 있고 MySQL에 쓰기가 없으면 데이터 복사 없이 PostgreSQL의 Node 서비스를 시작한다. MySQL에 쓰기가 있으면 안전 덤프를 만든 다음 MySQL 데이터를 PostgreSQL에 복사하고 양쪽을 검증한 뒤 기존 서비스를 시작한다.
@@ -232,10 +232,10 @@ sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<Node 
 그 다음 Cloudflared 설정의 모든 `8021` 경로를 `8020`으로 돌린다.
 
 ```sh
-sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
+sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://localhost:8021#http://localhost:8020#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
 ```
 
-복사나 검증에 실패하면 PostgreSQL 데이터는 그대로 남고 기존 Node 서비스는 중지 상태로 유지된다. 로그의 오류를 해결한 뒤 동일 digest로 롤백을 다시 실행한다. 백업 타이머도 전환했다면 PostgreSQL용 스크립트로 되돌린다.
+역방향 복사 또는 그 뒤의 검증이 실패하면 PostgreSQL이 이미 일부 또는 전부 바뀌었을 수 있다. 기존 Node 서비스는 시작하지 않는다. 로그를 확인하고 롤백 전에 만든 `pre-rollback-*.dump`를 PostgreSQL에 복원한 뒤, 동일한 두 digest로 롤백을 다시 실행한다. 백업 타이머도 전환했다면 PostgreSQL용 스크립트로 되돌린다.
 
 ### 4.6 HeatWave 백업 타이머
 

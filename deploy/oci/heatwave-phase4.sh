@@ -312,7 +312,7 @@ cutover() {
   cat <<EOF
 Switch public traffic yourself with:
 
-  sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
+  sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://localhost:8020#http://localhost:8021#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
 EOF
 }
 
@@ -334,7 +334,7 @@ rollback() {
     return 0
   fi
 
-  RECOVERY="PostgreSQL keeps its rows unless the replace reported COPY_VERIFY_OK. The Node API stays stopped; fix the cause and run rollback again."
+  RECOVERY="A failed reverse copy or verification may have changed PostgreSQL. Keep the Node API stopped; restore the pre-rollback safety dump before retrying rollback."
   step stop "stop Node on MySQL and the Node API on PostgreSQL: no writers from here on"
   stop_service "$MYSQL_SERVICE"
   stop_service "$NODE_SERVICE"
@@ -375,7 +375,7 @@ rollback() {
   cat <<EOF
 If cloudflared points at Node on MySQL, switch public traffic back yourself with:
 
-  sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
+  sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://localhost:8021#http://localhost:8020#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
 EOF
 }
 

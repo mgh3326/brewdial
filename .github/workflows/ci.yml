@@ -165,6 +165,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Build API image
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" --tag brewdial-api-image-check .
@@ -174,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           container=brewdial-api-image-check
-          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f "$container" brewdial-api-flyway-check >/dev/null 2>&1 || true' EXIT
           docker run --detach --name "$container" --network host --memory=512m \
             --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test \
             --env HOST=127.0.0.1 --env NODE_ENV=production \
@@ -203,6 +205,42 @@ jobs:
           second_logs="$(docker logs "$container" 2>&1)"
           printf '%s\n' "$second_logs"
           grep -F 'nothing to apply' <<<"$second_logs"
+          docker rm -f "$container"
+
+          # Model the MySQL target state after api-kt starts and Flyway applies
+          # V1__baseline.sql before DatabaseCopyRunner copies any rows.
+          docker run --rm --network host mysql:8.4 mysql -h127.0.0.1 -uroot -pmysqlpassword \
+            -e 'create database brewdial_flyway_test character set utf8mb4 collate utf8mb4_0900_as_cs'
+          docker run --rm --network host -i mysql:8.4 mysql -h127.0.0.1 -uroot -pmysqlpassword brewdial_flyway_test \
+            < apps/api-kt/src/main/resources/db/migration/mysql/V1__baseline.sql
+          docker run --rm --network host -i mysql:8.4 mysql -h127.0.0.1 -uroot -pmysqlpassword brewdial_flyway_test <<'SQL'
+            create table flyway_schema_history (
+              installed_rank int not null primary key, version varchar(50), description varchar(200) not null,
+              type varchar(20) not null, script varchar(1000) not null, checksum int,
+              installed_by varchar(100) not null, installed_on timestamp not null default current_timestamp,
+              execution_time int not null, success boolean not null, index flyway_schema_history_s_idx (success)
+            );
+            insert into flyway_schema_history
+              (installed_rank, version, description, type, script, checksum, installed_by, execution_time, success)
+            values (1, '1', 'baseline', 'SQL', 'V1__baseline.sql', 123456789, 'root', 1, true);
+          SQL
+          flyway_container=brewdial-api-flyway-check
+          docker run --detach --name "$flyway_container" --network host --memory=512m \
+            --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_flyway_test \
+            --env HOST=127.0.0.1 --env NODE_ENV=production \
+            brewdial-api-image-check \
+            sh -c 'node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js'
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3020/api/db/health; then
+              printf '\n/api/db/health returned 200 after Flyway baseline\n'
+              break
+            fi
+            [ "$attempt" -lt 60 ] || { docker logs "$flyway_container"; exit 1; }
+            sleep 2
+          done
+          flyway_logs="$(docker logs "$flyway_container" 2>&1)"
+          printf '%s\n' "$flyway_logs"
+          grep -F 'adopted 001_baseline from successful Flyway V1__baseline.sql' <<<"$flyway_logs"
 
   main-stage:
     # Manual ref path: Main CI on the dispatched ref.

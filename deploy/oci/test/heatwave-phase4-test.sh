@@ -315,11 +315,12 @@ run_scenario happy "" cutover --digest "$DIGEST" --copy-digest "$COPY_DIGEST"
 expect_node_stopped
 [ "$(sed -n 1p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = 'service=Node on MySQL' ] && [ "$(sed -n 2p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = "node_digest=$DIGEST" ] && [ "$(sed -n 3p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = "copy_tool_digest=$COPY_DIGEST" ] || bad "a finished cutover must identify Node on MySQL and record both image digests"
 [ -s "$scenario/log/fixtures/paths.tsv" ] || bad "the saved responses are missing"
-case "$output" in *"sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared"*) ;; *) bad "the switch command is missing" ;; esac
-routes=$'api: http://127.0.0.1:8020\nmcp: http://127.0.0.1:8020'
+case "$output" in *"sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://localhost:8020#http://localhost:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared"*) ;; *) bad "the switch command is missing localhost support" ;; esac
+routes=$'api: http://127.0.0.1:8020\nmcp: http://localhost:8020\nadmin: http://127.0.0.1:8020'
 routed=${routes//127.0.0.1:8020/127.0.0.1:8021}
-[ "$routed" = $'api: http://127.0.0.1:8021\nmcp: http://127.0.0.1:8021' ] || bad "the global switch must update both 8020 routes"
-printf 'ok   switch moves two 8020 routes\n'
+routed=${routed//localhost:8020/localhost:8021}
+[ "$routed" = $'api: http://127.0.0.1:8021\nmcp: http://localhost:8021\nadmin: http://127.0.0.1:8021' ] || bad "the global switch must update all loopback 8020 routes"
+printf 'ok   switch moves all 127.0.0.1 and localhost 8020 routes\n'
 case "$output" in *"COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15 sequences=1"*) ;; *) bad "the report line is missing" ;; esac
 case "$output" in *"recipe_code_seq	42	42	OK"*) ;; *) bad "the sequence report is missing" ;; esac
 case "$output" in *"same: /api/beans"*) ;; *) bad "parity did not compare /api/beans" ;; esac
@@ -448,7 +449,7 @@ COMPARE='docker-verify-brewdial-copy.env-run1'
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-no-writes "" rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"
 expect_node_running; expect_no_marker
 case "$output" in *"MySQL took no writes"*) ;; *) bad "the message must say MySQL took no writes" ;; esac
-case "$output" in *"sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared"*) ;; *) bad "the switch back is missing" ;; esac
+case "$output" in *"sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://localhost:8021#http://localhost:8020#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared"*) ;; *) bad "the switch back is missing localhost support" ;; esac
 expect_success "$STOP_MYSQL
 $STOP_NODE
 $COMPARE
