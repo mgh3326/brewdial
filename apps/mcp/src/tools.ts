@@ -259,7 +259,8 @@ export async function handleCreateFeedback(
       feedback: {
         _id: feedback._id,
         recipeCode: feedback.recipeCode,
-        rawComment: feedback.rawComment ?? feedback.comment ?? null,
+        rawComment: feedback.rawComment ?? null,
+        ...(feedback.comment != null ? { comment: feedback.comment } : {}),
         quickTags: feedback.quickTags ?? [],
         ratings: feedback.ratings ?? null,
         source: feedback.source,
