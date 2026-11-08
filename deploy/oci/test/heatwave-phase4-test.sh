@@ -291,6 +291,11 @@ expect_stopped() {
   passed
 }
 
+expect_recovery() {
+  local expected="$1"
+  case "$output" in *"Next: $expected"*) ;; *) bad "expected recovery guidance containing [$expected]" ;; esac
+}
+
 node_running() { [ -e "$scenario/state/containers/shiftgate-brewdial-api-blue.running" ]; }
 marker_exists() { [ -e "$scenario/lib/phase4-cutover-done" ]; }
 expect_node_stopped() { if node_running; then bad "the Node API should be stopped"; fi; }
@@ -316,11 +321,11 @@ expect_node_stopped
 [ "$(sed -n 1p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = 'service=Node on MySQL' ] && [ "$(sed -n 2p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = "node_digest=$DIGEST" ] && [ "$(sed -n 3p "$scenario/lib/phase4-cutover-done" 2>/dev/null)" = "copy_tool_digest=$COPY_DIGEST" ] || bad "a finished cutover must identify Node on MySQL and record both image digests"
 [ -s "$scenario/log/fixtures/paths.tsv" ] || bad "the saved responses are missing"
 case "$output" in *"sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://localhost:8020#http://localhost:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared"*) ;; *) bad "the switch command is missing localhost support" ;; esac
-routes=$'api: http://127.0.0.1:8020\nmcp: http://localhost:8020\nadmin: http://127.0.0.1:8020'
+routes=$'api: http://127.0.0.1:8020\nmcp: http://localhost:8020'
 routed=${routes//127.0.0.1:8020/127.0.0.1:8021}
 routed=${routed//localhost:8020/localhost:8021}
-[ "$routed" = $'api: http://127.0.0.1:8021\nmcp: http://localhost:8021\nadmin: http://127.0.0.1:8021' ] || bad "the global switch must update all loopback 8020 routes"
-printf 'ok   switch moves all 127.0.0.1 and localhost 8020 routes\n'
+[ "$routed" = $'api: http://127.0.0.1:8021\nmcp: http://localhost:8021' ] || bad "the global switch must update both loopback 8020 routes"
+printf 'ok   switch moves two 8020 routes (127.0.0.1 and localhost)\n'
 case "$output" in *"COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15 sequences=1"*) ;; *) bad "the report line is missing" ;; esac
 case "$output" in *"recipe_code_seq	42	42	OK"*) ;; *) bad "the sequence report is missing" ;; esac
 case "$output" in *"same: /api/beans"*) ;; *) bad "parity did not compare /api/beans" ;; esac
@@ -472,13 +477,13 @@ $START_NODE"
 
 # --- rollback failures: the Node API stays stopped and the rollback can run again ---
 retryable() { marker_exists || bad "a failed rollback must stay retryable"; expect_node_stopped; }
-SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-mysql-keeps-running mysql-keeps-running rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped stop "$STOP_MYSQL"; retryable
+SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-mysql-keeps-running mysql-keeps-running rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped stop "$STOP_MYSQL"; expect_recovery "PostgreSQL has not been changed by rollback"; retryable
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-compare-breaks exit-on-1 rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped compare "$STOP_MYSQL
 $STOP_NODE
-$COMPARE"; retryable
+$COMPARE"; expect_recovery "PostgreSQL has not been changed by rollback"; retryable
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-compare-unproven silent-on-1 rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped compare "$STOP_MYSQL
 $STOP_NODE
-$COMPARE"; retryable
+$COMPARE"; expect_recovery "PostgreSQL has not been changed by rollback"; retryable
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 run_scenario rollback-other-image "" rollback --digest "$OTHER_DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped preflight ""
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 run_scenario rollback-other-copy-image "" rollback --digest "$DIGEST" --copy-digest "$OTHER_DIGEST"; expect_stopped preflight ""
 SCENARIO_NODE_UP=0 run_scenario rollback-no-node-colour no-node-colour rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped preflight ""
@@ -486,21 +491,25 @@ SCENARIO_MUTATE='rm env/brewdial-rollback.env' run_scenario rollback-missing-env
 
 # MySQL differs, and then a later step fails.
 writes_on_mysql() { SCENARIO_COMPARE_DIFFERS=1 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario "$@"; }
-writes_on_mysql rollback-dump-fails pg-dump rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped safety-dump "$REVERSE"; retryable
-writes_on_mysql rollback-archive-unreadable pg-restore rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped safety-dump "$REVERSE"; retryable
+writes_on_mysql rollback-dump-fails pg-dump rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped safety-dump "$REVERSE"; expect_recovery "PostgreSQL has not been changed by rollback"; retryable
+writes_on_mysql rollback-archive-unreadable pg-restore rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped safety-dump "$REVERSE"; expect_recovery "PostgreSQL has not been changed by rollback"; retryable
 writes_on_mysql rollback-replace-fails exit-on-2 rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped replace "$REVERSE
-$REPLACE2"; retryable
+$REPLACE2"; expect_recovery "The reverse copy or its verification may have changed PostgreSQL"; retryable
 writes_on_mysql rollback-verify-fails exit-on-3 rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped verify "$REVERSE
 $REPLACE2
-$VERIFY3"; retryable
+$VERIFY3"; expect_recovery "The reverse copy or its verification may have changed PostgreSQL"; retryable
 
 # The data is safe by then. A Node API that cannot start must not hide that, or repeat the copy.
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-node-wont-start node-wont-start rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped start "$STOP_MYSQL
 $STOP_NODE
 $COMPARE
-$START_NODE"; expect_no_marker
+$START_NODE"; expect_no_marker; expect_recovery "PostgreSQL has not been changed by rollback"
+writes_on_mysql rollback-node-wont-start-after-copy node-wont-start rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped start "$REVERSE
+$REPLACE2
+$VERIFY3
+$START_NODE"; expect_no_marker; expect_recovery "PostgreSQL contains the verified MySQL data. Do not restore"
 SCENARIO_NODE_UP=0 run_scenario rollback-node-never-answers node-never-answers rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST"; expect_stopped start "$STOP_NODE
-$START_NODE"
+$START_NODE"; expect_recovery "PostgreSQL has not been changed by rollback"
 
 # --- rollback --preflight changes nothing ---
 SCENARIO_DONE=1 SCENARIO_NODE_UP=0 SCENARIO_MYSQL_UP=1 run_scenario rollback-preflight "" rollback --digest "$DIGEST" --copy-digest "$COPY_DIGEST" --preflight

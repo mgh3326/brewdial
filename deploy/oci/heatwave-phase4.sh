@@ -334,7 +334,7 @@ rollback() {
     return 0
   fi
 
-  RECOVERY="A failed reverse copy or verification may have changed PostgreSQL. Keep the Node API stopped; restore the pre-rollback safety dump before retrying rollback."
+  RECOVERY="PostgreSQL has not been changed by rollback. Keep the Node API stopped; fix the failure and retry rollback."
   step stop "stop Node on MySQL and the Node API on PostgreSQL: no writers from here on"
   stop_service "$MYSQL_SERVICE"
   stop_service "$NODE_SERVICE"
@@ -355,10 +355,12 @@ rollback() {
       log "dump OK: $dump"
 
       step replace "MySQL to PostgreSQL: full replace, then counts, checksums and sequence"
+      RECOVERY="The reverse copy or its verification may have changed PostgreSQL. Keep the Node API stopped; restore $dump before retrying rollback."
       run_copy_tool rollback-replace "$ROLLBACK_ENV" replace
 
       step verify "fresh snapshot of both databases"
       run_copy_tool rollback-verify "$ROLLBACK_ENV" verify
+      RECOVERY="PostgreSQL contains the verified MySQL data. Do not restore $dump; fix the Node start failure and retry rollback. The cutover marker is cleared, so the retry will not copy again."
     else
       fail "the comparison did not finish (log: $TOOL_LOG)"
     fi
