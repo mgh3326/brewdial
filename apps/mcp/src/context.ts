@@ -100,7 +100,7 @@ export function summarizeFeedback(feedback: FeedbackDoc[]): FeedbackSummary {
     averageOverall,
     commonDesiredDirections,
     latestComment,
-    latestRawComment: latest?.rawComment ?? latest?.comment ?? null,
+    latestRawComment: latest?.rawComment ?? null,
     latestQuickTags: latest?.quickTags ?? [],
     latestSource: latest?.source ?? null
   };

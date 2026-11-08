@@ -332,7 +332,7 @@ const TOOLS: Tool[] = [
 
     annotations: { readOnlyHint: true, openWorldHint: false },
     description:
-      'Get recent BrewDial state in one read-only call: the newest recipes (limit, default 5, clamped to 1-20), each with its full feedback list and a feedbackSummary (count, averageOverall, commonDesiredDirections, latest comment/tags/source), plus global taste preferences, totals, and guidance — a short list of plain-text hints such as "no feedback yet" or "average overall below 3". Use get_recipe_context to look at one recipe by code.',
+      'Get recent BrewDial state in one read-only call: the newest recipes (limit, default 5, clamped to 1-20), each with its full feedback list and a feedbackSummary (count, averageOverall, commonDesiredDirections, latestRawComment = the words the user wrote, verbatim, or null, latestComment = a note that may be an agent summary or interpretation, latestQuickTags, latestSource), plus global taste preferences, totals, and guidance — a short list of plain-text hints such as "no feedback yet" or "average overall below 3". Use get_recipe_context to look at one recipe by code.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -363,7 +363,7 @@ const TOOLS: Tool[] = [
 
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     description:
-      "Save a tasting/feedback note for a BrewDial recipe. At least one of rawComment, ratings, or quickTags is required. Prefer rawComment for the user's own words. Returns the persisted feedback summary.",
+      "Save a tasting/feedback note for a BrewDial recipe. At least one of rawComment, ratings, or quickTags is required. Prefer rawComment for the user's own words. Returned rawComment is the user's own words, verbatim, or null; returned comment (when present) is a note that may be an agent's summary or interpretation, not the user's words. Returns the persisted feedback summary.",
     inputSchema: {
       type: 'object',
       properties: {
