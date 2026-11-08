@@ -84,7 +84,7 @@ describe('summarizeFeedback', () => {
     expect(result.averageOverall).toBe(4.5);
     expect(result.commonDesiredDirections).toContain('more body');
     expect(result.latestComment).toBe('Even better!');
-    expect(result.latestRawComment).toBe('Even better!');
+    expect(result.latestRawComment).toBeNull();
     expect(result.latestSource).toBe('web');
   });
 
@@ -117,22 +117,42 @@ describe('summarizeFeedback', () => {
     expect(result.latestSource).toBe('coffee_profile');
   });
 
-  it('falls back to comment when rawComment is absent (legacy doc)', () => {
+  it('never fills latestRawComment from comment when only comment exists', () => {
     const feedback: FeedbackDoc[] = [
       {
         _id: 'feedback:COF-0001:2024-01-01T00:00:00.000Z-a',
         type: 'feedback',
         recipeCode: 'COF-0001',
         recipeId: 'recipe:COF-0001',
-        comment: 'legacy comment',
-        source: 'web',
+        comment: 'agent summary',
+        source: 'agent',
         createdAt: '2024-01-01T00:00:00.000Z',
         updatedAt: '2024-01-01T00:00:00.000Z'
       }
     ];
     const result = summarizeFeedback(feedback);
-    expect(result.latestRawComment).toBe('legacy comment');
+    expect(result.latestRawComment).toBeNull();
+    expect(result.latestComment).toBe('agent summary');
     expect(result.latestQuickTags).toEqual([]);
+  });
+
+  it('returns rawComment and comment separately when both exist', () => {
+    const feedback: FeedbackDoc[] = [
+      {
+        _id: 'feedback:COF-0001:2024-01-02T00:00:00.000Z-b',
+        type: 'feedback',
+        recipeCode: 'COF-0001',
+        recipeId: 'recipe:COF-0001',
+        rawComment: '산미가 강했음',
+        comment: 'agent summary',
+        source: 'agent',
+        createdAt: '2024-01-02T00:00:00.000Z',
+        updatedAt: '2024-01-02T00:00:00.000Z'
+      }
+    ];
+    const result = summarizeFeedback(feedback);
+    expect(result.latestRawComment).toBe('산미가 강했음');
+    expect(result.latestComment).toBe('agent summary');
   });
 });
 

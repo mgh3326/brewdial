@@ -29,6 +29,27 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network connection refused (mock)')));
 });
 
+// A stored feedback row as the agent endpoint returns it (snake_case columns).
+function feedbackRowResponse(overrides: { comment: string | null; raw_comment: string | null }): Response {
+  return new Response(
+    JSON.stringify({
+      id: 1,
+      recipe_code: 'COF-0001',
+      bean_id: null,
+      ratings: null,
+      actual: null,
+      quick_tags: null,
+      desired_direction: null,
+      next_hint: null,
+      source: 'agent',
+      created_at: '2026-11-09T00:00:00.000Z',
+      updated_at: '2026-11-09T00:00:00.000Z',
+      ...overrides,
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -155,6 +176,24 @@ describe('handleCreateFeedback', () => {
     const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '오늘은 산미가 강했음' });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Error creating feedback');
+  });
+
+  it('returns rawComment null and comment under its own name when only comment is stored', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(feedbackRowResponse({ comment: 'agent summary', raw_comment: null })));
+
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', ratings: { overall: 4 } });
+    const body = JSON.parse(r.content[0].text);
+    expect(body.feedback.rawComment).toBeNull();
+    expect(body.feedback.comment).toBe('agent summary');
+  });
+
+  it('returns rawComment and comment unchanged when both are stored', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(feedbackRowResponse({ comment: 'agent summary', raw_comment: '산미가 강했음' })));
+
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: '산미가 강했음' });
+    const body = JSON.parse(r.content[0].text);
+    expect(body.feedback.rawComment).toBe('산미가 강했음');
+    expect(body.feedback.comment).toBe('agent summary');
   });
 });
 
