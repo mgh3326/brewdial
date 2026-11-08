@@ -4,6 +4,12 @@ required_checks:
   - 'Typecheck, Lint & Test'
   - 'API tests (PostgreSQL + MySQL)'
   - 'GitGuardian Security Checks'
+# Main is watched through the ci-ok status, which runs on push and on any-ref dispatch.
+watch_checks: ['ci-ok']
+# The any-ref CI workflow runs the main stage on one resolved sha, so a red main can be bisected.
+any_ref_workflow: ci-any-ref.yml
+# The any-ref run must post ci-ok on the dispatched sha.
+any_ref_checks: ['ci-ok']
 blocking:
   - paths: ['.mergewake/**']
     reason: Policy changes can authorize irreversible automation before a revert.
