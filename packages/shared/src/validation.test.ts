@@ -642,6 +642,39 @@ describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
     const r = validateUpdateRecipeInput('nope');
     expect(r.ok).toBe(false);
   });
+
+  it('keeps null on a param key as a removal marker (update path)', () => {
+    const r = validateUpdateRecipeInput({ params: { tempC: 88, grinder: null, grind: null } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params).toEqual({ tempC: 88, grinder: null, grind: null });
+  });
+
+  it('still rejects null on a param key for create (strict path)', () => {
+    const r = validateCreateRecipeInput({ method: 'v60', title: 'x', params: { tempC: null } });
+    expect(r.ok).toBe(false);
+  });
+
+  it('still rejects a wrongly typed (non-null) param on update', () => {
+    const r = validateUpdateRecipeInput({ params: { tempC: 'hot' } });
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts expectedVersion (integer >= 1) and dryRun (boolean)', () => {
+    const r = validateUpdateRecipeInput({ expectedVersion: 3, dryRun: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toEqual({ expectedVersion: 3, dryRun: true });
+  });
+
+  it.each([
+    [{ expectedVersion: 0 }, 'expectedVersion must be an integer >= 1'],
+    [{ expectedVersion: 1.5 }, 'expectedVersion must be an integer >= 1'],
+    [{ expectedVersion: '3' }, 'expectedVersion must be an integer >= 1'],
+    [{ dryRun: 'yes' }, 'dryRun must be a boolean'],
+  ])('rejects bad controls %j', (input, message) => {
+    const r = validateUpdateRecipeInput(input);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toContain(message);
+  });
 });
 
 describe('validateUpdateBeanAttributesInput', () => {

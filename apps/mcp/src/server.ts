@@ -195,7 +195,7 @@ const TOOLS: Tool[] = [
 
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     description:
-      'Edit an existing recipe in place. Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params.grind can be replaced with the structured form described in create_recipe.',
+      'Edit an existing recipe in place. Provide the COF-NNNN code and any fields to change; version is bumped automatically. Use this to fix a recipe rather than creating a near-duplicate. params merge by key: keys you send replace the stored value, a key set to null is removed, and keys you omit are kept (params.grind is replaced as a whole when sent; grind can use the structured form described in create_recipe). steps, intent, notes and the other fields are replaced. Pass expectedVersion to refuse the write if the recipe changed since you read it; pass dryRun: true to preview before/after/changed without writing. A taste change should use supersede_recipe instead of an in-place edit.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,7 +207,9 @@ const TOOLS: Tool[] = [
         intent: { type: 'array', items: { type: 'string' } },
         beanSnapshot: BEAN_SNAPSHOT_SCHEMA,
         adjustmentFromPrevious: { type: 'string' },
-        dripperPortability: DRIPPER_PORTABILITY_SCHEMA
+        dripperPortability: DRIPPER_PORTABILITY_SCHEMA,
+        expectedVersion: { type: 'integer', minimum: 1, description: 'The version you last read. If the stored version differs, nothing is written and the error names the current version.' },
+        dryRun: { type: 'boolean', description: 'Return { before, after, changed } and write nothing (no version bump).' }
       },
       required: ['code']
     }

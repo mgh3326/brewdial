@@ -16,6 +16,7 @@ import {
   setRecipeStatus,
   supersedeRecipe,
   updateRecipe,
+  RecipeVersionConflictError,
   type RecipeUpdate,
 } from './repositories/recipes.js';
 import { findBeans, listBeans, updateBeanAttributes } from './repositories/beans.js';
@@ -102,15 +103,26 @@ export async function handleUpdateRecipe(
   if (v.beanSnapshot !== undefined) patch.beanSnapshot = v.beanSnapshot;
   if (v.adjustmentFromPrevious !== undefined) patch.adjustmentFromPrevious = v.adjustmentFromPrevious;
   if (v.dripperPortability !== undefined) patch.dripperPortability = v.dripperPortability;
-  if (Object.keys(patch).length === 0) {
+  if (v.expectedVersion !== undefined) patch.expectedVersion = v.expectedVersion;
+  if (v.dryRun !== undefined) patch.dryRun = v.dryRun;
+  const hasField = Object.keys(patch).some((k) => k !== 'expectedVersion' && k !== 'dryRun');
+  if (!hasField) {
     return errorResult('No updatable fields provided (title, params, steps, notes, intent, beanSnapshot, adjustmentFromPrevious, dripperPortability).');
   }
 
   try {
-    const recipe = await updateRecipe(config, code as RecipeCode, patch);
-    if (!recipe) return jsonResult({ ok: false, error: `Recipe ${code} not found` });
-    return jsonResult({ ok: true, recipe });
+    const result = await updateRecipe(config, code as RecipeCode, patch);
+    if (!result) return jsonResult({ ok: false, error: `Recipe ${code} not found` });
+    if (result.kind === 'dryRun') {
+      return jsonResult({ ok: true, dryRun: true, before: result.before, after: result.after, changed: result.changed });
+    }
+    return jsonResult({ ok: true, recipe: result.recipe });
   } catch (error) {
+    if (error instanceof RecipeVersionConflictError) {
+      return errorResult(
+        `Error updating recipe ${code}: version conflict. The recipe is at version ${error.currentVersion}; re-read it and retry with expectedVersion ${error.currentVersion}, or use supersede_recipe for a taste change.`
+      );
+    }
     return errorResult(`Error updating recipe: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
