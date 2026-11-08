@@ -4,7 +4,7 @@
 #
 # Layout in the final image:
 #   /app       — @brewdial/api prod deploy (dist + prod node_modules)
-#   /migrate   — @brewdial/db deploy incl. node-pg-migrate + SQL migrations
+#   /migrate   — @brewdial/db deploy incl. migration runners + SQL migrations
 #                (run before the server: k8s initContainer in deploy/oci/k3s/,
 #                shiftgate `args` in deploy/oci/shiftgate/services.yaml)
 
@@ -43,7 +43,7 @@ COPY packages/shared packages/shared
 RUN pnpm --filter @brewdial/shared --filter @brewdial/db --filter @brewdial/mcp --filter @brewdial/api build \
  && rm -rf /out/api /out/db \
  && pnpm deploy --legacy --filter @brewdial/api --prod /out/api \
- && pnpm deploy --legacy --filter @brewdial/db --dev /out/db
+ && pnpm deploy --legacy --filter @brewdial/db --prod /out/db
 
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 

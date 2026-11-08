@@ -15,7 +15,7 @@
       "default": "./dist/testing.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "scripts", "migrations-mysql", "src/vendor.ts"],
   "scripts": {
     "build": "pnpm --filter @brewdial/shared build && tsc",
     "check": "pnpm --filter @brewdial/shared build && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
@@ -25,13 +25,11 @@
     "test": "pnpm --filter @brewdial/shared build && vitest run",
     "load:xbloom-reference": "tsx scripts/load-xbloom-reference.ts"
   },
-  "dependencies": { "@brewdial/shared": "workspace:*", "kysely": "^0.27.0", "mysql2": "^3.24.6", "pg": "^8.13.0", "yaml": "2.9.0" },
+  "dependencies": { "@brewdial/shared": "workspace:*", "kysely": "^0.27.0", "mysql2": "^3.24.6", "node-pg-migrate": "^7.9.0", "pg": "^8.13.0", "tsx": "^4.19.0", "yaml": "2.9.0" },
   "devDependencies": {
-    "node-pg-migrate": "^7.9.0",
     "kysely-codegen": "^0.17.0",
     "@types/pg": "^8.11.0",
     "vitest": "^2.1.0",
-    "typescript": "^5.6.0",
-    "tsx": "^4.19.0"
+    "typescript": "^5.6.0"
   }
 }

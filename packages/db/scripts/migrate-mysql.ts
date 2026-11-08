@@ -158,6 +158,36 @@ export async function migrateMysql(
           continue
         }
 
+        // The Kotlin copy tool starts Spring Boot against the MySQL target, so
+        // Flyway applies V1__baseline.sql before copying. That file's SQL body
+        // is kept byte-identical to 001_baseline.sql. Adopt only Flyway's
+        // successful V1 record; trying to replay the baseline would fail on
+        // the already-created tables and prevent the Node service from booting.
+        if (version === '001_baseline') {
+          const [flywayTableRows] = await connection.query(
+            `select count(*) as count from information_schema.tables
+             where table_schema = database() and table_name = 'flyway_schema_history'`,
+          )
+          const flywayTableExists = Number(
+            (flywayTableRows as unknown as Array<{ count: number }>)[0]?.count ?? 0,
+          ) > 0
+          if (flywayTableExists) {
+            const [flywayRows] = await connection.query(
+              `select script from flyway_schema_history
+               where version = '1' and success = 1 and script = 'V1__baseline.sql' limit 1`,
+            )
+            if ((flywayRows as unknown[]).length > 0) {
+              await connection.query(
+                `insert into ${MYSQL_MIGRATION_TABLE} (version, checksum) values (?, ?)`,
+                [version, checksum],
+              )
+              result.alreadyApplied.push(version)
+              log(`adopted ${version} from successful Flyway V1__baseline.sql`)
+              continue
+            }
+          }
+        }
+
         const statements = splitMysqlScript(text)
         for (const [index, statement] of statements.entries()) {
           try {

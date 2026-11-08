@@ -32,20 +32,20 @@
    sudo systemctl restart cloudflared
    ```
 4. **DNS 추가.** `<mcp-hostname>`을 터널로 가리키는 레코드를 추가한다.
-5. **환경 파일에 변수 추가 후 배포.** 호스트의 환경 파일(`/etc/brewdial/api.env`)에 다음 세 변수를 넣는다. 값은 `deploy/oci/api.env.example`의 설명을 따른다.
+5. **환경 파일에 변수 추가 후 배포.** 현재 활성 서비스의 환경 파일(`/etc/shiftgate/brewdial-api.env`, HeatWave cutover 후에는 `/etc/shiftgate/brewdial-api-mysql.env`)에 다음 세 변수를 넣는다. 값은 `deploy/oci/api.env.example`의 설명을 따른다.
    ```
    BREWDIAL_MCP_CF_TEAM_DOMAIN=<team-domain>.cloudflareaccess.com
    BREWDIAL_MCP_CF_AUD=<aud>
    BREWDIAL_MCP_ALLOWED_EMAILS=<operator-email>
    ```
-   그 다음 평소 배포 절차(`deploy-oci.yml`)로 `brewdial-api`를 배포한다. 기동 로그에서 `mcp.access enabled`가 보여야 한다. `mcp.access disabled reason=incomplete_config ...`이 보이면 어느 변수가 빠졌는지 플래그(`*_set=false`)로 확인한다.
+   그 다음 평소 배포 절차(`deploy-oci.yml`)로 현재 활성 서비스(`brewdial-api` 또는 HeatWave cutover 후 `brewdial-api-mysql`)를 재배포한다. HeatWave cutover 전환 시에는 세 변수를 기존 환경 파일에서 새 환경 파일로 복사하고 MySQL 서비스에 적용한다. 기동 로그에서 `mcp.access enabled`가 보여야 한다. `mcp.access disabled reason=incomplete_config ...`이 보이면 어느 변수가 빠졌는지 플래그(`*_set=false`)로 확인한다.
 6. **검증.**
    - `https://<mcp-hostname>/.well-known/oauth-authorization-server` → `200`
    - 인증 없이 `POST https://<mcp-hostname>/mcp` → `401`, 본문 `{"error":"unauthorized"}`
    - ChatGPT 커넥터를 추가한 뒤 도구 목록에 13개가 보인다.
 7. **롤백.** 둘 중 하나로 되돌린다.
    - 터널 ingress에서 `<mcp-hostname>` 규칙을 제거하고 cloudflared를 재시작한다.
-   - 또는 환경 파일에서 세 변수 중 하나를 비우고 `brewdial-api`를 재시작한다. 그러면 `/mcp`는 `503`을 낸다.
+   - 또는 환경 파일에서 세 변수 중 하나를 비우고 현재 활성 서비스를 재시작한다. HeatWave 전환 뒤 PostgreSQL 서비스로 롤백한다면 MCP 인증 변수를 기존 서비스 환경 파일에도 유지한다. 그러면 `/mcp`는 `503`을 낸다.
 
 ## 확인되지 않은 항목
 

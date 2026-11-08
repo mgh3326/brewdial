@@ -47,22 +47,17 @@ services:
     drain_timeout: 30s
     stop_timeout: 15s
 
-  # Prepared, not deployed: the Kotlin API (apps/api-kt) for the later Node →
-  # api-kt + HeatWave MySQL cutover (runbook phase 3). Its env file decides the
-  # database: DATABASE_URL=postgres://… or mysql://… . Flyway migrates at startup.
-  - name: brewdial-api-kt
-    image: ghcr.io/mgh3326/brewdial-api-kt
+  # Prepared, not deployed: the Node API on HeatWave MySQL for the phase-4 cutover.
+  - name: brewdial-api-mysql
+    image: ghcr.io/mgh3326/brewdial
     binds: ["127.0.0.1:8021"]
     ports: {blue: 18022, green: 18023}
     network: host
-    env_files: [/etc/shiftgate/brewdial-api-kt.env]
-    env:
-      SPRING_PROFILES_ACTIVE: prod
-      # Host network: without this Spring would listen on every interface.
-      SERVER_ADDRESS: "127.0.0.1"
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Xss512k"
-    run_args: ["--memory=768m"]
-    health: {http: /api/db/health, expect_status: 200, timeout: 180s, interval: 2s}
+    env_files: [/etc/shiftgate/brewdial-api-mysql.env]
+    env: {HOST: "127.0.0.1", NODE_ENV: production}
+    args: ["sh", "-c", "node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js"]
+    run_args: ["--memory=512m"]
+    health: {http: /api/db/health, expect_status: 200, timeout: 90s, interval: 2s}
     check: {inter: 5s, fall: 2, rise: 1}
     drain_timeout: 30s
-    stop_timeout: 20s
+    stop_timeout: 15s
