@@ -347,14 +347,15 @@ export function describeDatabaseUrl(raw: string): { label: string; local: boolea
 /** Fails unless migration 007 (status='reference' in recipes_status_check) is applied. */
 export async function assertReferenceStatusSupported(db: Kysely<DB>): Promise<void> {
   const r = dbVendor() === 'mysql'
-    ? await sql<{ def: string }>`select check_clause as def from information_schema.check_constraints
-        where constraint_schema = database()
-          and check_clause like '%status%' and check_clause like '%reference%'`.execute(db)
+    ? await sql<{ def: string }>`select constraint_name as def from information_schema.table_constraints
+        where constraint_schema = database() and table_name = 'recipes'
+          and constraint_type = 'CHECK' and constraint_name = 'recipes_status_check'`.execute(db)
     : await sql<{ def: string }>`
     select pg_get_constraintdef(oid) as def from pg_constraint
     where conname = 'recipes_status_check' and conrelid = 'recipes'::regclass`.execute(db)
   const def = r.rows[0]?.def ?? ''
-  if (!def.includes("'reference'")) {
+  const supported = dbVendor() === 'mysql' ? def === 'recipes_status_check' : def.includes("'reference'")
+  if (!supported) {
     throw new Error(
       `recipes_status_check does not allow 'reference' (migration 007 not applied?): ${def || '<missing>'}`,
     )
