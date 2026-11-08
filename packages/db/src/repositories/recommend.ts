@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import type { BeanAttributes } from '@brewdial/shared'
 import type { DB } from '../types.js'
+import { dbVendor } from '../db.js'
 
 const ATTR_COLS = [
   'roast_level_ord', 'agtron_min', 'agtron_max', 'acidity', 'body',
@@ -44,7 +45,7 @@ export async function getTasteSignals(
     .where('saved_beans.app_user_id', '=', appUserId)
     .execute() as unknown as AttrRow[]
 
-  const ratedRows = await db
+  const ratedQuery = db
     .selectFrom('feedback')
     .innerJoin('beans', 'beans.id', 'feedback.bean_id')
     .select(ATTR_COLS.map((c) => `beans.${c}` as `beans.${typeof c}`))
@@ -53,7 +54,9 @@ export async function getTasteSignals(
     // this to include owner_id IS NULL — that would leak anonymous/public feedback
     // into every user's taste signal and break multi-user personalization.
     .where('feedback.owner_id', '=', appUserId)
-    .where(sql<number>`coalesce((feedback.ratings->>'overall')::int, 0)`, '>=', 4)
+  const ratedRows = await (dbVendor() === 'mysql'
+    ? ratedQuery.where(sql<number>`coalesce(json_unquote(json_extract(feedback.ratings, '$.overall')), 0) + 0`, '>=', 4)
+    : ratedQuery.where(sql<number>`coalesce((feedback.ratings->>'overall')::int, 0)`, '>=', 4))
     .execute() as unknown as AttrRow[]
 
   return { savedBeanAttrs: savedRows.map(toAttrs), ratedBeanAttrs: ratedRows.map(toAttrs) }

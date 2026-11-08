@@ -17,7 +17,7 @@ import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
-import { getDb, closeDb } from '@brewdial/db'
+import { getDb, closeDb, dbVendor } from '@brewdial/db'
 
 
 const SEED = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -49,7 +49,8 @@ async function insertRecipe(opts: {
   }
   await db.transaction().execute(async (trx) => {
     if (opts.ownerId) {
-      await sql`select set_config('bd.owner_write_ok', 'on', true)`.execute(trx)
+      if (dbVendor() === 'mysql') await sql`set @bd_owner_write_ok = 'on'`.execute(trx)
+      else await sql`select set_config('bd.owner_write_ok', 'on', true)`.execute(trx)
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await trx.insertInto('recipes').values(values as any).execute()
@@ -60,9 +61,11 @@ async function insertRecipe(opts: {
 beforeAll(async () => {
   process.env.AGENT_TOKEN = 'test-token'
   const db = getDb()
-  const bean = await db
+  const beanIdSeed = randomUUID()
+  await db
     .insertInto('beans')
     .values({
+      id: beanIdSeed,
       name: `Resync Bean ${SEED}`,
       roaster: `Roaster ${SEED}`,
       origin: 'STALE ORIGIN',
@@ -70,16 +73,11 @@ beforeAll(async () => {
       roast_level: 'STALE ROAST',
       notes: 'STALE NOTES',
     })
-    .returning('id')
-    .executeTakeFirstOrThrow()
-  beanId = bean.id
+    .execute()
+  beanId = beanIdSeed
 
-  const user = await db
-    .insertInto('app_users')
-    .values({ display_name: `Resync Owner ${SEED}` })
-    .returning('id')
-    .executeTakeFirstOrThrow()
-  ownerId = user.id
+  ownerId = randomUUID()
+  await db.insertInto('app_users').values({ id: ownerId, display_name: `Resync Owner ${SEED}` }).execute()
 })
 
 afterAll(async () => {

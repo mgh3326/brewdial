@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from 'kysely'
 import { parse } from 'yaml'
-import { closeDb, getDb } from './db.js'
+import { closeDb, getDb, dbVendor } from './db.js'
+import { withOwnerWrites } from './owner-writes.js'
 import {
   assertReferenceStatusSupported,
   describeDatabaseUrl,
@@ -46,10 +47,13 @@ interface Row {
 }
 
 async function rowsFor(site: XBloomMockSite): Promise<Row[]> {
-  const r = await sql<Row>`
-    select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
-    from recipes where bean_snapshot->>'sourceUrl' like ${`${site.origin}/%`}
-    order by bean_snapshot->>'sourceUrl'`.execute(db)
+  const r = dbVendor() === 'mysql'
+    ? await sql<Row>`select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
+      from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${site.origin}/%`}
+      order by json_unquote(json_extract(bean_snapshot, '$.sourceUrl'))`.execute(db)
+    : await sql<Row>`select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
+      from recipes where bean_snapshot->>'sourceUrl' like ${`${site.origin}/%`}
+      order by bean_snapshot->>'sourceUrl'`.execute(db)
   return r.rows
 }
 
@@ -62,7 +66,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const s of sites) {
-    await sql`delete from recipes where bean_snapshot->>'sourceUrl' like ${`${s.origin}/%`}`.execute(db)
+    if (dbVendor() === 'mysql') await sql`delete from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${s.origin}/%`}`.execute(db)
+    else await sql`delete from recipes where bean_snapshot->>'sourceUrl' like ${`${s.origin}/%`}`.execute(db)
     await s.close()
   }
   await rm(cacheDir, { recursive: true, force: true })
@@ -183,9 +188,11 @@ describe('load + storage rules', () => {
     const rows = await rowsFor(site)
     expect(rows).toHaveLength(3)
     const names = rows.map((r) => r.bean_snapshot.name)
-    const beans = await sql<{ n: number }>`
-      select count(*)::int as n from beans where name = any(${names}::text[]) or roaster = any(${rows.map((r) => r.bean_snapshot.roaster)}::text[])`.execute(db)
-    expect(beans.rows[0].n).toBe(0)
+    const roasters = rows.map((r) => r.bean_snapshot.roaster)
+    const beans = dbVendor() === 'mysql'
+      ? await sql<{ n: number }>`select count(*) as n from beans where name in (${sql.join(names.map((name) => sql`${name}`))}) or roaster in (${sql.join(roasters.map((roaster) => sql`${roaster}`))})`.execute(db)
+      : await sql<{ n: number }>`select count(*)::int as n from beans where name = any(${names}::text[]) or roaster = any(${roasters}::text[])`.execute(db)
+    expect(Number(beans.rows[0].n)).toBe(0)
   })
 
   it('title format: [참조] <roaster> — <bean> [ICE] (xBloom Omni <dose>g)', async () => {
@@ -267,7 +274,8 @@ describe('load + storage rules', () => {
 
     it('fails a row whose params drifted, naming the field', async () => {
       const code = firstCodes[0]
-      await sql`update recipes set params = jsonb_set(params, '{doseG}', '99') where code = ${code}`.execute(db)
+      if (dbVendor() === 'mysql') await sql`update recipes set params = json_set(params, '$.doseG', 99) where code = ${code}`.execute(db)
+      else await sql`update recipes set params = jsonb_set(params, '{doseG}', '99') where code = ${code}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast() })
       expect(v).toMatchObject({ passed: 2, failed: 1, exitCode: 1 })
       const bad = v.items.find((i) => i.code === code)!
@@ -277,13 +285,14 @@ describe('load + storage rules', () => {
 
     it('fails a row with a drifted step, storage rule, or missing source lines', async () => {
       const [a, b, c] = firstCodes
-      await sql`update recipes set steps = jsonb_set(steps, '{1,waterG}', '999') where code = ${a}`.execute(db)
-      await db.transaction().execute(async (trx) => {
+      if (dbVendor() === 'mysql') await sql`update recipes set steps = json_set(steps, '$[1].waterG', 999) where code = ${a}`.execute(db)
+      else await sql`update recipes set steps = jsonb_set(steps, '{1,waterG}', '999') where code = ${a}`.execute(db)
+      await withOwnerWrites(db, async (trx) => {
         // guard trigger: is_official is only writable with the owner-write flag
-        await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
         await sql`update recipes set is_official = true where code = ${b}`.execute(trx)
       })
-      await sql`update recipes set notes = regexp_replace(notes, '\nYAML: .*$', '') where code = ${c}`.execute(db)
+      if (dbVendor() === 'mysql') await sql`update recipes set notes = regexp_replace(notes, concat(char(10), 'YAML: .*$'), '') where code = ${c}`.execute(db)
+      else await sql`update recipes set notes = regexp_replace(notes, '\nYAML: .*$', '') where code = ${c}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast() })
       expect(v).toMatchObject({ passed: 0, failed: 3, exitCode: 3 })
       const reasons = Object.fromEntries(v.items.map((i) => [i.code, i.reasons.join(' | ')]))

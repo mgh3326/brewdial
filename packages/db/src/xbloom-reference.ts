@@ -34,6 +34,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { sql, type Kysely } from 'kysely'
+import { dbVendor } from './db.js'
+import { withOwnerWrites } from './owner-writes.js'
 import { parse } from 'yaml'
 import { fromXBloomYaml, toXBloomYaml, type BeanSnapshot, type RecipeParams, type RecipeStep } from '@brewdial/shared'
 import type { DB } from './types.js'
@@ -344,11 +346,16 @@ export function describeDatabaseUrl(raw: string): { label: string; local: boolea
 
 /** Fails unless migration 007 (status='reference' in recipes_status_check) is applied. */
 export async function assertReferenceStatusSupported(db: Kysely<DB>): Promise<void> {
-  const r = await sql<{ def: string }>`
+  const r = dbVendor() === 'mysql'
+    ? await sql<{ def: string }>`select constraint_name as def from information_schema.table_constraints
+        where constraint_schema = database() and table_name = 'recipes'
+          and constraint_type = 'CHECK' and constraint_name = 'recipes_status_check'`.execute(db)
+    : await sql<{ def: string }>`
     select pg_get_constraintdef(oid) as def from pg_constraint
     where conname = 'recipes_status_check' and conrelid = 'recipes'::regclass`.execute(db)
   const def = r.rows[0]?.def ?? ''
-  if (!def.includes("'reference'")) {
+  const supported = dbVendor() === 'mysql' ? def === 'recipes_status_check' : def.includes("'reference'")
+  if (!supported) {
     throw new Error(
       `recipes_status_check does not allow 'reference' (migration 007 not applied?): ${def || '<missing>'}`,
     )
@@ -366,30 +373,61 @@ export async function upsertReferenceRecipe(
   const params = JSON.stringify(rec.params)
   const steps = JSON.stringify(rec.steps)
   const snapshot = JSON.stringify({ ...rec.beanSnapshot, sourceUrl: key })
-  return db.transaction().execute(async (trx) => {
-    // Guard trigger: without this flag an INSERT is forced to created_by='manual'.
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
-    await sql`select pg_advisory_xact_lock(hashtextextended(${key}, 589))`.execute(trx)
+  return withOwnerWrites(db, async (trx) => {
+    let mysqlLock = false
+    if (dbVendor() === 'mysql') {
+      const lock = await sql<{ acquired: number }>`select get_lock(sha2(${key}, 256), 30) as acquired`.execute(trx)
+      if (Number(lock.rows[0]?.acquired) !== 1) throw new Error(`could not acquire reference lock for ${key}`)
+      mysqlLock = true
+    } else {
+      await sql`select pg_advisory_xact_lock(hashtextextended(${key}, 589))`.execute(trx)
+    }
+    try {
+    const keyExpr = dbVendor() === 'mysql' ? `json_unquote(json_extract(bean_snapshot, '$.sourceUrl'))` : `bean_snapshot->>'sourceUrl'`
     const existing = await sql<{ id: string; code: string }>`
-      select id, code from recipes where bean_snapshot->>'sourceUrl' = ${key}
+      select id, code from recipes where ${sql.raw(keyExpr)} = ${key}
       order by created_at, id for update`.execute(trx)
     if (existing.rows.length > 1) {
       throw new Error(`duplicate rows for ${key}: ${existing.rows.map((r) => r.code).join(', ')}`)
     }
     if (existing.rows.length === 0) {
       // bean_snapshot NULL on INSERT so recipes_link_bean does not create a beans row.
-      const ins = await sql<{ id: string; code: string }>`
-        insert into recipes (method, title, version, params, steps, notes, bean_id, bean_snapshot,
+      const id = crypto.randomUUID()
+      let insertedCode: string
+      if (dbVendor() === 'mysql') {
+        await sql`insert into recipes (id, method, title, version, params, steps, notes, bean_id, bean_snapshot,
                              created_by, status, is_official, owner_id)
-        values (${rec.method}, ${rec.title}, 1, ${params}::jsonb, ${steps}::jsonb, ${rec.notes}, null, null,
+          values (${id}, ${rec.method}, ${rec.title}, 1, ${params}, ${steps}, ${rec.notes}, null, null,
+                  'agent', 'reference', false, null)`.execute(trx)
+        const row = await sql<{ code: string }>`select code from recipes where id = ${id}`.execute(trx)
+        insertedCode = row.rows[0].code
+        await sql`update recipes set bean_snapshot = ${snapshot} where id = ${id}`.execute(trx)
+      } else {
+        const ins = await sql<{ id: string; code: string }>`
+        insert into recipes (id, method, title, version, params, steps, notes, bean_id, bean_snapshot,
+                             created_by, status, is_official, owner_id)
+        values (${id}::uuid, ${rec.method}, ${rec.title}, 1, ${params}::jsonb, ${steps}::jsonb, ${rec.notes}, null, null,
                 'agent', 'reference', false, null)
         returning id, code`.execute(trx)
-      const row = ins.rows[0]
-      await sql`update recipes set bean_snapshot = ${snapshot}::jsonb where id = ${row.id}`.execute(trx)
-      return { outcome: 'inserted' as const, code: row.code }
+        insertedCode = ins.rows[0].code
+        await sql`update recipes set bean_snapshot = ${snapshot}::jsonb where id = ${id}`.execute(trx)
+      }
+      return { outcome: 'inserted' as const, code: insertedCode }
     }
     const { id, code } = existing.rows[0]
-    const upd = await sql<{ id: string }>`
+    let updated: boolean
+    if (dbVendor() === 'mysql') {
+      const upd = await sql`
+      update recipes set method = ${rec.method}, title = ${rec.title}, params = ${params}, steps = ${steps},
+        notes = ${rec.notes}, bean_snapshot = ${snapshot}, bean_id = null, created_by = 'agent', status = 'reference',
+        is_official = false, owner_id = null
+      where id = ${id} and not (method <=> ${rec.method} and title <=> ${rec.title}
+        and params <=> json_extract(${params}, '$') and steps <=> json_extract(${steps}, '$')
+        and notes <=> ${rec.notes} and bean_snapshot <=> json_extract(${snapshot}, '$') and bean_id is null
+        and created_by <=> 'agent' and status <=> 'reference' and is_official = false and owner_id is null)`.execute(trx)
+      updated = Number(upd.numAffectedRows) > 0
+    } else {
+      const upd = await sql<{ id: string }>`
       update recipes set
         method = ${rec.method}, title = ${rec.title}, params = ${params}::jsonb, steps = ${steps}::jsonb,
         notes = ${rec.notes}, bean_snapshot = ${snapshot}::jsonb, bean_id = null,
@@ -400,7 +438,12 @@ export async function upsertReferenceRecipe(
             (${rec.method}::text, ${rec.title}::text, ${params}::jsonb, ${steps}::jsonb, ${rec.notes}::text,
              ${snapshot}::jsonb, null::text, 'agent'::text, 'reference'::text, false, null::uuid)
       returning id`.execute(trx)
-    return { outcome: upd.rows.length > 0 ? ('updated' as const) : ('unchanged' as const), code }
+      updated = upd.rows.length > 0
+    }
+    return { outcome: updated ? 'updated' : 'unchanged', code }
+    } finally {
+      if (mysqlLock) await sql`select release_lock(sha2(${key}, 256))`.execute(trx)
+    }
   })
 }
 
@@ -567,8 +610,8 @@ export async function verifyXBloomReferences(
   // whose storage rules drifted is checked (and failed) rather than skipped.
   const res = await sql<VerifyRow>`
     select code, title, params, steps, notes, bean_snapshot, bean_id, status, created_by, is_official, owner_id
-    from recipes where bean_snapshot->>'sourceUrl' like ${`${origin}/%`}
-    order by bean_snapshot->>'sourceUrl', code`.execute(db)
+    from recipes where ${sql.raw(dbVendor() === 'mysql' ? `json_unquote(json_extract(bean_snapshot, '$.sourceUrl'))` : `bean_snapshot->>'sourceUrl'`)} like ${`${origin}/%`}
+    order by ${sql.raw(dbVendor() === 'mysql' ? `json_unquote(json_extract(bean_snapshot, '$.sourceUrl'))` : `bean_snapshot->>'sourceUrl'`)}, code`.execute(db)
   const items: VerifyItemResult[] = []
   for (const row of res.rows) {
     const snap = row.bean_snapshot

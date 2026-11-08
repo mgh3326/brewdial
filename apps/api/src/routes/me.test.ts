@@ -2,7 +2,7 @@ import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
-import { getDb, closeDb } from '@brewdial/db'
+import { getDb, closeDb, dbVendor } from '@brewdial/db'
 
 
 // Use a unique identity per run so tests are re-run safe and isolated.
@@ -162,7 +162,8 @@ test('GET /me/collections myRecipes excludes an owned reference recipe', async (
   // owner_id is guard-protected (recipes_guard_owner_immutable): direct inserts
   // get owner_id forced to null unless bd.owner_write_ok is set on the tx.
   await db.transaction().execute(async (trx) => {
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+    if (dbVendor() === 'mysql') await sql`set @bd_owner_write_ok = 'on'`.execute(trx)
+    else await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
     await trx.insertInto('recipes').values([
       { code: ownActiveCode, method: 'v60', title: 'Own Active', status: 'active', owner_id: appUserId },
       { code: ownRefCode, method: 'v60', title: 'Own Reference', status: 'reference', owner_id: appUserId },

@@ -1,5 +1,6 @@
 import { type Kysely } from 'kysely'
 import type { DB } from '../types.js'
+import { dbVendor } from '../db.js'
 
 // Row shape matching the client mapper's FeedbackRow
 // (apps/miniapp/src/lib/data/mappers.ts — FeedbackRow interface).
@@ -113,22 +114,34 @@ export function insertFeedback(
   payload: InsertFeedbackPayload
 ): Promise<FeedbackRow> {
   const values: Record<string, unknown> = {
+    id: crypto.randomUUID(),
     recipe_code: payload.recipeCode,
     source: payload.source ?? 'web',
   }
   if (payload.beanId != null) values.bean_id = payload.beanId
   if (payload.ownerId != null) values.owner_id = payload.ownerId
-  if (payload.ratings !== undefined) values.ratings = payload.ratings as unknown
-  if (payload.actual !== undefined) values.actual = payload.actual as unknown
+  if (payload.ratings !== undefined) values.ratings = dbVendor() === 'mysql' ? JSON.stringify(payload.ratings) : payload.ratings as unknown
+  if (payload.actual !== undefined) values.actual = dbVendor() === 'mysql' ? JSON.stringify(payload.actual) : payload.actual as unknown
   if (payload.comment !== undefined) values.comment = payload.comment
   if (payload.rawComment !== undefined) values.raw_comment = payload.rawComment
-  if (payload.quickTags !== undefined) values.quick_tags = payload.quickTags
-  if (payload.desiredDirection !== undefined) values.desired_direction = payload.desiredDirection
-  if (payload.nextHint !== undefined) values.next_hint = payload.nextHint
+  if (payload.quickTags !== undefined) values.quick_tags = dbVendor() === 'mysql' ? JSON.stringify(payload.quickTags) : payload.quickTags
+  if (payload.desiredDirection !== undefined) values.desired_direction = dbVendor() === 'mysql' ? JSON.stringify(payload.desiredDirection) : payload.desiredDirection
+  if (payload.nextHint !== undefined) values.next_hint = dbVendor() === 'mysql' ? JSON.stringify(payload.nextHint) : payload.nextHint
 
-  return db
+  const id = values.id as string
+  return db.transaction().execute(async (trx) => {
+    await trx
     .insertInto('feedback')
     .values(values as Parameters<ReturnType<typeof db.insertInto<'feedback'>>['values']>[0])
-    .returning(FEEDBACK_COLS)
-    .executeTakeFirstOrThrow() as unknown as Promise<FeedbackRow>
+    .execute()
+    const row = await trx.selectFrom('feedback').select(FEEDBACK_COLS).where('id', '=', id).executeTakeFirstOrThrow()
+    const normalize = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v
+    return {
+      ...row,
+      ratings: normalize(row.ratings), actual: normalize(row.actual),
+      quick_tags: normalize(row.quick_tags) as string[] | null,
+      desired_direction: normalize(row.desired_direction) as string[] | null,
+      next_hint: normalize(row.next_hint) as string[] | null,
+    } as unknown as FeedbackRow
+  })
 }
