@@ -28,8 +28,10 @@ RUN pnpm install --frozen-lockfile \
       --filter @brewdial/api... \
       --filter @brewdial/db...
 
-# Source layer.
+# Source layer. apps/mcp is a workspace dependency of apps/api (/mcp tool
+# server, imported as @brewdial/mcp/server), so its source is built too.
 COPY apps/api apps/api
+COPY apps/mcp apps/mcp
 COPY packages/db packages/db
 COPY packages/shared packages/shared
 
@@ -38,7 +40,7 @@ COPY packages/shared packages/shared
 # inject-workspace-packages=true (measured 2026-08-06, pnpm 10.33.2).
 # The legacy deploy output is self-contained — workspace deps are copied into
 # .pnpm/ and the symlinks resolve inside the output directory.
-RUN pnpm --filter @brewdial/shared --filter @brewdial/db --filter @brewdial/api build \
+RUN pnpm --filter @brewdial/shared --filter @brewdial/db --filter @brewdial/mcp --filter @brewdial/api build \
  && rm -rf /out/api /out/db \
  && pnpm deploy --legacy --filter @brewdial/api --prod /out/api \
  && pnpm deploy --legacy --filter @brewdial/db --dev /out/db
