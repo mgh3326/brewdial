@@ -6,6 +6,12 @@
   "bin": {
     "brewdial-mcp": "./dist/index.js"
   },
+  "exports": {
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
+  },
   "scripts": {
     "build": "pnpm --filter @brewdial/shared build && tsc",
     "check": "pnpm --filter @brewdial/shared build && tsc --noEmit",

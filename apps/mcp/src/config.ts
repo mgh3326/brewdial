@@ -5,6 +5,8 @@
 export interface ApiConfig {
   baseUrl: string; // e.g. https://api.brewdial.robinco.dev
   agentToken: string;
+  /** Optional transport override. When set, every API call uses it instead of global fetch. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface BrewDialMcpConfig {

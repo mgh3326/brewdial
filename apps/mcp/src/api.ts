@@ -51,7 +51,8 @@ async function request<T>(
   fetchImpl: typeof fetch = fetch
 ): Promise<T> {
   const { headers: extraHeaders, ...rest } = init;
-  const response = await fetchImpl(apiUrl(config, path), {
+  const send = config.fetchImpl ?? fetchImpl;
+  const response = await send(apiUrl(config, path), {
     ...rest,
     headers: authHeaders(config, extraHeaders),
   });

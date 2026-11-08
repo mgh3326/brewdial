@@ -113,11 +113,15 @@ Notable API details:
 - `GET /api/db/health` — `SELECT 1` against Postgres.
 - `/api/agent/*` — agent/admin writes; requires `Authorization: Bearer <AGENT_TOKEN>`.
 
-MCP tools (stdio): `brew.create_recipe`, `brew.update_recipe`,
-`brew.archive_recipe`, `brew.supersede_recipe`, `brew.find_bean`,
-`brew.list_beans`, `brew.update_bean_attributes`, `brew.list_grinders`,
-`brew.list_drippers`, `brew.get_recent_context`, `brew.get_recipe_context`,
-`brew.create_feedback`, `brew.update_preferences`.
+MCP tools (stdio): `create_recipe`, `update_recipe`, `archive_recipe`,
+`supersede_recipe`, `find_bean`, `list_beans`, `update_bean_attributes`,
+`list_grinders`, `list_drippers`, `get_recent_context`, `get_recipe_context`,
+`create_feedback`, `update_preferences`. The MCP client adds the server name as
+a namespace, so no prefix is needed.
+
+The server is also importable as `@brewdial/mcp/server`, which exports
+`createBrewdialMcpServer(api, opts?)`. Pass `fetchImpl` in `api` to route every
+API call through a custom transport.
 
 Bean preference recommendations use a **deterministic scoring model** over
 structured bean attributes, save history, and the operator's own feedback — not

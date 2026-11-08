@@ -71,7 +71,7 @@ test('GET /api/me/collections: myRecipes and savedRecipes stay free of reference
   expect(col.savedRecipes.find((r) => r.recipe_code === codes[0])).toBeUndefined()
 })
 
-test('MCP brew.get_recent_context (buildRecentContext over the API) excludes loaded rows', async () => {
+test('MCP get_recent_context (buildRecentContext over the API) excludes loaded rows', async () => {
   // The MCP server reads recipes through this API; drive its real context builder
   // with a fetch bridged onto the same app/server the other tests hit. Imported by
   // path (not a package dep) so apps/api's tsc does not compile apps/mcp sources.
