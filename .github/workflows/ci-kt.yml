@@ -47,6 +47,7 @@ jobs:
           # A pull_request checkout is the merge commit: HEAD^1 is the base branch.
           fetch-depth: 2
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: Test the path check
         run: bash .github/scripts/api-paths-changed-test.sh
@@ -96,6 +97,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -169,6 +171,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       # RecommendationEngineTest compares against the compiled TypeScript engine.
       - name: Install pnpm
@@ -240,6 +243,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
