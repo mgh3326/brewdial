@@ -130,10 +130,6 @@ jobs:
       - name: Build db package
         run: pnpm --filter @brewdial/db build
 
-      # The API imports @brewdial/mcp/server from its build output (/mcp route).
-      - name: Build mcp package
-        run: pnpm --filter @brewdial/mcp build
-
       - name: Run DB migrations
         run: pnpm db:migrate
 
