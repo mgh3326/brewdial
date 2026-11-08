@@ -421,8 +421,9 @@ export async function upsertReferenceRecipe(
       update recipes set method = ${rec.method}, title = ${rec.title}, params = ${params}, steps = ${steps},
         notes = ${rec.notes}, bean_snapshot = ${snapshot}, bean_id = null, created_by = 'agent', status = 'reference',
         is_official = false, owner_id = null
-      where id = ${id} and not (method <=> ${rec.method} and title <=> ${rec.title} and params <=> ${params}
-        and steps <=> ${steps} and notes <=> ${rec.notes} and bean_snapshot <=> ${snapshot} and bean_id is null
+      where id = ${id} and not (method <=> ${rec.method} and title <=> ${rec.title}
+        and params <=> json_extract(${params}, '$') and steps <=> json_extract(${steps}, '$')
+        and notes <=> ${rec.notes} and bean_snapshot <=> json_extract(${snapshot}, '$') and bean_id is null
         and created_by <=> 'agent' and status <=> 'reference' and is_official = false and owner_id is null)`.execute(trx)
       updated = Number(upd.numAffectedRows) > 0
     } else {
