@@ -137,10 +137,14 @@ jobs:
       - name: Run DB migrations again (applies nothing)
         run: pnpm db:migrate
 
-      - name: Run API read-path tests on MySQL
-        run: |
-          files=$(grep -v -E '^[[:space:]]*(#|$)' apps/api/mysql-tests.txt)
-          pnpm --filter @brewdial/api exec vitest run $files
+      - name: Run API tests on MySQL
+        run: pnpm --filter @brewdial/api test
+
+      - name: Build MCP package
+        run: pnpm --filter @brewdial/mcp build
+
+      - name: Blackbox contract tests vs Hono on MySQL
+        run: pnpm --filter @brewdial/api test:http
 
   main-stage:
     # Manual ref path: Main CI on the dispatched ref.

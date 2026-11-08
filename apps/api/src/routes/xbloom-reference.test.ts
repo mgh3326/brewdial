@@ -2,7 +2,7 @@ import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
-import { closeDb, getDb, loadXBloomReferences, PoliteFetcher } from '@brewdial/db'
+import { closeDb, dbVendor, getDb, loadXBloomReferences, PoliteFetcher } from '@brewdial/db'
 import { startXBloomMockSite, type XBloomMockSite } from '@brewdial/db/testing'
 
 // #589 M2: rows written by the xBloom reference loader must never surface on the
@@ -31,7 +31,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await sql`delete from recipes where bean_snapshot->>'sourceUrl' like ${`${site.origin}/%`}`.execute(getDb())
+  if (dbVendor() === 'mysql') await sql`delete from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${site.origin}/%`}`.execute(getDb())
+  else await sql`delete from recipes where bean_snapshot->>'sourceUrl' like ${`${site.origin}/%`}`.execute(getDb())
   await sql`delete from recipes where code = ${controlCode}`.execute(getDb())
   await site.close()
   await closeDb()

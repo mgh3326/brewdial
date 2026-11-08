@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
+import { withOwnerWrites } from './owner-writes.js'
 import { getDb, closeDb } from './db.js'
 
 const db = getDb()
@@ -39,8 +40,7 @@ test('bean auto-links on insert when bean_snapshot present and bean_id null', as
 
 test('owner write flag permits owner_id, then guard immutability raises on update', async () => {
   const uid = (await sql<{ id: string }>`insert into app_users default values returning id`.execute(db)).rows[0].id
-  const code = await db.transaction().execute(async (trx) => {
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+  const code = await withOwnerWrites(db, async (trx) => {
     const res = await sql<{ code: string }>`
       insert into recipes (method, title, owner_id) values ('v60','owned', ${uid}::uuid) returning code`.execute(trx)
     return res.rows[0].code
@@ -69,8 +69,7 @@ test('C4: bean_summaries recipe_count excludes owner-scoped recipes', async () =
 
   // Private recipe (owner_write_ok → owner_id set).
   const uid = (await sql<{ id: string }>`insert into app_users default values returning id`.execute(db)).rows[0].id
-  const privateCode = await db.transaction().execute(async (trx) => {
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+  const privateCode = await withOwnerWrites(db, async (trx) => {
     const r = await sql<{ code: string }>`
       insert into recipes (method, title, bean_id, owner_id, created_by)
       values ('v60', ${`C4 Priv ${SEED}`}, ${beanId}, ${uid}::uuid, 'manual')
@@ -89,8 +88,7 @@ test('C5: owned insert with new snapshot does not create a global bean', async (
   const newRoaster = `C5RM ${SEED}`
   const uid = (await sql<{ id: string }>`insert into app_users default values returning id`.execute(db)).rows[0].id
 
-  const result = await db.transaction().execute(async (trx) => {
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+  const result = await withOwnerWrites(db, async (trx) => {
     const r = await sql<{ code: string; bean_id: string | null }>`
       insert into recipes (method, title, bean_id, owner_id, bean_snapshot, created_by)
       values ('v60', ${`C5 NoMatch ${SEED}`}, null, ${uid}::uuid,
@@ -118,8 +116,7 @@ test('C5: owned insert with matching snapshot links without overwriting', async 
 
   const uid = (await sql<{ id: string }>`insert into app_users default values returning id`.execute(db)).rows[0].id
 
-  const result = await db.transaction().execute(async (trx) => {
-    await sql`select set_config('bd.owner_write_ok','on',true)`.execute(trx)
+  const result = await withOwnerWrites(db, async (trx) => {
     const r = await sql<{ code: string; bean_id: string | null }>`
       insert into recipes (method, title, bean_id, owner_id, bean_snapshot, created_by)
       values ('v60', ${`C5 Match Recipe ${SEED}`}, null, ${uid}::uuid,

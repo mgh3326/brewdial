@@ -1,5 +1,6 @@
 import { type Kysely } from 'kysely'
 import type { DB } from '../types.js'
+import { dbVendor } from '../db.js'
 
 // Row shape for the preferences table — matches the MCP preferences shape.
 export interface PreferenceRow {
@@ -40,11 +41,16 @@ export async function setGlobalPreference(
   db: Kysely<DB>,
   input: { likes: string[]; dislikes: string[] }
 ): Promise<PreferenceRow> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await (db.insertInto('preferences') as any)
-    .values({ id: 'global', likes: input.likes, dislikes: input.dislikes })
-    .onConflict((oc: any) => oc.column('id').doUpdateSet({ likes: input.likes, dislikes: input.dislikes, updated_at: new Date() }))
-    .returning(PREFERENCE_COLS)
-    .executeTakeFirstOrThrow()
-  return row as PreferenceRow
+  const mysql = dbVendor() === 'mysql'
+  const values = { id: 'global', likes: mysql ? JSON.stringify(input.likes) : input.likes, dislikes: mysql ? JSON.stringify(input.dislikes) : input.dislikes }
+  return db.transaction().execute(async (trx) => {
+    const query = (trx.insertInto('preferences') as any).values(values)
+    if (mysql) {
+      await query.onDuplicateKeyUpdate({ likes: JSON.stringify(input.likes), dislikes: JSON.stringify(input.dislikes), updated_at: new Date() }).execute()
+    } else {
+      await query.onConflict((oc: any) => oc.column('id').doUpdateSet({ likes: input.likes, dislikes: input.dislikes, updated_at: new Date() })).execute()
+    }
+    const row = await trx.selectFrom('preferences').select(PREFERENCE_COLS).where('id', '=', 'global').executeTakeFirstOrThrow()
+    return { ...row, likes: typeof row.likes === 'string' ? JSON.parse(row.likes) : row.likes, dislikes: typeof row.dislikes === 'string' ? JSON.parse(row.dislikes) : row.dislikes } as PreferenceRow
+  })
 }
