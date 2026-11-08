@@ -2,7 +2,7 @@ import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
-import { getDb, closeDb, dbVendor } from '@brewdial/db'
+import { getDb, closeDb, dbVendor, withOwnerWrites } from '@brewdial/db'
 
 
 // Use a unique identity per run so tests are re-run safe and isolated.
@@ -61,7 +61,7 @@ afterAll(async () => {
 
 // ─── POST /api/me/saved-recipes ──────────────────────────────────────────────
 
-test('POST /me/saved-recipes saves recipe and GET /me/collections shows it with snapshot', async () => {
+test('POST /me/saved-recipes pins snapshot keys and value shapes across vendors', async () => {
   const saveRes = await request('/api/me/saved-recipes', {
     method: 'POST',
     headers: {
@@ -87,6 +87,67 @@ test('POST /me/saved-recipes saves recipe and GET /me/collections shows it with 
   // Snapshot must be populated server-side (offline-by-construction).
   expect(saved!['snapshot']).not.toBeNull()
   expect(typeof saved!['snapshot']).toBe('object')
+  const snapshot = saved!['snapshot']
+  expect(Object.keys(snapshot).sort()).toEqual([
+    'adjustment_from_previous', 'bean_id', 'bean_snapshot', 'code', 'created_at', 'created_by',
+    'dripper_portability', 'id', 'intent', 'is_official', 'method', 'notes', 'owner_id',
+    'params', 'parent_code', 'status', 'steps', 'superseded_by', 'supersedes', 'title',
+    'updated_at', 'version',
+  ])
+  expect(typeof snapshot['id']).toBe('string')
+  expect(snapshot['code']).toBe(activeCode)
+  expect(typeof snapshot['method']).toBe('string')
+  expect(typeof snapshot['title']).toBe('string')
+  expect(typeof snapshot['version']).toBe('number')
+  expect(snapshot['params']).toEqual({})
+  expect(snapshot['steps']).toEqual([])
+  expect(snapshot['bean_id']).toBeNull()
+  expect(snapshot['bean_snapshot']).toBeNull()
+  expect(snapshot['intent']).toBeNull()
+  expect(snapshot['notes']).toBeNull()
+  expect(snapshot['adjustment_from_previous']).toBeNull()
+  expect(snapshot['created_by']).toBe('manual')
+  expect(snapshot['status']).toBe('active')
+  expect(snapshot['supersedes']).toBeNull()
+  expect(snapshot['superseded_by']).toBeNull()
+  expect(snapshot['parent_code']).toBeNull()
+  expect(typeof snapshot['created_at']).toBe('string')
+  expect(typeof snapshot['updated_at']).toBe('string')
+  expect(snapshot['owner_id']).toBeNull()
+  expect(snapshot['is_official']).toBe(false)
+  expect(snapshot['dripper_portability']).toBeNull()
+})
+
+test('owner-write flag is scoped to its transaction and cleared on a reused pooled connection', async () => {
+  const db = getDb()
+  const mysql = dbVendor() === 'mysql'
+  const ownerId = randomUUID()
+  const ownerRecipeTitle = `owner-write-pool-${SEED_SUFFIX}`
+  const connectionId = mysql ? 'select connection_id() as id' : 'select pg_backend_pid()::text as id'
+  const before = await sql<{ id: string }>`select ${sql.raw(connectionId.slice('select '.length))}`.execute(db)
+  await db.insertInto('app_users').values({ id: ownerId }).execute()
+  try {
+    const inside = await withOwnerWrites(db, async (trx) => {
+      await trx.insertInto('recipes').values({
+        method: 'v60', title: ownerRecipeTitle, owner_id: ownerId, created_by: 'manual',
+      }).execute()
+      const result = mysql
+        ? await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(trx)
+        : await sql<{ id: string; flag: string | null }>`select pg_backend_pid()::text as id, current_setting('bd.owner_write_ok', true) as flag`.execute(trx)
+      return result.rows[0]
+    })
+    const after = mysql
+      ? await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(db)
+      : await sql<{ id: string; flag: string | null }>`select pg_backend_pid()::text as id, current_setting('bd.owner_write_ok', true) as flag`.execute(db)
+
+    expect(inside.id).toBe(before.rows[0].id)
+    expect(after.rows[0].id).toBe(inside.id)
+    expect(inside.flag).toBe('on')
+    expect(after.rows[0].flag).not.toBe('on')
+  } finally {
+    await db.deleteFrom('recipes').where('title', '=', ownerRecipeTitle).execute()
+    await db.deleteFrom('app_users').where('id', '=', ownerId).execute()
+  }
 })
 
 test('POST /me/saved-recipes with test-status code does NOT appear in savedRecipes', async () => {

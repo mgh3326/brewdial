@@ -29,7 +29,7 @@ option_value() {
 # Writes the option file from the DATABASE_URL line of an env file.
 heatwave_load() {
   local env_file="$1" url user password host port query ssl_mode=""
-  url="$(grep -E '^DATABASE_URL=' "$env_file" | cut -d= -f2-)" || { echo "no DATABASE_URL in $env_file" >&2; return 1; }
+  url="$(awk '!/^[[:space:]]*#/ && /^DATABASE_URL=/ { value = substr($0, index($0, "=") + 1) } END { if (value != "") print value; else exit 1 }' "$env_file")" || { echo "no DATABASE_URL in $env_file" >&2; return 1; }
   local pattern='^mysql://([^:@/]+)(:([^@/]*))?@([^:/?]+)(:([0-9]+))?/([^?]+)(\?(.*))?$'
   [[ "$url" =~ $pattern ]] || { echo "DATABASE_URL in $env_file is not a mysql:// URL" >&2; return 1; }
   user="${BASH_REMATCH[1]}"

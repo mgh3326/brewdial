@@ -146,6 +146,64 @@ jobs:
       - name: Blackbox contract tests vs Hono on MySQL
         run: pnpm --filter @brewdial/api test:http
 
+  api-image-mysql:
+    name: Node image migrations and health (MySQL 8.4)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysqlpassword
+          MYSQL_DATABASE: brewdial_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysqlpassword"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build API image
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" --tag brewdial-api-image-check .
+
+      - name: Run exact shiftgate args twice and check health
+        shell: bash
+        run: |
+          set -euo pipefail
+          container=brewdial-api-image-check
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "$container" --network host --memory=512m \
+            --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test \
+            --env HOST=127.0.0.1 --env NODE_ENV=production \
+            brewdial-api-image-check \
+            sh -c 'node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js'
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3020/api/db/health; then
+              printf '\n/api/db/health returned 200\n'
+              break
+            fi
+            [ "$attempt" -lt 60 ] || { docker logs "$container"; exit 1; }
+            sleep 2
+          done
+          first_logs="$(docker logs "$container" 2>&1)"
+          printf '%s\n' "$first_logs"
+          grep -F 'applied 001_baseline' <<<"$first_logs"
+          docker restart "$container"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3020/api/db/health; then
+              printf '\n/api/db/health returned 200 after restart\n'
+              break
+            fi
+            [ "$attempt" -lt 60 ] || { docker logs "$container"; exit 1; }
+            sleep 2
+          done
+          second_logs="$(docker logs "$container" 2>&1)"
+          printf '%s\n' "$second_logs"
+          grep -F 'nothing to apply' <<<"$second_logs"
+
   main-stage:
     # Manual ref path: Main CI on the dispatched ref.
     if: github.event_name == 'workflow_dispatch' && inputs.stage == 'main'

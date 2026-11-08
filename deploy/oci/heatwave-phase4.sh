@@ -4,13 +4,12 @@
 # the host with sudo. It stops at the first failed check, and it never switches
 # public traffic: it prints the cloudflared command instead.
 #
-#   heatwave-phase4.sh cutover  --digest sha256:<64 hex> [--preflight] [--replace-target] [--accept-order]
-#   heatwave-phase4.sh rollback --digest sha256:<64 hex> [--preflight]
+#   heatwave-phase4.sh cutover  --digest sha256:<Node image digest> --copy-digest sha256:<copy-tool digest> [--preflight] [--replace-target] [--accept-order]
+#   heatwave-phase4.sh rollback --digest sha256:<Node image digest> --copy-digest sha256:<copy-tool digest> [--preflight]
 #
-# cutover:  save the Node API's read responses -> stop the Node API -> copy
-#           PostgreSQL to MySQL -> verify -> start api-kt on MySQL -> compare it
-#           with the saved responses -> print the cloudflared switch.
-# rollback: stop api-kt. If a cutover finished and MySQL differs from PostgreSQL,
+# cutover:  save the Node API's read responses -> stop it -> copy PostgreSQL to
+#           MySQL -> verify -> start Node on MySQL -> compare saved responses.
+# rollback: stop Node on MySQL. If a cutover finished and MySQL differs from PostgreSQL,
 #           dump PostgreSQL, copy MySQL over it and verify. Then start the Node API.
 #
 # Credentials stay in the env files. docker receives only their paths, and the
@@ -21,9 +20,10 @@ umask 077
 ENV_DIR="${PHASE4_ENV_DIR:-/etc/shiftgate}"
 COPY_ENV="$ENV_DIR/brewdial-copy.env"
 ROLLBACK_ENV="$ENV_DIR/brewdial-rollback.env"
-KT_ENV="$ENV_DIR/brewdial-api-kt.env"
+MYSQL_ENV="$ENV_DIR/brewdial-api-mysql.env"
 STATE_DIR="${PHASE4_STATE_DIR:-/var/lib/brewdial}"
-# Exists from a finished cutover until its rollback. It holds the digest it used.
+# Exists from a finished cutover until its rollback. It identifies Node on MySQL
+# and records both image digests needed to safely roll the window back.
 CUTOVER_MARKER="$STATE_DIR/phase4-cutover-done"
 BACKUP_DIR="${PHASE4_BACKUP_DIR:-/var/backups/brewdial/final-postgres}"
 LOG_DIR="${PHASE4_LOG_DIR:-/var/log/brewdial-phase4}"
@@ -31,9 +31,9 @@ FIXTURES="$LOG_DIR/fixtures"
 NODE_START_TIMEOUT="${PHASE4_NODE_START_TIMEOUT:-90}"
 CLOUDFLARED_CONFIG=/etc/cloudflared/config.yml
 NODE_URL="http://127.0.0.1:8020"
-KT_URL="http://127.0.0.1:8021"
-IMAGE="ghcr.io/mgh3326/brewdial-api-kt"
-KT_SERVICE="brewdial-api-kt"
+MYSQL_URL="http://127.0.0.1:8021"
+COPY_IMAGE="ghcr.io/mgh3326/brewdial-api-kt"
+MYSQL_SERVICE="brewdial-api-mysql"
 NODE_SERVICE="brewdial-api"
 
 STEP="arguments"
@@ -111,6 +111,10 @@ check_digest() {
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "--digest must be sha256:<64 hex>"
 }
 
+check_copy_digest() {
+  [[ "$COPY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "--copy-digest must be sha256:<64 hex>"
+}
+
 check_copy_env_files() {
   check_env_file "$COPY_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=mysql://' '^BREWDIAL_COPY_SOURCE_URL=postgres(ql)?://'
   check_env_file "$ROLLBACK_ENV" '^DATABASE_URL=' '^BREWDIAL_COPY_SOURCE_URL=' '^DATABASE_URL=postgres(ql)?://' '^BREWDIAL_COPY_SOURCE_URL=mysql://'
@@ -167,7 +171,7 @@ run_tool() {
   TOOL_STATUS=0
   docker run --rm --network host --env-file "$env_file" \
     -e SPRING_MAIN_WEB_APPLICATION_TYPE=none -e BREWDIAL_COPY_MODE="$mode" \
-    "$IMAGE@$DIGEST" 2>&1 | redact >"$TOOL_LOG" || TOOL_STATUS=$?
+    "$COPY_IMAGE@$COPY_DIGEST" 2>&1 | redact >"$TOOL_LOG" || TOOL_STATUS=$?
   grep -E '^(TABLE|SEQUENCE)	|^[a-z_]+	[0-9]+	[0-9]+	([0-9a-f]{64}	[0-9a-f]{64}	)?(OK|MISMATCH)$|^COPY_(VERIFY_OK|VERIFY_MISMATCH|CHECK_FAILED|FAILED|ROLLED_BACK)' "$TOOL_LOG" || true
 }
 
@@ -177,15 +181,14 @@ run_copy_tool() {
   grep -q '^COPY_VERIFY_OK ' "$TOOL_LOG" || fail "$1 did not report COPY_VERIFY_OK (log: $TOOL_LOG)"
 }
 
-# The differences the README allows between the two runtimes: timestamp precision
-# (Node keeps milliseconds) and numeric JSON types (Node sends int8 as strings).
+# Node on PostgreSQL and Node on MySQL expose the same JSON value types.
+# Only timestamp precision differs because MySQL stores microseconds.
 PARITY_FILTER='
   def ts: capture("^(?<head>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(\\.(?<frac>\\d+))?(Z|\\+00:?00)$")
     | "\(.head).\(((.frac // "") + "000")[0:3])Z";
   walk(
     if type == "string" then
       if test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|\\+00:?00)$") then ts
-      elif test("^-?\\d+(\\.\\d+)?$") then tonumber
       else . end
     else . end)'
 
@@ -237,22 +240,22 @@ save_fixtures() {
 }
 
 compare_with_fixtures() {
-  local index path fixture kt_out
+  local index path fixture mysql_out
   while IFS=$'\t' read -r index path; do
     fixture="$FIXTURES/$index.json"
-    kt_out="$(mktemp -p "$LOG_DIR")"
-    fetch_normalised "$KT_URL$path" >"$kt_out" || fail "api-kt did not answer $path"
-    if cmp -s "$fixture" "$kt_out"; then
+    mysql_out="$(mktemp -p "$LOG_DIR")"
+    fetch_normalised "$MYSQL_URL$path" >"$mysql_out" || fail "Node on MySQL did not answer $path"
+    if cmp -s "$fixture" "$mysql_out"; then
       log "same: $path"
-    elif [ "$ACCEPT_ORDER" = 1 ] && order_may_differ "$path" && same_when_sorted "$fixture" "$kt_out"; then
+    elif [ "$ACCEPT_ORDER" = 1 ] && order_may_differ "$path" && same_when_sorted "$fixture" "$mysql_out"; then
       log "same apart from order (--accept-order): $path"
-    elif [ "$ACCEPT_ORDER" = 1 ] && differs_only_in_ties "$path" "$fixture" "$kt_out"; then
+    elif [ "$ACCEPT_ORDER" = 1 ] && differs_only_in_ties "$path" "$fixture" "$mysql_out"; then
       log "same apart from rows with equal created_at (--accept-order): $path"
     else
-      diff -u "$fixture" "$kt_out" | head -40 || true
-      fail "parity: api-kt on MySQL differs from what the Node API answered for $path"
+      diff -u "$fixture" "$mysql_out" | head -40 || true
+      fail "parity: Node on MySQL differs from what Node on PostgreSQL answered for $path"
     fi
-    rm -f "$kt_out"
+    rm -f "$mysql_out"
   done <"$FIXTURES/paths.tsv"
 }
 
@@ -260,9 +263,10 @@ cutover() {
   step preflight "read-only checks"
   check_tools
   check_digest
+  check_copy_digest
   take_lock
   check_copy_env_files
-  check_env_file "$KT_ENV" '^DATABASE_URL=mysql://'
+  check_env_file "$MYSQL_ENV" '^DATABASE_URL=mysql://'
   # MySQL may hold the newest data, and a new copy would overwrite it.
   [ ! -e "$CUTOVER_MARKER" ] || fail "a finished cutover still stands, so MySQL may hold the newest data: run rollback first"
   [ "$(shiftgate_state "$NODE_SERVICE" '.state.active.color // "none"')" != none ] || fail "$NODE_SERVICE has no active colour to return to"
@@ -280,10 +284,10 @@ cutover() {
   step save "the Node API's read responses, for the parity step"
   if [ "$save" = 1 ]; then save_fixtures; else log "keeping the responses from the earlier run"; fi
 
-  RECOVERY="To end the window, run: heatwave-phase4.sh rollback --digest $DIGEST. It restarts the Node API on the untouched PostgreSQL. To retry instead, add --replace-target if MySQL already holds rows."
-  step stop "stop the Node API and any api-kt: no writers from here on"
+  RECOVERY="To end the window, run: heatwave-phase4.sh rollback --digest $DIGEST --copy-digest $COPY_DIGEST. It restarts the Node API on the untouched PostgreSQL. To retry instead, add --replace-target if MySQL already holds rows."
+  step stop "stop Node on PostgreSQL and MySQL: no writers from here on"
   stop_service "$NODE_SERVICE"
-  stop_service "$KT_SERVICE"
+  stop_service "$MYSQL_SERVICE"
   if node_answers; then fail "$NODE_URL still answers with the Node API stopped: something else is serving it"; fi
 
   step copy "PostgreSQL to MySQL, then counts, checksums and sequence"
@@ -292,23 +296,23 @@ cutover() {
   step verify "fresh snapshot of both databases"
   run_copy_tool verify "$COPY_ENV" verify
 
-  step start "api-kt on MySQL"
-  shiftgate deploy "$KT_SERVICE" --digest "$DIGEST" || fail "shiftgate deploy failed"
-  [ "$(shiftgate_state "$KT_SERVICE" '.state.active.digest // "none"')" = "$DIGEST" ] || fail "$KT_SERVICE is not active on --digest"
-  [ "$(http_code "$KT_URL/api/db/health")" = 200 ] || fail "api-kt on MySQL is not healthy at $KT_URL/api/db/health"
+  step start "Node on MySQL"
+  shiftgate deploy "$MYSQL_SERVICE" --digest "$DIGEST" || fail "shiftgate deploy failed"
+  [ "$(shiftgate_state "$MYSQL_SERVICE" '.state.active.digest // "none"')" = "$DIGEST" ] || fail "$MYSQL_SERVICE is not active on --digest"
+  [ "$(http_code "$MYSQL_URL/api/db/health")" = 200 ] || fail "Node on MySQL is not healthy at $MYSQL_URL/api/db/health"
 
-  step parity "api-kt on MySQL against the saved Node API responses"
+  step parity "Node on MySQL against the saved Node-on-PostgreSQL responses"
   compare_with_fixtures
 
   step finish "nothing restarted the Node API during the window"
   check_service_stopped "$NODE_SERVICE"
-  printf '%s\n' "$DIGEST" >"$CUTOVER_MARKER"
+  printf 'service=Node on MySQL\nnode_digest=%s\ncopy_tool_digest=%s\n' "$DIGEST" "$COPY_DIGEST" >"$CUTOVER_MARKER"
   RECOVERY=""
-  log "PHASE4_READY: the Node API is stopped and api-kt is ready. Reports: $LOG_DIR/$STAMP-*.log"
+  log "PHASE4_READY: the Node API is stopped and Node on MySQL is ready. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
 Switch public traffic yourself with:
 
-  sudo sed -i 's#$NODE_URL#$KT_URL#' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
+  sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
 EOF
 }
 
@@ -316,11 +320,14 @@ rollback() {
   step preflight "read-only checks"
   check_tools
   check_digest
+  check_copy_digest
   take_lock
   check_copy_env_files
   [ "$(shiftgate_state "$NODE_SERVICE" '.state.active.color // "none"')" != none ] || fail "$NODE_SERVICE has no active colour to return to"
-  if [ -e "$CUTOVER_MARKER" ] && [ "$(cat "$CUTOVER_MARKER")" != "$DIGEST" ]; then
-    fail "the cutover ran with another image; pass the digest it was run with"
+  if [ -e "$CUTOVER_MARKER" ]; then
+    grep -qx 'service=Node on MySQL' "$CUTOVER_MARKER" || fail "the marker does not identify Node on MySQL"
+    grep -qx "node_digest=$DIGEST" "$CUTOVER_MARKER" || fail "the cutover ran with another Node image; pass the digest it was run with"
+    grep -qx "copy_tool_digest=$COPY_DIGEST" "$CUTOVER_MARKER" || fail "the cutover ran with another copy-tool image; pass the digest it was run with"
   fi
   if [ "$PREFLIGHT" = 1 ]; then
     log "PHASE4_PREFLIGHT_OK rollback (nothing was changed)"
@@ -328,8 +335,8 @@ rollback() {
   fi
 
   RECOVERY="PostgreSQL keeps its rows unless the replace reported COPY_VERIFY_OK. The Node API stays stopped; fix the cause and run rollback again."
-  step stop "stop api-kt and the Node API: no writers from here on"
-  stop_service "$KT_SERVICE"
+  step stop "stop Node on MySQL and the Node API on PostgreSQL: no writers from here on"
+  stop_service "$MYSQL_SERVICE"
   stop_service "$NODE_SERVICE"
 
   if [ -e "$CUTOVER_MARKER" ]; then
@@ -366,15 +373,16 @@ rollback() {
   RECOVERY=""
   log "PHASE4_ROLLBACK_READY: the Node API answers on $NODE_URL. Reports: $LOG_DIR/$STAMP-*.log"
   cat <<EOF
-If cloudflared points at api-kt, switch public traffic back yourself with:
+If cloudflared points at Node on MySQL, switch public traffic back yourself with:
 
-  sudo sed -i 's#$KT_URL#$NODE_URL#' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
+  sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' $CLOUDFLARED_CONFIG && sudo systemctl restart cloudflared
 EOF
 }
 
 COMMAND="${1:-}"
 [ $# -eq 0 ] || shift
 DIGEST=""
+COPY_DIGEST=""
 PREFLIGHT=0
 COPY_MODE=copy
 ACCEPT_ORDER=0
@@ -383,6 +391,11 @@ while [ $# -gt 0 ]; do
     --digest)
       [ $# -ge 2 ] || usage
       DIGEST="$2"
+      shift 2
+      ;;
+    --copy-digest)
+      [ $# -ge 2 ] || usage
+      COPY_DIGEST="$2"
       shift 2
       ;;
     --preflight)

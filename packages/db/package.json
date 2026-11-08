@@ -15,7 +15,7 @@
       "default": "./dist/testing.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "scripts", "migrations-mysql"],
   "scripts": {
     "build": "pnpm --filter @brewdial/shared build && tsc",
     "check": "pnpm --filter @brewdial/shared build && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",

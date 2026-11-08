@@ -1,34 +1,23 @@
-# OCI: k3s → shiftgate, then PostgreSQL → HeatWave MySQL (ROB-1435)
+# OCI: k3s → shiftgate, 이후 PostgreSQL → HeatWave MySQL (ROB-1435)
 
-The OCI host runs a single `brewdial-api` pod on k3s, and k3s alone costs about
-800 MB RSS. This runbook replaces k3s with
-[shiftgate](https://github.com/mgh3326/shiftgate): blue-green Docker
-containers behind one HAProxy, deployed by digest from CI. It then moves the
-API to the Kotlin service (`apps/api-kt`) on OCI HeatWave MySQL. PostgreSQL
-stays the rollback target until the desk retires it (§4.7). `apps/api-kt` is the
-only API after phase 4: the Node API (`apps/api`) and `packages/db` retire with
-PostgreSQL.
+OCI 호스트에서 실행 중인 `brewdial-api`를 k3s에서 shiftgate로 옮긴 뒤, Node API가 연결하는 데이터베이스를 PostgreSQL에서 HeatWave MySQL로 전환한다. shiftgate는 digest로 배포한 Docker 컨테이너를 HAProxy 뒤에서 blue-green 방식으로 운영한다. PostgreSQL은 §4.7 정리 시점까지 롤백 대상으로 유지한다. Node API와 `packages/db`도 이 전환 동안 계속 사용한다.
 
-| Phase | What changes | Rollback |
+| 단계 | 변경 내용 | 롤백 |
 |---|---|---|
-| 1. Host preparation | Docker, shiftgate, HAProxy container, env files, deploy key | Nothing is serving from it yet |
-| 2. Cutover k3s → shiftgate | cloudflared `:30020` (k3s) → `:8020` (shiftgate, Node API, PostgreSQL) | Point cloudflared back to `:30020` |
-| 3. k3s removal | `systemctl disable --now k3s` and remove its files later | Until the files are removed: `systemctl start k3s` |
-| 4. Node → api-kt on HeatWave MySQL | Scripted maintenance window: stop the Node API, copy, verify, start `brewdial-api-kt` on MySQL, parity, then cloudflared → `:8021` | Scripted (§4.5): stop api-kt, copy MySQL → PostgreSQL only if MySQL took writes, start the Node API, cloudflared → `:8020` |
+| 1. 호스트 준비 | Docker, shiftgate, HAProxy 컨테이너, 환경 파일, 배포 키 설치 | 아직 트래픽을 보내지 않음 |
+| 2. k3s → shiftgate 전환 | cloudflared `:30020`에서 PostgreSQL을 사용하는 Node API `:8020`으로 변경 | cloudflared를 `:30020`으로 되돌림 |
+| 3. k3s 제거 | `systemctl disable --now k3s`, 이후 관련 파일 제거 | 파일 제거 전에는 `systemctl start k3s` |
+| 4. Node API → HeatWave MySQL | 유지보수 창에서 Node API 중지, 복사와 검증 후 MySQL 연결 Node API 시작, 이어서 cloudflared를 `:8021`로 변경 | §4.5에서 복사 필요 여부를 확인하고 PostgreSQL 연결 Node API를 시작한 뒤 `:8020`으로 복귀 |
 
-Run phases 1–3 together. Phase 4 is a separate change window.
+1–3단계는 함께 수행한다. 4단계는 별도 유지보수 창에서 수행한다.
 
-Conventions:
+운영 규칙:
 
-- `$` runs as `opc` with `sudo`. Commands never print secrets.
-- **Database credentials are referenced only by env-file path.** The files
-  are `/etc/shiftgate/brewdial-api.env` and `/etc/shiftgate/brewdial-api-kt.env`
-  (owner `root:root`, mode `0600`). shiftgate passes them to `docker run
-  --env-file` and never opens them. They are never committed, pasted into
-  tickets, or shown with `cat`. Set or check a key with `sudoedit`, or with
-  `sudo grep -c '^DATABASE_URL=' <file>` (which prints a count, not the value).
-- Repository config: `deploy/oci/shiftgate/services.yaml` (the host file) and
-  `.github/workflows/deploy-oci.yml` (CI deploys).
+- 명령은 `opc` 계정에서 `sudo`와 함께 실행한다. 명령 출력에 비밀 값이 나타나지 않도록 한다.
+- **데이터베이스 자격 증명은 환경 파일 경로로만 전달한다.** 파일은 `/etc/shiftgate/brewdial-api.env`와 `/etc/shiftgate/brewdial-api-mysql.env`이며 소유자는 `root:root`, 권한은 `0600`이다. shiftgate는 파일 내용을 출력하지 않고 `docker run --env-file`에 경로로 전달한다. 파일을 커밋하거나 티켓에 붙이거나 `cat`으로 출력하지 않는다. 키 존재 여부는 `sudo grep -c '^DATABASE_URL=' <file>`로 확인한다.
+- 저장소 설정은 `deploy/oci/shiftgate/services.yaml` 및 `.github/workflows/deploy-oci.yml`이다.
+
+---
 
 ---
 
@@ -160,306 +149,98 @@ Do this after phase 2 has been stable for the observation period.
    `deploy-oci-k3s.yml` and the k3d `k8s-validate.yml` job in one PR. Also
    remove the `10.42.0.1` PostgreSQL listener and its `pg_hba` line.
 
-## 4. Node → api-kt on HeatWave MySQL
+## 4. Node API → HeatWave MySQL
 
-`apps/api-kt` runs on PostgreSQL or MySQL through JPA/Hibernate. The
-`DATABASE_URL` scheme selects the vendor: `postgres://…` or `mysql://…`. At
-startup, Flyway applies `db/migration/postgresql` or `db/migration/mysql`,
-which have the same schema meaning. CI runs the full suite against both
-databases (`ci-kt.yml`). PostgreSQL support stays permanently.
+이 단계에서는 현재 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작한다. 복사 도구만 `ghcr.io/mgh3326/brewdial-api-kt` 이미지에서 가져온다. 이 도구는 롤백 기간이 끝날 때까지 유지한다. 서비스 이미지와 복사 도구 이미지는 서로 다른 digest를 사용한다. 실제 전환은 운영자가 참석한 유지보수 시간에 수행한다.
 
-### 4.1 Preconditions
+### 4.1 사전 조건
 
-- **HeatWave.** The DB system runs MySQL 8.4 LTS or newer in the private
-  subnet. Its security list allows TCP 3306 from the host's subnet only.
-  Create the database and an application user: `create database brewdial;`
-  and grant all on `brewdial.*`. The user creates triggers, so with binary
-  logging on it also needs `log_bin_trust_function_creators=ON` in the DB
-  system configuration, or an equivalent privilege. Test this once with
-  `create trigger` in a scratch schema.
-- **PostgreSQL role.** The application role owns the tables. The rollback copy
-  needs that: an owner may disable user triggers, and no superuser is involved.
-  The copy checks this at cutover and refuses otherwise.
-- **Scripts on the host.** `/opt/brewdial` holds a checkout of a commit that
-  contains `deploy/oci/heatwave-phase4.sh` (rsync as in `deploy/oci/README.md`).
-- **Nothing else may start a colour during the window.** Pause every Dagu job that
-  runs `shiftgate follow` or `shiftgate check --heal`, and do not move `production`,
-  from the start of the window until the rollback window closes. Either could bring
-  the stopped Node API back as a writer. The script stops if it finds the Node API
-  running again before it finishes, but the jobs must be paused.
-- **Tell users.** Public traffic gets a 503 from the moment the Node API stops until
-  the switch: a few minutes, planned in advance. Read and write both stop.
-- **Env file for `brewdial-api-kt`.** Create
-  `/etc/shiftgate/brewdial-api-kt.env` (`0600`) with `AGENT_TOKEN`,
-  `SENTRY_DSN` and the **HeatWave** `DATABASE_URL`, the same value as in the copy
-  env file below.
-- **Env files for the copy.** Create `/etc/shiftgate/brewdial-copy.env`
-  (`0600`) with two keys: `DATABASE_URL`, the HeatWave target
-  (`mysql://app:…@<private-ip>:3306/brewdial?sslMode=REQUIRED`), and
-  `BREWDIAL_COPY_SOURCE_URL`, the PostgreSQL source. Passing them by file keeps
-  the passwords out of the process list. Then derive the rollback file, which
-  swaps the two directions, without displaying it:
+- **HeatWave.** 사설 서브넷에서 MySQL 8.4 LTS 이상을 사용한다. 호스트 서브넷에서 TCP 3306만 허용한다. `brewdial` 데이터베이스와 애플리케이션 사용자를 만들고 필요한 권한을 부여한다. 트리거 생성 권한과 바이너리 로그 설정을 미리 확인한다.
+- **호스트의 스크립트.** `/opt/brewdial`에 `deploy/oci/heatwave-phase4.sh`가 포함된 커밋을 설치한다.
+- **서비스 설정.** 이 PR의 `deploy/oci/shiftgate/services.yaml`을 호스트의 `/etc/shiftgate/services.yaml`에 복사한다. 새 서비스는 `brewdial-api-mysql`이다.
+- **새 서비스 환경 파일.** `/etc/shiftgate/brewdial-api-mysql.env`를 `0600`으로 만들고 `AGENT_TOKEN`, `SENTRY_DSN`, HeatWave의 `DATABASE_URL=mysql://…`를 넣는다. `DATABASE_URL`은 복사 도구의 대상 URL과 같은 값이어야 한다.
+- **복사 환경 파일.** `/etc/shiftgate/brewdial-copy.env`를 `0600`으로 만들고 `DATABASE_URL`에는 HeatWave 대상 URL, `BREWDIAL_COPY_SOURCE_URL`에는 PostgreSQL 원본 URL을 둔다. 롤백 파일은 두 URL의 방향을 바꾸어 만든다. 비밀 값을 터미널이나 명령 인수에 출력하지 않는다.
+
   ```sh
-  sudo sh -c 'umask 077; sed -nE "s/^DATABASE_URL=/BREWDIAL_COPY_SOURCE_URL=/p; t; s/^BREWDIAL_COPY_SOURCE_URL=/DATABASE_URL=/p" /etc/shiftgate/brewdial-copy.env > /etc/shiftgate/brewdial-rollback.env'
+  sudo sh -c 'umask 077; while IFS= read -r line; do case "$line" in DATABASE_URL=*) printf "BREWDIAL_COPY_SOURCE_URL=%s\n" "${line#DATABASE_URL=}" ;; BREWDIAL_COPY_SOURCE_URL=*) printf "DATABASE_URL=%s\n" "${line#BREWDIAL_COPY_SOURCE_URL=}" ;; esac; done < /etc/shiftgate/brewdial-copy.env > /etc/shiftgate/brewdial-rollback.env'
   sudo grep -cE '^(DATABASE_URL=postgres|BREWDIAL_COPY_SOURCE_URL=mysql)' /etc/shiftgate/brewdial-rollback.env   # expect 2
   ```
-- **PostgreSQL is at migration 007.** Run `select name from pgmigrations order
-  by run_on;`. On its first start against this database, api-kt's Flyway
-  records it as baseline V1 (`baseline-on-migrate`), and V1 equals
-  `packages/db/migrations` 001–007. `PostgresBaselineDriftTest` keeps the two
-  in sync.
-- **Values fit the MySQL key columns.** MySQL needs bounded `VARCHAR` columns
-  where PostgreSQL indexes unbounded `text`. Each count must be 0:
-  ```sql
-  select 'beans.name/roaster' c, count(*) from beans where char_length(name) > 255 or char_length(roaster) > 255
-  union all select 'bean ids', count(*) from beans where char_length(id) > 128
-  union all select 'recipe codes', count(*) from recipes where char_length(code) > 64
-  union all select 'calibration labels', count(*) from grinder_calibration
-    where char_length(from_label) > 255 or char_length(to_label) > 255 or char_length(anchor_method) > 120
-  union all select 'preferences.id', count(*) from preferences where char_length(id) > 64
-  union all select 'bd_migration_meta.key', count(*) from bd_migration_meta where char_length(key) > 128;
-  ```
-  The copy repeats this check for every bounded column before it writes
-  anything, and refuses with the list of oversized values.
-- **Names stay unique on MySQL.** `utf8mb4_0900_as_cs` treats the composed and
-  decomposed forms of one Korean name as equal, and PostgreSQL does not. A pair
-  stops the copy on a duplicate key. Each query must return no rows:
-  ```sql
-  select lower(normalize(name)), coalesce(lower(normalize(roaster)), ''), count(*) from beans group by 1, 2 having count(*) > 1;
-  select lower(normalize(name)), count(*) from grinders group by 1 having count(*) > 1;
-  select lower(normalize(name)), count(*) from drippers group by 1 having count(*) > 1;
-  ```
-- **No manual loaders during the window.** `scripts/kurly/load.mjs --execute` and
-  `load:xbloom-reference` write to PostgreSQL directly. Do not run them from the start
-  of the window until the rollback window closes. A write during the copy would be lost.
 
-### 4.2 Parity precheck: Node API vs api-kt
+- **PostgreSQL 사전 조건.** 프로덕션 데이터베이스의 적용된 마이그레이션과 대상 스키마를 확인한다. 복사 도구는 지원하지 않는 스키마 차이, 범위 초과 값, 충돌하는 고유 키가 있으면 쓰기 전에 중단한다.
+- **쓰기 중단.** 유지보수 창이 끝나고 롤백 기간이 닫힐 때까지 `shiftgate follow` 또는 `shiftgate check --heal`을 실행하는 Dagu 작업을 멈춘다. PostgreSQL에 쓰는 수동 로더도 실행하지 않는다.
+- **사용자 공지.** Node API를 멈춘 시점부터 트래픽 전환이 끝날 때까지 API 요청은 실패할 수 있다. 읽기와 쓰기가 모두 중단되는 시간을 미리 공지한다.
 
-The cutover changes the runtime and the database at once, so check them
-separately:
+### 4.2 사전 동등성 확인
 
-1. **Contract suite.** The `ci-kt.yml` PostgreSQL job runs the Node API's
-   Vitest contract suite against Spring (`scripts/contract-test.sh`). The
-   latest `main` run must be green.
-2. **Route inventory.** Every Hono route must have a Spring mapping. Compare
-   the two lists and explain every difference:
-   ```sh
-   grep -rhoE --exclude='*.test.ts' "\.(get|post|put|patch|delete)\(\s*'[^']+'" apps/api/src | sort -u
-   grep -rhoE '@(Get|Post|Put|Patch|Delete)Mapping\("[^"]*"' apps/api-kt/src/main | sort -u
-   ```
-   The documented intentional differences are in `apps/api-kt/README.md`.
+1. **CI 계약 테스트.** Node API의 PostgreSQL 및 MySQL API 작업이 현재 커밋에서 통과했는지 확인한다. MySQL 이미지 작업은 서비스 명령으로 마이그레이션을 두 번 실행하고 `/api/db/health`가 200을 반환하는지도 확인한다.
+2. **라우트 및 데이터 동등성.** 같은 Node 코드가 두 데이터베이스에서 동작하므로 런타임 간 라우트 차이를 비교하지 않는다. 변경된 데이터베이스 경로에 대한 테스트와 CI 결과를 확인한다.
+3. **응답 사전 비교.** 스크립트가 중단 전에 저장하는 Node-on-PostgreSQL 응답을 Node-on-MySQL 응답과 비교한다. JSON의 날짜 문자열은 MySQL `DATETIME(6)`의 마이크로초와 PostgreSQL의 밀리초 차이 때문에 밀리초 UTC 표기로 정규화한다. 이 정규화는 날짜 문자열에만 적용되며 숫자로 보이는 문자열이나 다른 값은 바꾸지 않는다.
 
-The window then compares api-kt on **MySQL** with responses saved from the Node API
-just before it stops (§4.3).
+### 4.3 유지보수 창: 중지, 복사, 검증, 시작
 
-### 4.3 The window: stop, copy, verify, start
-
-The database is about 10 MB, so this is a short planned maintenance window. Nothing
-runs against a database while it is copied, so no write can land during the copy.
-
-Rehearse first. `--preflight` runs only the read-only checks and changes nothing:
+먼저 새 환경 파일과 서비스 설정을 호스트에 설치한 뒤, 두 digest를 사용해 읽기 전용 사전 점검을 수행한다.
 
 ```sh
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest> --preflight
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<Node 이미지 digest> --copy-digest sha256:<복사 도구 이미지 digest> --preflight
 ```
 
-Then run the window:
+점검이 통과하면 유지보수 창에서 다음 명령을 실행한다.
 
 ```sh
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<api-kt digest>
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh cutover --digest sha256:<Node 이미지 digest> --copy-digest sha256:<복사 도구 이미지 digest>
 ```
 
-The script stops at the first failed step, prints `PHASE4_FAILED step=<step>` and
-exits non-zero. Tool output goes to `/var/log/brewdial-phase4/` (`0700`), with
-connection credentials redacted.
+스크립트는 첫 실패 지점에서 중단한다. 도구 로그는 `/var/log/brewdial-phase4/`에 저장되고 출력의 연결 자격 증명은 마스킹된다.
 
-| Step | What it does | Passes when |
+| 단계 | 수행 작업 | 통과 조건 |
 |---|---|---|
-| `preflight` | Reads the env files by path, shiftgate state and health | Every file is `0600` with the right keys, the Node API has an active colour, and no finished cutover stands |
-| `save` | Saves the Node API's answers to the read endpoints, for `parity` | Every endpoint answers |
-| `stop` | Stops every colour of the Node API, and any api-kt | Each container reports not running, and `:8020` no longer answers |
-| `copy` | Copies PostgreSQL → MySQL in one snapshot, and compares before it commits | `COPY_VERIFY_OK` and exit 0 |
-| `verify` | Compares both databases in a new snapshot | `COPY_VERIFY_OK` |
-| `start` | `shiftgate deploy brewdial-api-kt` on MySQL | It is active on this digest, and `/api/db/health` on `:8021` answers 200 |
-| `parity` | Compares api-kt with the saved responses | Same after the README's allowed differences |
-| `finish` | Checks that nothing restarted the Node API, and records the finished cutover | Every Node colour is still stopped |
+| `preflight` | 파일 권한과 키, shiftgate 상태, 건강 상태를 확인 | 환경 파일이 `0600`, URL이 올바르고 기존 Node 서비스와 새 서비스 상태가 점검됨 |
+| `save` | PostgreSQL을 사용하는 Node API의 읽기 응답 저장 | 모든 대상 경로가 응답함 |
+| `stop` | 두 Node 서비스의 모든 색상을 중지 | PostgreSQL 서비스와 MySQL 서비스가 중지되고 `:8020` 응답이 사라짐 |
+| `copy` | PostgreSQL 데이터를 MySQL로 복사하고 행 수, 체크섬, 시퀀스 확인 | `COPY_VERIFY_OK` 및 종료 코드 0 |
+| `verify` | 새 스냅샷에서 양쪽 데이터베이스 재비교 | `COPY_VERIFY_OK` |
+| `start` | `brewdial-api-mysql`을 Node 이미지 digest로 배포 | 해당 digest가 활성 상태이고 `:8021/api/db/health`가 200 |
+| `parity` | 저장된 PostgreSQL 응답과 MySQL 응답 비교 | 날짜 정규화 후 내용이 같음. `--accept-order`는 명시된 목록 순서 차이만 허용 |
+| `finish` | 기존 PostgreSQL 서비스를 계속 중지 상태로 확인 | 모든 기존 Node 색상이 중지되어 있음 |
 
-The script then prints the cloudflared command (§4.4).
+복사 결과에는 테이블별 행 수와 체크섬, `recipe_code_seq` 값이 포함된다. 스키마가 다르거나 어느 검증이라도 실패하면 `PHASE4_FAILED step=<단계>`와 함께 종료한다. 실패 후에는 PostgreSQL을 다시 시작하기 전까지 쓰기가 없어야 한다.
 
-**What the copy verifies.** The source's column list drives the copy. A table, column
-or sequence that only one side has stops the run before it writes anything
-(`COPY_CHECK_FAILED schema drift: …`). After the copy:
+`verify`, `start`, `parity` 또는 `finish` 단계에서 실패하여 MySQL에 데이터가 남았으면 재시도 시 `--replace-target`을 추가한다. 완료 마커가 있는 경우에는 새 복사를 시작하지 말고 먼저 롤백한다. 저장 응답은 기존 Node API를 다시 시작해 저장물을 새로 만들지 않는 한 재시도에 재사용된다.
 
-- **row count**: source vs target, per table;
-- **checksum**: SHA-256 over every row in a vendor-neutral canonical form
-  (UUIDs as text, JSON with sorted keys and normalised numbers, `text[]` as
-  JSON arrays, timestamps as UTC instants, every value length-prefixed), rows
-  sorted;
-- **sequence**: the last number `recipe_code_seq` handed out, on both sides.
+`--accept-order`는 이름의 데이터베이스 정렬 차이나 NULL 위치 차이에 따른 `/api/beans`, `/api/grinders`, `/api/drippers` 최상위 목록 순서, 그리고 `created_at`이 같은 레시피 행의 순서만 허용한다. 배열 안의 순서, 레시피 단계 순서, 값의 차이는 계속 실패한다.
 
-The report ends with `COPY_VERIFY_OK source=POSTGRESQL target=MYSQL tables=15
-sequences=1`. Any `MISMATCH` exits non-zero.
+### 4.4 트래픽 전환
 
-**If it stops.** The Node API stays stopped, and PostgreSQL is untouched. The window's
-way out is always the same: run `rollback` (§4.5), which restarts the Node API. To
-retry instead:
-
-| Stopped at | Do this |
-|---|---|
-| `preflight` or `save` | Nothing changed. Fix the cause and run it again. |
-| `stop` | Find what still serves `:8020` or restarted a colour, then run it again. |
-| `copy` | The copy rolled back, and the target is still empty. Fix the cause and run it again. |
-| `verify`, `start`, `parity` or `finish` | MySQL holds rows. Run it again with `--replace-target`. |
-
-A retry keeps the responses saved before the Node API stopped. `copy` always refuses
-a target that holds rows, and no `cutover` runs while a finished one stands, so
-`--replace-target` cannot overwrite live data.
-
-**If `parity` shows only a different order.** PostgreSQL and MySQL may sort
-`name` differently (`utf8mb4_0900_as_cs` against the PostgreSQL collation), and
-they place a NULL `continuum_position` differently. Decide whether that is
-acceptable. To accept it, retry with `--replace-target --accept-order`. It covers only
-the order of the rows in `/api/beans`, `/api/grinders` and `/api/drippers`, and of
-recipes with an equal `created_at`, which have no defined order on either database.
-The script still stops on any other order difference, such as recipe steps or a
-recipe list sorted differently, and on any difference in content. It reports each
-accepted path.
-
-### 4.4 Switch traffic (desk)
-
-1. Run the command the script printed:
-   ```sh
-   sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
-   ```
-2. Smoke test: run public `/api/health`, `/api/db/health` and a read, then
-   one agent write through MCP. Check Sentry.
-3. Move the backup timers to HeatWave now (§4.6). PostgreSQL no longer changes,
-   and the timers do not cover the live data until you do.
-4. Point releases at api-kt: change `deploy-oci.yml` to build `apps/api-kt` and
-   move its `production` tag, and change the Dagu job to follow `brewdial-api-kt`.
-   Do this in a follow-up PR, after the rollback window closes.
-
-### 4.5 Rollback
-
-One command covers both cases. It uses the digest the cutover ran with:
+스크립트가 출력하는 명령은 Cloudflared 설정의 모든 `8020` 경로를 `8021`로 바꾼다. 유지보수 창 담당자가 실행한다.
 
 ```sh
-sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<api-kt digest>
+sudo sed -i 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
 ```
 
-It stops api-kt and the Node API, so that nothing runs against either database. Then:
+공개 API의 상태 및 데이터베이스 건강 경로와 읽기 요청을 확인하고, MCP를 통한 쓰기도 확인한다. 오류 감시를 확인한 뒤 백업 타이머를 HeatWave에 맞게 전환한다. 롤백 기간 동안에는 PostgreSQL을 삭제하거나 기존 서비스 이미지를 제거하지 않는다.
 
-| State | What it does |
-|---|---|
-| No finished cutover: the window failed or was abandoned | Nothing is copied, because MySQL never served. It starts the Node API on the untouched PostgreSQL |
-| A finished cutover, and MySQL still matches PostgreSQL | Nothing is copied, because MySQL took no writes. It starts the Node API |
-| A finished cutover, and MySQL differs | It dumps PostgreSQL to `/var/backups/brewdial/final-postgres/pre-rollback-<time>.dump`, replaces every row from MySQL in one transaction, compares before it commits, compares again in a new snapshot, then starts the Node API |
+### 4.5 롤백
 
-Rows written, changed or deleted on MySQL all arrive, and the sequence continues
-where MySQL stopped. Public traffic gets a 503 until this finishes.
-
-Then switch traffic back, with the command it prints, and resume the Dagu jobs:
+롤백에는 cutover에 사용한 Node 이미지 digest를 전달한다.
 
 ```sh
-sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
+sudo /opt/brewdial/deploy/oci/heatwave-phase4.sh rollback --digest sha256:<Node 이미지 digest>
 ```
 
-If §4.6 already ran, point the backup timers back at PostgreSQL:
+스크립트는 MySQL의 Node 서비스와 기존 PostgreSQL의 Node 서비스를 중지한다. 완료 마커가 없으면 MySQL이 트래픽을 받지 않았으므로 PostgreSQL을 복사하지 않고 기존 서비스를 시작한다. 완료 마커가 있고 MySQL에 쓰기가 없으면 데이터 복사 없이 PostgreSQL의 Node 서비스를 시작한다. MySQL에 쓰기가 있으면 안전 덤프를 만든 다음 MySQL 데이터를 PostgreSQL에 복사하고 양쪽을 검증한 뒤 기존 서비스를 시작한다.
+
+그 다음 Cloudflared 설정의 모든 `8021` 경로를 `8020`으로 돌린다.
 
 ```sh
-sudo sed -i 's#backup-heatwave.sh#backup.sh#' /etc/systemd/system/brewdial-backup.service
-sudo sed -i 's#verify-restore-heatwave.sh#verify-restore.sh#' /etc/systemd/system/brewdial-verify.service
-sudo systemctl daemon-reload
+sudo sed -i 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' /etc/cloudflared/config.yml && sudo systemctl restart cloudflared
 ```
 
-On failure, PostgreSQL keeps its previous rows and the Node API stays stopped. Read
-the tool log the script names: a value PostgreSQL cannot store, such as one that
-exceeds a size limit there, is named by its database error. Fix the row on MySQL,
-then run `rollback` again. Once a rollback has copied or found no writes, a second one
-copies nothing, so it can never overwrite what PostgreSQL takes next.
+복사나 검증에 실패하면 PostgreSQL 데이터는 그대로 남고 기존 Node 서비스는 중지 상태로 유지된다. 로그의 오류를 해결한 뒤 동일 digest로 롤백을 다시 실행한다. 백업 타이머도 전환했다면 PostgreSQL용 스크립트로 되돌린다.
 
-### 4.6 Backup timers → HeatWave
+### 4.6 HeatWave 백업 타이머
 
-Do this right after the switch (§4.4 step 4). The timer names and schedules stay. `backup-heatwave.sh` runs `mysqldump --single-transaction` and
-`verify-restore-heatwave.sh` restores into a throwaway MySQL container with no
-network, then compares every table with the live schema. Both read credentials
-from an env-file path and never print them. The clients run from a pinned
-`mysql:8.4` image, so the host needs no MySQL package.
+트래픽 전환 후 HeatWave 전용 백업 및 복구 검증 스크립트를 설정한다. 기존 타이머 일정은 유지한다. 읽기 전용 DB 사용자의 URL은 `/etc/brewdial/heatwave.env`에 저장하고 권한을 `0600`으로 설정한다. 백업과 검증을 각각 한 번 실행하고 성공 로그와 새 백업 파일을 확인한다. Mac 백업 가져오기 작업도 `.sql.gz` 형식을 지원하는 버전으로 갱신한다.
 
-1. Create a read-only user on HeatWave, then the env file
-   (`deploy/oci/heatwave.env.example`):
-   ```sh
-   sudo install -m 0600 -o opc -g opc /dev/null /etc/brewdial/heatwave.env
-   sudoedit /etc/brewdial/heatwave.env
-   sudo grep -c '^DATABASE_URL=mysql://' /etc/brewdial/heatwave.env   # expect 1
-   ```
-2. Add `HEATWAVE_ENV=/etc/brewdial/heatwave.env` to `/etc/brewdial/backup.env`.
-3. Install the units, then run each once:
-   ```sh
-   sudo install -m 0644 deploy/oci/brewdial-backup.service deploy/oci/brewdial-verify.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl start brewdial-backup.service && journalctl -u brewdial-backup.service -n 5 --no-pager
-   sudo systemctl start brewdial-verify.service && journalctl -u brewdial-verify.service -n 5 --no-pager   # GATE PASS
-   ls -l /var/backups/brewdial/daily/ | tail -2                       # a new brewdial-*.sql.gz
-   systemctl list-timers 'brewdial-*'
-   ```
-4. Update the Mac's copy of `deploy/mac/pull-backups.sh`. It now accepts
-   `*.sql.gz` as well as `*.dump`, and it checks that a dump is complete.
+### 4.7 PostgreSQL 정리
 
-**Restoring a dump on HeatWave.** A dump keeps each trigger's `DEFINER`, and a user
-without the privilege to set it gets `ERROR 1227`. Remove the clause on the way in.
-The dump names no database, so choose the target:
-
-```sh
-gzip -dc brewdial-<time>.sql.gz | sed -E 's/DEFINER=`[^`]+`@`[^`]+`//' | mysql --defaults-extra-file=<option file> <database>
-```
-
-### 4.7 PostgreSQL retirement (desk)
-
-Retirement ends the §4.5 rollback, so do it only after the desk closes the window
-and §4.6 has run for at least one backup and one verify. api-kt keeps its PostgreSQL support in code.
-
-1. **Final dump** to the existing backup path. `final-postgres/` is outside
-   retention, and the Mac pulls it with everything else. It holds the data as
-   of the cutover, because nothing has written to PostgreSQL since then. The current
-   data is in the HeatWave dumps from §4.6.
-   ```sh
-   stamp="$(date -u +%Y%m%d-%H%M)"
-   sudo install -d -o opc -g opc -m 0750 /var/backups/brewdial/final-postgres
-   sudo -u postgres pg_dump -Fc brewdial | sudo -u opc tee "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump" > /dev/null
-   sudo -u postgres pg_dumpall --globals-only | sudo -u opc tee "/var/backups/brewdial/final-postgres/globals-$stamp.sql" > /dev/null
-   sudo -u opc /opt/brewdial/deploy/oci/verify-restore.sh "/var/backups/brewdial/final-postgres/brewdial-$stamp.dump"   # GATE PASS
-   ```
-   Do not continue until the Mac's next pull holds the file.
-2. **Stop what still uses PostgreSQL.** The Node API stopped in the window. Remove
-   any Dagu job that still follows or heals `brewdial-api`, or it restarts a colour.
-   Then check that nothing connects:
-   ```sql
-   select usename, client_addr, count(*) from pg_stat_activity where datname = 'brewdial' group by 1, 2;
-   ```
-   ```sh
-   sudo systemctl disable --now brewdial-api    # the legacy systemd unit, if it is still installed
-   sudo systemctl disable --now k3s             # if phase 3 left it enabled
-   ```
-3. **Stop and disable PostgreSQL.** The API must not notice:
-   ```sh
-   sudo systemctl disable --now postgresql-17
-   ss -ltn | grep -c ':5432 '                   # expect 0
-   curl -fsS https://<public host>/api/db/health
-   ```
-4. **Keep the data directory for 14 days.** Record the date in the change record.
-   Find the path with `sudo systemctl cat postgresql-17 | grep PGDATA` (usually
-   `/var/lib/pgsql/17/data`). To go back within the 14 days, run `sudo systemctl
-   enable --now postgresql-17`, then §4.5 with the digest the cutover ran with. If
-   api-kt has migrated its schema since, that image may no longer match MySQL: decide
-   by hand, using the HeatWave dumps from §4.6.
-5. **Remove, after 14 days** (a later, separate change):
-   ```sh
-   sudo dnf remove 'postgresql17*'
-   sudo rm -rf /var/lib/pgsql/17
-   sudo rm -f /etc/shiftgate/brewdial-copy.env /etc/shiftgate/brewdial-rollback.env \
-     /etc/shiftgate/brewdial-api.env /etc/brewdial/api.env /var/lib/brewdial/phase4-cutover-done
-   ```
-   In the repository, delete the
-   `brewdial-api` service from `services.yaml`, `apps/api`, `packages/db`,
-   `backup.sh` and `verify-restore.sh` in one PR, and keep `final-postgres/`.
+롤백 기간이 끝나고 HeatWave 백업과 복구 검증이 성공한 뒤 별도 운영 작업으로 PostgreSQL을 정리한다. 마지막 PostgreSQL 덤프를 기존 보관 위치에 저장한다. PostgreSQL 지원 코드와 복사 도구는 이 PR에서 제거하지 않는다.

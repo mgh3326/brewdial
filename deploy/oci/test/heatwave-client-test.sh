@@ -99,6 +99,24 @@ else
 fi
 heatwave_unload
 
+# The last active DATABASE_URL wins; commented examples do not participate.
+cat >"$work/env" <<'EOF'
+DATABASE_URL=mysql://first:pw@first.example/first
+# DATABASE_URL=mysql://commented:pw@commented.example/commented
+  # DATABASE_URL=mysql://indented:pw@indented.example/indented
+DATABASE_URL=mysql://last:pw@last.example/last
+EOF
+if heatwave_load "$work/env" 2>"$work/stderr" \
+  && grep -qx 'user="last"' "$HEATWAVE_TMP/client.cnf" \
+  && grep -qx 'host=last.example' "$HEATWAVE_TMP/client.cnf" \
+  && [ "$HEATWAVE_DB" = last ]; then
+  printf 'ok   last non-comment DATABASE_URL wins\n'
+else
+  printf 'FAIL last non-comment DATABASE_URL wins\n'
+  failures=$((failures + 1))
+fi
+heatwave_unload
+
 # A user is decoded and quoted the same way.
 load_url "mysql://a%22b:pw@$host/brewdial"
 if grep -qxF 'user="a\"b"' "$HEATWAVE_TMP/client.cnf"; then
@@ -107,7 +125,8 @@ else
   printf 'FAIL user quoting\n'
   failures=$((failures + 1))
 fi
-if [ "$(stat -c '%a' "$HEATWAVE_TMP/client.cnf")" = 600 ]; then
+mode="$(stat -c '%a' "$HEATWAVE_TMP/client.cnf" 2>/dev/null || stat -f '%Lp' "$HEATWAVE_TMP/client.cnf")"
+if [ "$mode" = 600 ]; then
   printf 'ok   option file is 0600\n'
 else
   printf 'FAIL option file is not 0600\n'

@@ -32,7 +32,7 @@
    sudo systemctl restart cloudflared
    ```
 4. **DNS 추가.** `<mcp-hostname>`을 터널로 가리키는 레코드를 추가한다.
-5. **환경 파일에 변수 추가 후 배포.** 호스트의 환경 파일(`/etc/brewdial/api.env`)에 다음 세 변수를 넣는다. 값은 `deploy/oci/api.env.example`의 설명을 따른다.
+5. **환경 파일에 변수 추가 후 배포.** 호스트의 환경 파일(`/etc/shiftgate/brewdial-api.env`)에 다음 세 변수를 넣는다. 값은 `deploy/oci/api.env.example`의 설명을 따른다.
    ```
    BREWDIAL_MCP_CF_TEAM_DOMAIN=<team-domain>.cloudflareaccess.com
    BREWDIAL_MCP_CF_AUD=<aud>

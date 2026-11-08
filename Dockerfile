@@ -4,7 +4,7 @@
 #
 # Layout in the final image:
 #   /app       — @brewdial/api prod deploy (dist + prod node_modules)
-#   /migrate   — @brewdial/db deploy incl. node-pg-migrate + SQL migrations
+#   /migrate   — @brewdial/db deploy incl. migration runners + SQL migrations
 #                (run before the server: k8s initContainer in deploy/oci/k3s/,
 #                shiftgate `args` in deploy/oci/shiftgate/services.yaml)
 
