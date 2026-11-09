@@ -48,7 +48,9 @@ class AgentController(
         if (items == null || !items.isArray || items.size() !in 1..100) return error("brews must contain 1 to 100 items", HttpStatus.BAD_REQUEST)
         val errors = items.flatMapIndexed { index, item -> validateXBloomBrew(item).map { "brews[$index].${it.removePrefix("brew.")}" } }
         if (errors.isNotEmpty()) return ResponseEntity.badRequest().body(linkedMapOf("error" to "validation failed", "details" to errors))
-        return ResponseEntity.ok(brews.ingest(items.map { it as ObjectNode }))
+        val brewItems = mutableListOf<ObjectNode>()
+        items.forEach { brewItems += it as ObjectNode }
+        return ResponseEntity.ok(brews.ingest(brewItems))
     }
 
     @GetMapping("/brews")
@@ -60,8 +62,8 @@ class AgentController(
     ): ResponseEntity<Any> {
         val parsedLimit = limit?.toIntOrNull() ?: if (limit == null) 20 else 0
         if (parsedLimit !in 1..100) return error("limit must be an integer from 1 to 100", HttpStatus.BAD_REQUEST)
-        if (recipeCode != null && !recipeCode.matches(Regex("COF-\d{4,}"))) return error("invalid recipeCode", HttpStatus.BAD_REQUEST)
-        if (xbloomRecipeId != null && !xbloomRecipeId.matches(Regex("\d{1,32}"))) return error("invalid xbloomRecipeId", HttpStatus.BAD_REQUEST)
+        if (recipeCode != null && !recipeCode.matches(Regex("COF-\\d{4,}"))) return error("invalid recipeCode", HttpStatus.BAD_REQUEST)
+        if (xbloomRecipeId != null && !xbloomRecipeId.matches(Regex("\\d{1,32}"))) return error("invalid xbloomRecipeId", HttpStatus.BAD_REQUEST)
         val timestamp = if (since == null) null else runCatching { java.time.Instant.parse(since) }.getOrNull()
         if (since != null && timestamp == null) return error("invalid since timestamp", HttpStatus.BAD_REQUEST)
         return ResponseEntity.ok(brews.list(parsedLimit, recipeCode, xbloomRecipeId, timestamp))
@@ -74,12 +76,12 @@ class AgentController(
 
     @PutMapping("/xbloom-recipe-links/{xbloomRecipeId}")
     fun putXBloomRecipeLink(@PathVariable xbloomRecipeId: String, request: HttpServletRequest): ResponseEntity<Any> {
-        if (!xbloomRecipeId.matches(Regex("\d{1,32}"))) return error("invalid xbloomRecipeId", HttpStatus.BAD_REQUEST)
+        if (!xbloomRecipeId.matches(Regex("\\d{1,32}"))) return error("invalid xbloomRecipeId", HttpStatus.BAD_REQUEST)
         val body = bodies.read(request) as? ObjectNode ?: return error("recipeCode is required", HttpStatus.BAD_REQUEST)
         if (body.propertyNames().any { it != "recipeCode" } || body.size() != 1) return error("recipeCode is required", HttpStatus.BAD_REQUEST)
         val code = body.get("recipeCode")?.takeIf { it.isTextual }?.asText()
             ?: return error("recipeCode is required", HttpStatus.BAD_REQUEST)
-        if (!code.matches(Regex("COF-\d{4,}"))) return error("recipeCode is required", HttpStatus.BAD_REQUEST)
+        if (!code.matches(Regex("COF-\\d{4,}"))) return error("recipeCode is required", HttpStatus.BAD_REQUEST)
         if (!brews.link(xbloomRecipeId, code)) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(linkedMapOf("error" to "recipe not found"))
         return ResponseEntity.ok(linkedMapOf("xbloomRecipeId" to xbloomRecipeId, "recipeCode" to code))
     }
