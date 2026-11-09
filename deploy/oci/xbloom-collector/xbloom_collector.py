@@ -64,32 +64,43 @@ def _flatten_records(value: Any) -> Iterable[Dict[str, Any]]:
             yield from _flatten_records(nested)
 
 
+def _valid_scalar(value: Any) -> bool:
+    return not isinstance(value, bool) and (
+        isinstance(value, (str, int)) or isinstance(value, float) and math.isfinite(value)
+    )
+
+
 def _allowlisted_record(record: Dict[str, Any]) -> Dict[str, Any]:
     result = {
-        key: record[key]
+        key: value
         for key in ("tableId", "createTimeStamp", "brewTime", "recipeName")
-        if key in record and isinstance(record[key], (str, int, float)) and not isinstance(record[key], bool)
+        if key in record and _valid_scalar(value := record[key])
+        and (key != "recipeName" or isinstance(value, str))
     }
     curve = record.get("lineChartData")
     if isinstance(curve, str):
         try:
-            curve = json.loads(curve)
+            curve = json.loads(curve, parse_constant=lambda token: (_ for _ in ()).throw(ValueError(token)))
         except (TypeError, ValueError):
             curve = None
     if isinstance(curve, list) and curve and all(
         isinstance(point, list)
         and len(point) == 2
-        and all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in point)
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            or isinstance(value, float) and math.isfinite(value)
+            for value in point
+        )
         for point in curve
     ):
-        result["lineChartData"] = json.dumps(curve, separators=(",", ":"))
+        result["lineChartData"] = json.dumps(curve, separators=(",", ":"), allow_nan=False)
     recipe = record.get("recipeVo")
     if isinstance(recipe, dict):
         allowed_recipe = {
             key: recipe[key]
             for key in RECIPE_FIELDS
             if key in recipe and key != "pourList"
-            and isinstance(recipe[key], (str, int, float)) and not isinstance(recipe[key], bool)
+            and (_valid_scalar(recipe[key]) or key == "isEnableBypassWater" and isinstance(recipe[key], bool))
         }
         pours = recipe.get("pourList")
         if isinstance(pours, list):
@@ -97,7 +108,8 @@ def _allowlisted_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 {
                     key: pour[key]
                     for key in POUR_FIELDS
-                    if key in pour and isinstance(pour[key], (str, int, float)) and not isinstance(pour[key], bool)
+                    if key in pour
+                    and (_valid_scalar(pour[key]) or key in ("isEnableVibrationBefore", "isEnableVibrationAfter") and isinstance(pour[key], bool))
                 }
                 if isinstance(pour, dict) else {}
                 for pour in pours
@@ -106,7 +118,7 @@ def _allowlisted_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-MAX_BATCH_BYTES = 512 * 1024
+MAX_BATCH_BYTES = 900 * 1024
 
 
 def _batches(records: List[Dict[str, Any]]) -> Iterable[List[Dict[str, Any]]]:
@@ -121,7 +133,7 @@ def _batches(records: List[Dict[str, Any]]) -> Iterable[List[Dict[str, Any]]]:
         else:
             batch = candidate
         if size > MAX_BATCH_BYTES:
-            raise ValueError("a single record exceeds the API request size limit")
+            batch = []
     if batch:
         yield batch
 
@@ -202,7 +214,10 @@ def collect(
     recent = [_allowlisted_record(record) for record in records if _is_recent(record, cutoff_ms)]
     outside_since = len(records) - len(recent)
     counts = {"fetched": len(records), "selected": len(recent), "outside_since": outside_since, "inserted": 0, "duplicate": 0, "skipped": 0}
-    for batch in _batches(recent):
+    batches = list(_batches(recent))
+    counts["selected"] = sum(len(batch) for batch in batches)
+    counts["skipped"] += len(recent) - counts["selected"]
+    for batch in batches:
         result = post_batch(api_url, agent_token, batch)
         counts["inserted"] += len(result.get("inserted", []))
         counts["duplicate"] += len(result.get("duplicate", []))

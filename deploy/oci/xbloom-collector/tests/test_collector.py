@@ -220,12 +220,45 @@ def test_malformed_nested_shapes_never_forward_identifier_fields(monkeypatch):
 def test_batches_respect_serialized_body_size():
     records = [raw_record(str(9000000100 + i), 1_800_000_000_000) for i in range(2)]
     for i, record in enumerate(records):
-        record["recipeName"] = f"synthetic-{i}-" + ("x" * 300_000)
+        record["recipeName"] = f"synthetic-{i}-" + ("x" * 500_000)
 
     batches = list(collector._batches(records))
 
     assert [len(batch) for batch in batches] == [1, 1]
     assert all(len(collector.json.dumps({"records": batch}, ensure_ascii=False).encode("utf-8")) <= collector.MAX_BATCH_BYTES for batch in batches)
+
+
+def test_oversized_record_is_counted_as_skipped_and_does_not_block_later_records(monkeypatch):
+    oversized = raw_record("9000000200", 1_800_000_000_000)
+    oversized["recipeName"] = "x" * (collector.MAX_BATCH_BYTES + 1)
+    later = raw_record("9000000201", 1_800_000_000_000)
+    calls = []
+    client = fake_client(monkeypatch, {"result": "success", "gList": [oversized, later]}, calls)
+    monkeypatch.setattr(collector, "_new_client", lambda *_args: client)
+    posted = []
+
+    counts = collector.collect(dict(BASE_ENV), post_batch=lambda _url, _token, batch: posted.extend(batch) or {"inserted": ["9000000201"], "duplicate": [], "skipped": []}, now=1_800_000_000)
+
+    assert counts["selected"] == 1
+    assert counts["skipped"] == 1
+    assert counts["inserted"] == 1
+    assert len(posted) == 1
+    assert posted[0]["tableId"] == later["tableId"]
+
+
+def test_boolean_flags_are_preserved_and_nonfinite_values_are_removed():
+    record = raw_record("9000000300", 1_800_000_000_000)
+    record["recipeVo"]["isEnableBypassWater"] = True
+    record["recipeVo"]["dose"] = float("inf")
+    record["recipeVo"]["pourList"][0]["isEnableVibrationBefore"] = True
+    record["lineChartData"] = "[[NaN,0],[220,120]]"
+
+    sanitized = collector._allowlisted_record(record)
+
+    assert sanitized["recipeVo"]["isEnableBypassWater"] is True
+    assert sanitized["recipeVo"]["pourList"][0]["isEnableVibrationBefore"] is True
+    assert "dose" not in sanitized["recipeVo"]
+    assert "lineChartData" not in sanitized
 
 
 def test_post_batch_refuses_redirects():
