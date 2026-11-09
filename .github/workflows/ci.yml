@@ -174,19 +174,6 @@ jobs:
     name: Node image migrations and health (MySQL 8.4)
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgrespassword
-          POSTGRES_DB: brewdial_source
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       mysql:
         image: mysql:8.4
         env:
@@ -208,23 +195,12 @@ jobs:
       - name: Build API image
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" --tag brewdial-api-image-check .
 
-      - name: Setup Java for the Kotlin copy tool
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
-
-      - name: Build Kotlin copy tool
-        working-directory: apps/api-kt
-        run: ./gradlew --no-daemon bootJar
-
       - name: Run exact shiftgate args twice and check health
         shell: bash
         run: |
           set -euo pipefail
           container=brewdial-api-image-check
-          trap 'docker rm -f "$container" brewdial-api-flyway-check >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           docker run --detach --name "$container" --network host --memory=512m \
             --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test \
             --env HOST=127.0.0.1 --env NODE_ENV=production \
@@ -254,59 +230,6 @@ jobs:
           printf '%s\n' "$second_logs"
           grep -F 'nothing to apply' <<<"$second_logs"
           docker rm -f "$container"
-
-          # Run the real Kotlin/Flyway/copy sequence against the same MySQL
-          # database that Node migrates next.
-          docker run --rm --network host mysql:8.4 mysql -h127.0.0.1 -uroot -pmysqlpassword \
-            -e 'create database brewdial_flyway_test character set utf8mb4 collate utf8mb4_0900_as_cs'
-          jar_path="$(find apps/api-kt/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print -quit)"
-          [ -n "$jar_path" ] || { echo 'Kotlin bootJar was not produced'; exit 1; }
-          source_log="$(mktemp)"
-          source_pid=''
-          cleanup_source() {
-            if [ -n "$source_pid" ] && kill -0 "$source_pid" 2>/dev/null; then
-              kill "$source_pid" 2>/dev/null || true
-              wait "$source_pid" 2>/dev/null || true
-            fi
-            rm -f "$source_log"
-            docker rm -f "$container" brewdial-api-flyway-check >/dev/null 2>&1 || true
-          }
-          trap cleanup_source EXIT
-          DATABASE_URL=postgres://postgres:postgrespassword@127.0.0.1:5432/brewdial_source \
-            AGENT_TOKEN=test-token PORT=3021 java -jar "$jar_path" >"$source_log" 2>&1 &
-          source_pid=$!
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:3021/api/db/health >/dev/null; then
-              break
-            fi
-            [ "$attempt" -lt 60 ] || { cat "$source_log"; exit 1; }
-            sleep 1
-          done
-          kill "$source_pid"
-          wait "$source_pid" 2>/dev/null || true
-          source_pid=''
-          copy_logs="$(DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_flyway_test \
-            BREWDIAL_COPY_SOURCE_URL=postgres://postgres:postgrespassword@127.0.0.1:5432/brewdial_source \
-            BREWDIAL_COPY_MODE=copy java -jar "$jar_path" 2>&1)"
-          grep -F 'COPY_VERIFY_OK' <<<"$copy_logs"
-
-          flyway_container=brewdial-api-flyway-check
-          docker run --detach --name "$flyway_container" --network host --memory=512m \
-            --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_flyway_test \
-            --env HOST=127.0.0.1 --env NODE_ENV=production \
-            brewdial-api-image-check \
-            sh -c 'node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js'
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:3020/api/db/health; then
-              printf '\n/api/db/health returned 200 after Flyway baseline\n'
-              break
-            fi
-            [ "$attempt" -lt 60 ] || { docker logs "$flyway_container"; exit 1; }
-            sleep 2
-          done
-          flyway_logs="$(docker logs "$flyway_container" 2>&1)"
-          printf '%s\n' "$flyway_logs"
-          grep -F 'adopted 001_baseline from successful Flyway V1__baseline.sql' <<<"$flyway_logs"
 
   main-stage:
     # Manual ref path: Main CI on the dispatched ref.

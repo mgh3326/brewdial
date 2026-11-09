@@ -117,8 +117,8 @@ test('POST /api/agent/recipes with injected owner_id/is_official/created_by → 
 })
 
 test('POST /api/agent/recipes keeps notes whitespace, trims title and adjustmentFromPrevious (#602)', async () => {
-  // Notes carry the xBloom machine tag, so their whitespace is data. Both API
-  // implementations (Hono and Spring) must store them byte-for-byte.
+  // Notes carry the xBloom machine tag, so their whitespace is data. The API
+  // must store them byte-for-byte.
   const notes = '  line one\n  line two\n\n[xbloom]  '
   const res = await request(agentReq('/api/agent/recipes', {
     method: 'POST',

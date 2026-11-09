@@ -1,5 +1,7 @@
 # OCI: k3s → shiftgate, 이후 PostgreSQL → HeatWave MySQL (ROB-1435)
 
+> 이 PR에서 4단계 데이터 복사 및 롤백 도구를 제거했다. 당시 구현은 git history의 `f1ad6fc`에서 볼 수 있다.
+
 현재 프로덕션은 shiftgate 뒤에서 실행되는 HeatWave MySQL 연결 Node API `brewdial-api-mysql` (`:8021`)이다. Dagu는 `production` 태그를 따라 배포한다. 이 문서는 k3s에서 shiftgate로, PostgreSQL에서 HeatWave MySQL로 전환한 이력을 기록한다. PostgreSQL은 중지 및 비활성화되어 더 이상 롤백 대상으로 사용할 수 없다. Node API와 `packages/db`는 계속 사용한다.
 
 | 단계 | 변경 내용 | 롤백 |
@@ -157,7 +159,9 @@ HAProxy를 전환하는 절차다. k3s와 PostgreSQL이 은퇴한 현재는 이 
 
 ## 4. Node API → HeatWave MySQL
 
-이 단계에서는 현재 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작한다. 복사 도구만 `ghcr.io/mgh3326/brewdial-api-kt` 이미지에서 가져온다. 이 도구는 롤백 기간이 끝날 때까지 유지한다. 서비스 이미지와 복사 도구 이미지는 서로 다른 digest를 사용한다. 실제 전환은 운영자가 참석한 유지보수 시간에 수행한다.
+> **과거 절차 — 실행 금지.** 아래 Phase 4 명령과 도구는 롤백 기간에 사용했던 기록이며 이 PR에서 제거했다. 당시 구현은 git history의 `f1ad6fc`에서 볼 수 있다. 현재 복구 명령은 `shiftgate rollback brewdial-api-mysql`이다.
+
+당시에는 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작했다. 복사 및 롤백 도구는 롤백 기간 종료 후 이 PR에서 제거했다.
 
 ### 4.0 2026-11-09 — 4단계 완료 기록
 
@@ -193,6 +197,8 @@ HAProxy를 전환하는 절차다. k3s와 PostgreSQL이 은퇴한 현재는 이 
 3. **응답 사전 비교.** 스크립트가 중단 전에 저장하는 Node-on-PostgreSQL 응답을 Node-on-MySQL 응답과 비교한다. JSON의 날짜 문자열은 MySQL `DATETIME(6)`의 마이크로초와 PostgreSQL의 밀리초 차이 때문에 밀리초 UTC 표기로 정규화한다. 이 정규화는 날짜 문자열에만 적용되며 숫자로 보이는 문자열이나 다른 값은 바꾸지 않는다.
 
 ### 4.3 유지보수 창: 중지, 복사, 검증, 시작
+
+> **과거 명령 — 실행 금지.** Phase 4 스크립트는 제거되었다. 구현 기록: git history `f1ad6fc`.
 
 먼저 새 환경 파일과 서비스 설정을 호스트에 설치한 뒤, 두 digest를 사용해 읽기 전용 사전 점검을 수행한다.
 
@@ -236,6 +242,8 @@ sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://lo
 공개 API의 상태 및 데이터베이스 건강 경로와 읽기 요청을 확인하고, MCP를 통한 쓰기도 확인한다. 오류 감시를 확인한 뒤 백업 타이머를 HeatWave에 맞게 전환한다. 롤백 기간 동안에는 PostgreSQL을 삭제하거나 기존 서비스 이미지를 제거하지 않는다.
 
 ### 4.5 롤백
+
+> **과거 명령 — 실행 금지.** 아래 스크립트는 제거되었다. 현재는 `shiftgate rollback brewdial-api-mysql`을 사용한다. 과거 구현: git history `f1ad6fc`.
 
 **이 절차는 과거 기록이며 현재는 사용할 수 없다.** PostgreSQL은 최종 덤프 후 중지 및 비활성화되었고, 더 이상 롤백 대상으로 운영되지 않는다.
 

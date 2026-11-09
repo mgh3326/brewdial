@@ -27,9 +27,7 @@ git push origin main:production
 
 Dagu는 `production` 태그를 감시하고 `brewdial-api-mysql`을 배포한다. 서비스 상태와 완료된 전환 절차는 `docs/runbooks/oci-heatwave-cutover.md`를 참고한다.
 
-- `k3s/`와 `.github/workflows/deploy-oci-k3s.yml`: deprecated k3s 배포 및 복구 자료.
 - PostgreSQL용 systemd, 백업 및 마이그레이션 스크립트: 이전 환경 지원용.
-- `heatwave-phase4.sh`: 완료된 전환을 위한 절차 스크립트이며, 향후 실행 작업이 아니다.
 
 ## xBloom brew record 수집기
 

@@ -5,8 +5,8 @@
 # Layout in the final image:
 #   /app       — @brewdial/api prod deploy (dist + prod node_modules)
 #   /migrate   — @brewdial/db deploy incl. migration runners + SQL migrations
-#                (run before the server: k8s initContainer in deploy/oci/k3s/,
-#                shiftgate `args` in deploy/oci/shiftgate/services.yaml)
+#                (run before the server via shiftgate `args` in
+#                deploy/oci/shiftgate/services.yaml)
 
 # node:22-alpine multi-arch manifest list digest (linux/arm64 pulled on the
 # ARM runner). Pinned 2026-08-06.

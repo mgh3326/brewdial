@@ -4,7 +4,7 @@
 #
 # Production (variant B, since 2026-08-06): NodePort 30020.
 # Emergency rollback to systemd fallback: service http://127.0.0.1:3020
-# (see deploy/oci/k3s/RUNBOOK.md §0 item 6 and §4.2).
+# (see the historical cutover runbook for the retired k3s setup).
 tunnel: <TUNNEL_ID>
 credentials-file: /home/opc/.cloudflared/<TUNNEL_ID>.json
 ingress:
