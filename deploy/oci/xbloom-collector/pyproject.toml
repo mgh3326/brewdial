@@ -1,0 +1,20 @@
+[project]
+name = "brewdial-xbloom-collector"
+version = "0.1.0"
+description = "Token-only xBloom brew record collector for BrewDial"
+requires-python = ">=3.11"
+dependencies = [
+  "xbloom-ble[cloud] @ git+https://github.com/mgh3326/xbloom-ble@5c4e1e99c83482992e91786aad24d5b8105e4210",
+]
+
+[project.scripts]
+brewdial-xbloom-collector = "xbloom_collector:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

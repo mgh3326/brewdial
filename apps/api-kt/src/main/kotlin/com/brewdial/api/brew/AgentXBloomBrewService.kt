@@ -8,12 +8,119 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.databind.node.ObjectNode
 import java.time.Instant
+import java.time.format.DateTimeFormatter
 
 @Service
 class AgentXBloomBrewService(
     private val entityManager: EntityManager,
     private val objectMapper: ObjectMapper
 ) {
+    @Transactional
+    fun ingestRaw(records: List<JsonNode>): LinkedHashMap<String, Any> {
+        val parsed = mutableListOf<ObjectNode>()
+        val skipped = mutableListOf<LinkedHashMap<String, Any>>()
+        records.forEachIndexed { index, raw ->
+            try {
+                val result = parseRawRecord(raw)
+                if (result == null) skipped += linkedMapOf("index" to index, "reason" to "broken_run")
+                else parsed += result
+            } catch (exception: RawBrewRecordException) {
+                skipped += linkedMapOf("index" to index, "reason" to exception.message.orEmpty())
+            }
+        }
+        val inserted = if (parsed.isEmpty()) linkedMapOf("inserted" to emptyList<String>(), "duplicate" to emptyList()) else ingest(parsed)
+        return linkedMapOf("inserted" to inserted["inserted"].orEmpty(), "duplicate" to inserted["duplicate"].orEmpty(), "skipped" to skipped)
+    }
+
+    private fun parseRawRecord(raw: JsonNode): ObjectNode? {
+        if (!raw.isObject) throw RawBrewRecordException("xBloom brew record must be an object")
+        val brewTime = raw.get("brewTime")
+        if (brewTime?.isNumber == true && brewTime.asDouble() <= 0) return null
+        val rawCurve = raw.get("lineChartData")
+        if (rawCurve == null || rawCurve.isNull || (rawCurve.isTextual && rawCurve.asText().isBlank())) return null
+        val curve = try {
+            if (rawCurve.isTextual) objectMapper.readTree(rawCurve.asText()) else rawCurve
+        } catch (_: Exception) {
+            throw RawBrewRecordException("lineChartData must be valid JSON")
+        }
+        if (curve == null || !curve.isArray || curve.size() == 0) return null
+        if (brewTime?.isNumber != true || !brewTime.asDouble().isFinite()) throw RawBrewRecordException("brewTime must be a finite number")
+        val recipe = raw.get("recipeVo")?.takeIf { it.isObject }
+            ?: throw RawBrewRecordException("recipeVo must be an object")
+        val recipeName = raw.get("recipeName")?.takeIf { it.isTextual }?.asText()
+            ?: throw RawBrewRecordException("recipeName must be a string")
+        val timestamp = number(raw.get("createTimeStamp"))
+        if (!timestamp.isFinite() || timestamp < -8.64e15 || timestamp > 8.64e15) throw RawBrewRecordException("createTimeStamp must be a valid timestamp")
+        val brewedAt = try {
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC)
+                .format(Instant.ofEpochMilli(timestamp.toLong()))
+        } catch (_: Exception) {
+            throw RawBrewRecordException("createTimeStamp must be a valid timestamp")
+        }
+
+        val output = objectMapper.createObjectNode()
+        output.put("xbloomBrewId", raw.get("tableId")?.asText() ?: "undefined")
+        output.put("brewedAt", brewedAt)
+        output.put("brewTimeSec", brewTime.asDouble())
+        output.put("recipeName", recipeName)
+        val recipeId = recipe.get("tableId")
+        if (recipeId == null || recipeId.isNull) output.putNull("xbloomRecipeId") else output.put("xbloomRecipeId", jsString(recipeId))
+
+        val snapshot = output.putObject("recipeSnapshot")
+        snapshot.put("doseG", numberOrDefault(recipe.get("dose")))
+        snapshot.put("grinderSize", numberOrDefault(recipe.get("grinderSize")))
+        snapshot.put("rpm", numberOrDefault(recipe.get("rpm")))
+        snapshot.put("cupType", numberOrDefault(recipe.get("cupType")))
+        snapshot.put("bypassEnabled", number(recipe.get("isEnableBypassWater")) == 1.0)
+        snapshot.put("bypassVolumeMl", numberOrDefault(recipe.get("bypassVolume")))
+        snapshot.put("bypassTemperatureC", numberOrDefault(recipe.get("bypassTemp")))
+        val pours = snapshot.putArray("pours")
+        recipe.get("pourList")?.takeIf { it.isArray }?.forEach { rawPour ->
+            val pour = rawPour.takeIf { it.isObject }
+            val mapped = pours.addObject()
+            mapped.put("volumeMl", numberOrDefault(pour?.get("volume")))
+            mapped.put("temperatureC", numberOrDefault(pour?.get("temperature")))
+            mapped.put("flowRate", numberOrDefault(pour?.get("flowRate")))
+            mapped.put("pattern", pattern(pour?.get("pattern")))
+            mapped.put("pauseSec", numberOrDefault(pour?.get("pausing")))
+            mapped.put("vibrationBefore", number(pour?.get("isEnableVibrationBefore")) == 1.0)
+            mapped.put("vibrationAfter", number(pour?.get("isEnableVibrationAfter")) == 1.0)
+        }
+        output.set("curve", curve.deepCopy())
+        val errors = validateXBloomBrew(output)
+        if (errors.isNotEmpty()) throw RawBrewRecordException("invalid xBloom brew record: ${errors.joinToString("; ")}")
+        return output
+    }
+
+    private fun numberOrDefault(value: JsonNode?): Double = if (value == null || value.isNull) 0.0 else number(value)
+
+    private fun number(value: JsonNode?): Double = when {
+        value == null -> Double.NaN
+        value.isNull -> 0.0
+        value.isNumber -> value.asDouble()
+        value.isBoolean -> if (value.asBoolean()) 1.0 else 0.0
+        value.isTextual -> value.asText().trim().let { if (it.isEmpty()) 0.0 else it.toDoubleOrNull() ?: Double.NaN }
+        else -> Double.NaN
+    }
+
+    private fun jsString(value: JsonNode): String = when {
+        value.isTextual -> value.asText()
+        value.isNumber || value.isBoolean -> value.asText()
+        else -> "[object Object]"
+    }
+
+    private fun pattern(value: JsonNode?): String {
+        val code = if (value == null || value.isNull) 2.0 else number(value)
+        return when (code) {
+            0.0 -> "center"
+            1.0 -> "ring"
+            2.0 -> "spiral"
+            else -> throw RawBrewRecordException("pour pattern must be the xBloom center, ring, or spiral code")
+        }
+    }
+
+    private class RawBrewRecordException(message: String) : RuntimeException(message)
+
     @Transactional
     fun ingest(input: List<ObjectNode>): LinkedHashMap<String, List<String>> {
         val inserted = mutableListOf<String>()
