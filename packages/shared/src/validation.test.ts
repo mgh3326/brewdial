@@ -394,6 +394,61 @@ describe('validateCreateRecipeInput cross-field/range (ROB-608)', () => {
   });
 });
 
+describe('xBloom structured fields', () => {
+  const make = (method: string, params: Record<string, unknown> = {}, steps: Record<string, unknown>[] = []) =>
+    validateCreateRecipeInput({ method, title: 'xBloom', params, steps: steps.map((s) => ({ note: 'Pour', ...s })) });
+
+  it('accepts structured pour fields and bypass for method other', () => {
+    const r = make('other', { bypass: { waterG: 50, tempC: 10 } }, [{ pattern: 'center', rpm: 0, vibrationBefore: false, vibrationAfter: true, pauseSec: 0, tempC: 40 }]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params?.bypass).toEqual({ waterG: 50, tempC: 10 });
+  });
+
+  it('rejects conflicting first-pour temperatures on create and update', () => {
+    const expected = 'params.tempC must match steps[0].tempC when both are provided';
+    const create = make('other', { tempC: 90 }, [{ tempC: 92 }]);
+    const update = validateUpdateRecipeInput({ params: { tempC: 90 }, steps: [{ note: 'Pour', tempC: 92 }] });
+    expect(create.ok).toBe(false);
+    if (!create.ok) expect(create.errors).toContain(expected);
+    expect(update.ok).toBe(false);
+    if (!update.ok) expect(update.errors).toContain(expected);
+  });
+
+  it.each([
+    [{ rpm: 55 }, /rpm/], [{ pauseSec: 256 }, /pauseSec/], [{ tempC: 96 }, /tempC/], [{ pattern: 'zigzag' }, /pattern/],
+    [{ vibrationBefore: 'yes' }, /vibrationBefore/], [{ vibrationAfter: 1 }, /vibrationAfter/]
+  ])('rejects invalid step field %j', (step, message) => {
+    const r = make('other', {}, [step as Record<string, unknown>]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(message);
+  });
+
+  it.each([
+    [{ waterG: 0 }, /waterG/], [{ waterG: 10, tempC: 101 }, /tempC/]
+  ])('rejects invalid bypass %j', (bypass, message) => {
+    const r = make('other', { bypass });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(message);
+  });
+
+  it('checks pause schedule consistency even for method other', () => {
+    const r = make('other', {}, [{ atSec: 0, endSec: 10, pauseSec: 2 }, { atSec: 15 }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/pauseSec must equal/);
+  });
+
+  it('accepts decimal schedule seconds within floating-point tolerance', () => {
+    const r = make('other', {}, [{ atSec: 0, endSec: 0.3, pauseSec: 2 }, { atSec: 2.3 }]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts and preserves bypass null removal in params patch', () => {
+    const r = validateUpdateRecipeInput({ params: { bypass: null } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.params).toEqual({ bypass: null });
+  });
+});
+
 describe('validateCreateRecipeInput — ROB-611 grind portability', () => {
   it('accepts legacy string grind (backward compatible)', () => {
     const r = validateCreateRecipeInput({

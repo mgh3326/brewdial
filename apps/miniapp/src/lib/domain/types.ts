@@ -87,6 +87,7 @@ export interface RecipeParams {
   grinder?: string;
   brewer?: string;
   targetTimeSec?: number;
+  bypass?: { waterG: number; tempC?: number };
 }
 
 // Update-path params (PATCH /agent/recipes/:code, MCP update_recipe): keys merge by
@@ -115,6 +116,12 @@ export interface RecipeStep {
   endSec?: number;
   waterG?: number;
   pourRateGPerSec?: number;
+  pattern?: 'center' | 'spiral' | 'ring';
+  rpm?: number;
+  vibrationBefore?: boolean;
+  vibrationAfter?: boolean;
+  pauseSec?: number;
+  tempC?: number;
   note: string;
 }
 

@@ -712,6 +712,251 @@
           "dislikes must be a string array"
         ]
       }
+    },
+    {
+      "name": "recipe: xBloom structured fields and bypass are preserved",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "bypass": {
+            "waterG": 50,
+            "tempC": 10
+          }
+        },
+        "steps": [
+          {
+            "atSec": 0,
+            "endSec": 10,
+            "pauseSec": 2,
+            "waterG": 30,
+            "note": "Pour",
+            "pattern": "center",
+            "rpm": 0,
+            "vibrationBefore": false,
+            "vibrationAfter": true,
+            "tempC": 90
+          },
+          {
+            "atSec": 12,
+            "endSec": 20,
+            "waterG": 50,
+            "note": "Pour 2",
+            "pattern": "spiral",
+            "rpm": 100,
+            "pauseSec": 0,
+            "tempC": 92
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "params": {
+            "bypass": {
+              "waterG": 50,
+              "tempC": 10
+            }
+          },
+          "steps": [
+            {
+              "note": "Pour",
+              "atSec": 0,
+              "waterG": 30,
+              "endSec": 10,
+              "pattern": "center",
+              "rpm": 0,
+              "vibrationBefore": false,
+              "vibrationAfter": true,
+              "pauseSec": 2,
+              "tempC": 90
+            },
+            {
+              "note": "Pour 2",
+              "atSec": 12,
+              "waterG": 50,
+              "endSec": 20,
+              "pattern": "spiral",
+              "rpm": 100,
+              "pauseSec": 0,
+              "tempC": 92
+            }
+          ]
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "recipe: conflicting first-pour temperatures rejected",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "tempC": 90
+        },
+        "steps": [
+          {
+            "note": "Pour",
+            "tempC": 92
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "params.tempC must match steps[0].tempC when both are provided"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom rpm out of range",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "rpm": 55
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].rpm must be 0 or a multiple of 10 in 60-120"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom pauseSec out of range",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "pauseSec": 256
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].pauseSec must be an integer in 0-255"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom tempC out of range",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "tempC": 96
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].tempC must be between 40 and 95"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom pattern out of range",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "pattern": "zigzag"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].pattern must be one of center|spiral|ring"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom pause contradicts schedule",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "atSec": 0,
+            "endSec": 10,
+            "pauseSec": 2
+          },
+          {
+            "note": "Next",
+            "atSec": 15
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].pauseSec must equal steps[1].atSec - steps[0].endSec"
+        ]
+      }
+    },
+    {
+      "name": "recipe: decimal seconds tolerate floating-point schedule subtraction",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "atSec": 0,
+            "endSec": 0.3,
+            "pauseSec": 2
+          },
+          {
+            "note": "Next",
+            "atSec": 2.3
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "steps": [
+            {
+              "note": "Pour",
+              "atSec": 0,
+              "endSec": 0.3,
+              "pauseSec": 2
+            },
+            {
+              "note": "Next",
+              "atSec": 2.3
+            }
+          ]
+        },
+        "warnings": []
+      }
     }
   ]
 }

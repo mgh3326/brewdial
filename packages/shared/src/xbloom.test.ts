@@ -96,11 +96,18 @@ describe('fromXBloomYaml mapping', () => {
     expect(s[2]).toMatchObject({ atSec: 120, endSec: 149, waterG: 256, pourRateGPerSec: 3.5 });
   });
 
+  it('stores xBloom machine values structurally and leaves only labels in tags', () => {
+    expect(input.steps![0]).toMatchObject({ pattern: 'spiral', rpm: 100, vibrationAfter: false, pauseSec: 40 });
+    expect(input.steps![0].tempC).toBeUndefined();
+    expect(input.steps![0].note).toContain('[label=Bloom]');
+    expect(input.steps![0].note).not.toMatch(/(?:pattern|rpm|temp_c|pause_s)=/);
+  });
+
   it('writes human prose plus a machine tag into each step note', () => {
     expect(input.steps![0].note).toContain('Bloom');
     expect(input.steps![0].note).toContain('[label=Bloom');
-    expect(input.steps![0].note).toContain('pattern=spiral');
-    expect(input.steps![0].note).toContain('pause_s=40');
+    expect(input.steps![0].note).not.toContain('pattern=spiral');
+    expect(input.steps![0].note).not.toContain('pause_s=40');
     // label with a space is quoted in the tag
     expect(input.steps![1].note).toContain('label="Main pour"');
   });
@@ -428,9 +435,40 @@ pours:
     doc.params!.tempC = 80;
     const out = parse(toXBloomYaml(doc));
     expect(out.pours[0].temp_c).toBe(80);
-    expect(out.pours[1].temp_c).toBe(92); // tag still governs later pours
+    expect(out.pours[1].temp_c).toBe(92); // structured per-pour temperature survives independently
     doc.params!.targetTimeSec = 200;
     expect(parse(toXBloomYaml(doc)).time).toBe('3:20');
+  });
+
+  it('exports a legacy tag-only stored step byte-for-byte equivalent YAML', () => {
+    const yaml = loadFixture('three-pour-spiral.yaml');
+    const doc = fromXBloomYaml(yaml);
+    const oldTags = [
+      '[label=Bloom pattern=spiral agitation=false rpm=100 temp_c=92 pause_s=40]',
+      '[label="Main pour" pattern=spiral agitation=true rpm=100 temp_c=92 pause_s=30]',
+      '[label=Finish pattern=ring agitation=false rpm=0 temp_c=90 pause_s=45]'
+    ];
+    doc.steps!.forEach((step, i) => {
+      step.note = `${step.note!.split(' [')[0]} ${oldTags[i]}`;
+      delete step.pattern;
+      delete step.rpm;
+      delete step.vibrationBefore;
+      delete step.vibrationAfter;
+      delete step.pauseSec;
+      delete step.tempC;
+    });
+    expect(parse(toXBloomYaml(doc))).toEqual(parse(yaml));
+  });
+
+  it('maps agitation_before to vibrationBefore and back', () => {
+    const yaml = mkYaml({}, [
+      { ...basePour, agitation_before: true },
+      { ...basePour, label: 'P2', agitation_before: false }
+    ]);
+    const doc = fromXBloomYaml(yaml);
+    expect(doc.steps!.map((step) => step.vibrationBefore)).toEqual([true, false]);
+    expect(doc.steps!.every((step) => !step.note.includes('agitation_before='))).toBe(true);
+    expect(parse(toXBloomYaml(doc))).toEqual(parse(yaml));
   });
 });
 
@@ -617,7 +655,7 @@ describe('#602 edge fixes', () => {
       const tag = input.steps![0].note!.match(/\[label=.*\]/)![0];
       // exact emit shape: `\q` for `"`, `\c` for `]`, `\\` for `\` — a quoted
       // value never contains a literal `"` or `]` (B1 parity invariant)
-      expect(tag).toBe('[label="Say \\qhi\\q \\cx\\\\" agitation="true" temp_c=90]');
+      expect(tag).toBe('[label="Say \\qhi\\q \\cx\\\\" agitation="true"]');
     });
   });
 

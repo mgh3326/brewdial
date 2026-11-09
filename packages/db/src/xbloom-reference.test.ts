@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from 'kysely'
 import { parse } from 'yaml'
+import { fromXBloomYaml } from '@brewdial/shared'
 import { closeDb, getDb, dbVendor } from './db.js'
 import { withOwnerWrites } from './owner-writes.js'
 import {
@@ -270,6 +271,33 @@ describe('load + storage rules', () => {
       expect(v.items.filter((i) => !i.ok)).toEqual([])
       expect(v).toMatchObject({ rows: 3, passed: 3, failed: 0, exitCode: 0 })
       expect(v.requests).toBe(0)
+    })
+
+    it('verifies a stored row using legacy step tags', async () => {
+      const row = (await rowsFor(site)).find((r) => r.bean_snapshot.sourceUrl?.endsWith(site.yamlPaths.hotA))!
+      const code = row.code
+      const yamlText = await (await fetch(`${site.origin}${site.yamlPaths.hotA}`)).text()
+      const doc = fromXBloomYaml(yamlText)
+      const pours = (parse(yamlText) as { pours: Array<Record<string, unknown>> }).pours
+      const legacySteps = doc.steps!.map((step, i) => {
+        const p = pours[i]
+        const label = p.label === undefined ? '""' : String(p.label)
+        const tag = `[label=${label} pattern=${String(p.pattern)} agitation=${String(p.agitation)} rpm=${String(p.rpm)} temp_c=${String(p.temp_c)} pause_s=${String(p.pause_s)}]`
+        const legacy = { ...step, note: `${step.note.replace(/\s+\[label=.*\]$/, '')} ${tag}` }
+        delete legacy.pattern
+        delete legacy.rpm
+        delete legacy.vibrationBefore
+        delete legacy.vibrationAfter
+        delete legacy.pauseSec
+        delete legacy.tempC
+        return legacy
+      })
+      const json = JSON.stringify(legacySteps)
+      if (dbVendor() === 'mysql') await sql`update recipes set steps = cast(${json} as json) where code = ${code}`.execute(db)
+      else await sql`update recipes set steps = ${json}::jsonb where code = ${code}`.execute(db)
+      const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast(), expect: 3 })
+      expect(v.items.filter((item) => !item.ok)).toEqual([])
+      expect(v).toMatchObject({ passed: 3, failed: 0, exitCode: 0 })
     })
 
     it('fails a row whose params drifted, naming the field', async () => {

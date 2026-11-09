@@ -47,7 +47,7 @@ const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
 const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grinder', 'brewer'] as const;
 // Update path only: a null for one of these keys removes it from the stored params.
-const RECIPE_PARAM_NULLABLE_KEYS = new Set<string>([...RECIPE_PARAM_NUMBER_KEYS, ...RECIPE_PARAM_STRING_KEYS, 'grind']);
+const RECIPE_PARAM_NULLABLE_KEYS = new Set<string>([...RECIPE_PARAM_NUMBER_KEYS, ...RECIPE_PARAM_STRING_KEYS, 'grind', 'bypass']);
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -148,6 +148,22 @@ function validateRecipeParams(
       continue;
     }
     out[key] = v;
+  }
+  if (raw.bypass !== undefined) {
+    if (!isPlainObject(raw.bypass)) {
+      errors.push('params.bypass must be an object');
+    } else {
+      const bypass: NonNullable<RecipeParams['bypass']> = { waterG: 0 };
+      if (typeof raw.bypass.waterG !== 'number' || !Number.isFinite(raw.bypass.waterG) || raw.bypass.waterG <= 0) {
+        errors.push('params.bypass.waterG must be a positive finite number');
+      } else bypass.waterG = raw.bypass.waterG;
+      if (raw.bypass.tempC !== undefined) {
+        if (typeof raw.bypass.tempC !== 'number' || !Number.isFinite(raw.bypass.tempC) || raw.bypass.tempC < 0 || raw.bypass.tempC > 100) {
+          errors.push('params.bypass.tempC must be between 0 and 100');
+        } else bypass.tempC = raw.bypass.tempC;
+      }
+      if (bypass.waterG > 0) out.bypass = bypass;
+    }
   }
   // ROB-611: grind is string (legacy free text) | GrindSpec (structured).
   const g = raw.grind;
@@ -439,9 +455,50 @@ function validateRecipeSteps(
         built.pourRateGPerSec = step.pourRateGPerSec;
       }
     }
+    if (step.pattern !== undefined) {
+      if (step.pattern !== 'center' && step.pattern !== 'spiral' && step.pattern !== 'ring') errors.push(`steps[${i}].pattern must be one of center|spiral|ring`);
+      else built.pattern = step.pattern;
+    }
+    if (step.rpm !== undefined) {
+      if (!isInt(step.rpm) || !(step.rpm === 0 || (step.rpm >= 60 && step.rpm <= 120 && step.rpm % 10 === 0))) errors.push(`steps[${i}].rpm must be 0 or a multiple of 10 in 60-120`);
+      else built.rpm = step.rpm;
+    }
+    for (const key of ['vibrationBefore', 'vibrationAfter'] as const) {
+      if (step[key] !== undefined) {
+        if (typeof step[key] !== 'boolean') errors.push(`steps[${i}].${key} must be a boolean`);
+        else built[key] = step[key];
+      }
+    }
+    if (step.pauseSec !== undefined) {
+      if (!isInt(step.pauseSec) || step.pauseSec < 0 || step.pauseSec > 255) errors.push(`steps[${i}].pauseSec must be an integer in 0-255`);
+      else built.pauseSec = step.pauseSec;
+    }
+    if (step.tempC !== undefined) {
+      if (typeof step.tempC !== 'number' || !Number.isFinite(step.tempC) || step.tempC < 40 || step.tempC > 95) errors.push(`steps[${i}].tempC must be between 40 and 95`);
+      else built.tempC = step.tempC;
+    }
     out.push(built);
   });
+  for (let i = 0; i < out.length - 1; i += 1) {
+    const step = out[i];
+    const next = out[i + 1];
+    if (step.pauseSec !== undefined && step.endSec !== undefined && next.atSec !== undefined && Math.abs(next.atSec - step.endSec - step.pauseSec) > 1e-9) {
+      errors.push(`steps[${i}].pauseSec must equal steps[${i + 1}].atSec - steps[${i}].endSec`);
+    }
+  }
   return out;
+}
+
+function validateFirstPourTempC(
+  params: RecipeParams | RecipeParamsPatch | undefined,
+  steps: RecipeStep[] | undefined,
+  errors: string[]
+): void {
+  const paramsTempC = params?.tempC;
+  const firstStepTempC = steps?.[0]?.tempC;
+  if (paramsTempC !== undefined && paramsTempC !== null && firstStepTempC !== undefined && paramsTempC !== firstStepTempC) {
+    errors.push('params.tempC must match steps[0].tempC when both are provided');
+  }
 }
 
 // ROB-608: cross-field arithmetic + range checks. Clear contradictions go to
@@ -563,6 +620,7 @@ export function validateCreateRecipeInput(
   const beanSnapshot = validateBeanSnapshot(input.beanSnapshot, errors);
   const params = validateRecipeParams(input.params, errors);
   const steps = validateRecipeSteps(input.steps, errors);
+  validateFirstPourTempC(params, steps, errors);
 
   let dripperPortability: DripperPortability | undefined;
   if (input.dripperPortability !== undefined) {
@@ -685,6 +743,7 @@ export function validateUpdateRecipeInput(
     const s = validateRecipeSteps(input.steps, errors);
     if (s !== undefined) value.steps = s;
   }
+  validateFirstPourTempC(value.params, value.steps, errors);
   if (input.notes !== undefined) {
     const n = pickString(input, 'notes', errors, 'input', { trim: false });
     if (n !== undefined) value.notes = n;
