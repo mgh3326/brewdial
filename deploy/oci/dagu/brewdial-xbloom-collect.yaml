@@ -1,0 +1,5 @@
+name: brewdial-xbloom-collect
+schedule: "*/30 * * * *"
+steps:
+  - id: collect
+    run: hk-infisical run /xbloom -- hk-infisical run /brewdial -- uv run --locked --project /opt/brewdial-xbloom-collector brewdial-xbloom-collector

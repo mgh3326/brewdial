@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink, insertXBloomBrews, upsertXBloomRecipeLink, listXBloomRecipeLinks, listXBloomBrews, getXBloomBrew, listPriorXBloomBrewMetrics, recipeExists } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams, validateXBloomBrew, hintXBloomBrewAnomaly, isRecipeCode } from '@brewdial/shared'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams, validateXBloomBrew, parseXBloomBrewRecord, hintXBloomBrewAnomaly, isRecipeCode } from '@brewdial/shared'
+import type { XBloomBrew } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -17,6 +18,32 @@ agentRouter.post('/brews', async (c) => {
   if (errors.length) return c.json({ error: 'validation failed', details: errors }, 400)
   const result = await insertXBloomBrews(getDb(), validated.map((item) => item.ok ? item.value : null).filter((item) => item !== null))
   return c.json(result, 200)
+})
+
+// POST /agent/xbloom/brew-records — parse untrusted cloud records without retaining
+// account/device fields. The request body is deliberately never included in logs.
+agentRouter.post('/xbloom/brew-records', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'records') || !Array.isArray((body as Record<string, unknown>).records)) {
+    return c.json({ error: 'body must contain only a records array' }, 400)
+  }
+  const records = (body as { records: unknown[] }).records
+  if (records.length < 1 || records.length > 200) return c.json({ error: 'records must contain 1 to 200 items' }, 400)
+
+  const brews: XBloomBrew[] = []
+  const skipped: Array<{ index: number; reason: string }> = []
+  records.forEach((record, index) => {
+    try {
+      const parsed = parseXBloomBrewRecord(record)
+      if (parsed.ok) brews.push(parsed.value)
+      else skipped.push({ index, reason: parsed.reason })
+    } catch (error) {
+      // Parser messages describe fields and validation rules, never raw values.
+      skipped.push({ index, reason: error instanceof Error ? error.message : 'invalid_record' })
+    }
+  })
+  const result = brews.length ? await insertXBloomBrews(getDb(), brews) : { inserted: [], duplicate: [] }
+  return c.json({ ...result, skipped }, 200)
 })
 
 // GET /agent/brews — summaries only; the 1 Hz curve is available from the detail route.
