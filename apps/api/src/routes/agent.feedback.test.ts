@@ -186,6 +186,28 @@ test('PATCH feedback rejects non-boolean dryRun without changing the row', async
   expect(afterRows.find((row) => row.id === inserted.id)).toEqual(before)
 })
 
+test('PATCH feedback rejects integral ratings outside the 32-bit range without changing the row', async () => {
+  const create = await request(agentReq('/api/agent/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ recipeCode: seededCode, ratings: { overall: 4 } }),
+  }))
+  expect(create.status).toBe(201)
+  const inserted = await create.json() as Record<string, any>
+  createdFeedbackIds.push(inserted.id)
+  const beforeRes = await request(`/api/recipes/${seededCode}/feedback`)
+  const beforeRows = await beforeRes.json() as Array<Record<string, any>>
+  const before = beforeRows.find((row) => row.id === inserted.id)!
+
+  const invalidRating = await request(agentReq(`/api/agent/feedback/${inserted.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ ratings: { overall: 4294967297 } }),
+  }))
+  expect(invalidRating.status).toBe(400)
+  const afterRes = await request(`/api/recipes/${seededCode}/feedback`)
+  const afterRows = await afterRes.json() as Array<Record<string, any>>
+  expect(afterRows.find((row) => row.id === inserted.id)).toEqual(before)
+})
+
 // ─── GET /api/agent/preferences/global ───────────────────────────────────────
 
 test('GET /api/agent/preferences/global → 200 with shape {id, likes, dislikes, default_params}', async () => {

@@ -233,7 +233,9 @@ class AgentWriteService(
             if (value.isNull) continue
             val min = if (key == "overall") 1 else 0
             val max = if (key == "overall") 5 else 4
-            if (!value.isIntegralNumber || value.intValue() !in min..max) throw AgentInvalidRangeException("ratings.$key has an invalid rating")
+            if (!value.isIntegralNumber || !value.canConvertToInt() || value.intValue() !in min..max) {
+                throw AgentInvalidRangeException("ratings.$key has an invalid rating")
+            }
         }
     }
 
