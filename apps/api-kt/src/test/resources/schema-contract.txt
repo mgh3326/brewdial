@@ -97,6 +97,8 @@ table feedback
   ratings null
   raw_comment null
   recipe_code not null
+  recipe_snapshot null
+  recipe_version null
   source not null
   updated_at not null
 table grinder_calibration
