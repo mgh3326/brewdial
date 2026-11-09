@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import type { Kysely } from 'kysely'
 import type { XBloomBrew, XBloomBrewMetrics } from '@brewdial/shared'
 import { deriveXBloomBrewMetrics } from '@brewdial/shared'
 import type { DB } from '../types.js'
@@ -19,6 +19,11 @@ export interface BrewRow extends XBloomBrewMetrics {
 
 export interface BrewInsertResult { inserted: string[]; duplicate: string[] }
 export interface ListBrewsOptions { limit?: number; recipeCode?: string; xbloomRecipeId?: string; since?: string }
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  return error.code === '23505' || error.code === 'ER_DUP_ENTRY'
+}
 
 function jsonValue(value: unknown): unknown {
   return typeof value === 'string' ? JSON.parse(value) : value
@@ -52,13 +57,19 @@ export async function insertXBloomBrews(db: Kysely<DB>, brews: XBloomBrew[]): Pr
       },
       recipe_snapshot: JSON.stringify(brew.recipeSnapshot), curve: JSON.stringify(brew.curve)
     }
-    const query = db.insertInto('brews').values(values)
-    const result = dbVendor() === 'mysql'
-      ? await query.onDuplicateKeyUpdate({ xbloom_brew_id: sql`xbloom_brew_id` }).executeTakeFirst()
-      : await query.onConflict((conflict) => conflict.column('xbloom_brew_id').doNothing()).executeTakeFirst()
-    const affected = Number(result.numInsertedOrUpdatedRows ?? 0)
-    if (affected > 0) inserted.push(brew.xbloomBrewId)
-    else duplicate.push(brew.xbloomBrewId)
+    const existing = await db.selectFrom('brews').select('xbloom_brew_id')
+      .where('xbloom_brew_id', '=', brew.xbloomBrewId).executeTakeFirst()
+    if (existing) {
+      duplicate.push(brew.xbloomBrewId)
+      continue
+    }
+    try {
+      await db.insertInto('brews').values(values).executeTakeFirst()
+      inserted.push(brew.xbloomBrewId)
+    } catch (error) {
+      if (!isUniqueConstraintViolation(error)) throw error
+      duplicate.push(brew.xbloomBrewId)
+    }
   }
   return { inserted, duplicate }
 }
