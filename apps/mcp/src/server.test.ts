@@ -92,6 +92,39 @@ describe('createBrewdialMcpServer', () => {
     expect(globalSpy).not.toHaveBeenCalled();
   });
 
+  it('documents and forwards structured xBloom recipe fields', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      if ((init?.method ?? 'GET') === 'GET') return new Response('[]', { status: 200 });
+      return new Response(JSON.stringify({
+        id: 'recipe:COF-1234', code: 'COF-1234', method: 'other', title: 'xBloom', version: 1,
+        params: { bypass: { waterG: 40, tempC: 30 } }, steps: [{ note: 'Pour', pattern: 'spiral', rpm: 100, vibrationBefore: true, vibrationAfter: false, pauseSec: 10, tempC: 92 }],
+        bean_id: null, bean_snapshot: null, intent: null, notes: null, adjustment_from_previous: null,
+        created_by: 'agent', status: 'active', supersedes: null, superseded_by: null, parent_code: null,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
+      }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const { client } = await connect({ ...baseConfig, fetchImpl });
+    const args = {
+      method: 'other', title: 'xBloom', params: { bypass: { waterG: 40, tempC: 30 } },
+      steps: [{ note: 'Pour', pattern: 'spiral', rpm: 100, vibrationBefore: true, vibrationAfter: false, pauseSec: 10, tempC: 92 }]
+    };
+    const result = await client.callTool({ name: 'create_recipe', arguments: args });
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse(String(calls.find((c) => c.init.method === 'POST')!.init.body));
+    expect(body.params).toEqual(args.params);
+    expect(body.steps).toEqual(args.steps);
+    const { tools } = await client.listTools();
+    const create = tools.find((tool) => tool.name === 'create_recipe')!;
+    const schema = create.inputSchema as unknown as {
+      properties: Record<string, { items?: { properties?: Record<string, unknown> }; properties?: Record<string, unknown> }>;
+    };
+    expect(schema.properties.steps.items?.properties).toHaveProperty('vibrationBefore');
+    expect(schema.properties.params.properties).toHaveProperty('bypass');
+    expect(create.description).toContain('note 태그를 대체');
+  });
+
   it('reports a thrown handler error once through onToolError, then surfaces it as an error', async () => {
     const onToolError = vi.fn();
     const { client } = await connect(baseConfig, { onToolError });

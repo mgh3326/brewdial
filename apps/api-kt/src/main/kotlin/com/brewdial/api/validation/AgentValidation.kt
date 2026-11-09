@@ -355,6 +355,22 @@ private fun validateRecipeParams(input: ObjectNode, errors: MutableList<String>)
         if (value == null || !value.isTextual) errors += "params.$key must be a string"
         else out.set(key, value!!)
     }
+    if (raw.has("bypass")) {
+        val bypass = raw.get("bypass") as? ObjectNode
+        if (bypass == null) errors += "params.bypass must be an object"
+        else {
+            val outBypass = objectNode()
+            val water = bypass.get("waterG")
+            if (!isFiniteNumber(water) || water!!.asDouble() <= 0) errors += "params.bypass.waterG must be a positive finite number"
+            else outBypass.set("waterG", water)
+            if (bypass.has("tempC")) {
+                val temp = bypass.get("tempC")
+                if (!isFiniteNumber(temp) || temp!!.asDouble() < 0 || temp.asDouble() > 100) errors += "params.bypass.tempC must be between 0 and 100"
+                else outBypass.set("tempC", temp)
+            }
+            if (outBypass.has("waterG")) out.set("bypass", outBypass)
+        }
+    }
     if (raw.has("grind")) {
         val grind = raw.get("grind")
         when {
@@ -596,7 +612,44 @@ private fun validateRecipeSteps(input: ObjectNode, errors: MutableList<String>):
                 built.set("pourRateGPerSec", value)
             }
         }
+        if (stepObject.has("pattern")) {
+            val value = stepObject.get("pattern")
+            if (value == null || !value.isTextual || value.asText() !in listOf("center", "spiral", "ring")) errors += "steps[$index].pattern must be one of center|spiral|ring"
+            else built.set("pattern", value)
+        }
+        if (stepObject.has("rpm")) {
+            val value = stepObject.get("rpm")
+            val rpm = value?.takeIf(::isFiniteNumber)?.asDouble()
+            if (rpm == null || rpm % 1.0 != 0.0 || !(rpm == 0.0 || (rpm in 60.0..120.0 && rpm % 10.0 == 0.0))) errors += "steps[$index].rpm must be 0 or a multiple of 10 in 60-120"
+            else built.set("rpm", value)
+        }
+        listOf("vibrationBefore", "vibrationAfter").forEach { key ->
+            if (stepObject.has(key)) {
+                val value = stepObject.get(key)
+                if (value == null || !value.isBoolean) errors += "steps[$index].$key must be a boolean"
+                else built.set(key, value)
+            }
+        }
+        if (stepObject.has("pauseSec")) {
+            val value = stepObject.get("pauseSec")
+            val pause = value?.takeIf(::isFiniteNumber)?.asDouble()
+            if (pause == null || pause % 1.0 != 0.0 || pause !in 0.0..255.0) errors += "steps[$index].pauseSec must be an integer in 0-255"
+            else built.set("pauseSec", value)
+        }
+        if (stepObject.has("tempC")) {
+            val value = stepObject.get("tempC")
+            if (!isFiniteNumber(value) || value!!.asDouble() < 40 || value.asDouble() > 95) errors += "steps[$index].tempC must be between 40 and 95"
+            else built.set("tempC", value)
+        }
         out.add(built)
+    }
+    for (index in 0 until out.size() - 1) {
+        val step = out.get(index) as ObjectNode
+        val next = out.get(index + 1) as ObjectNode
+        if (step.has("pauseSec") && step.has("endSec") && next.has("atSec") &&
+            next.get("atSec").asDouble() - step.get("endSec").asDouble() != step.get("pauseSec").asDouble()) {
+            errors += "steps[$index].pauseSec must equal steps[${index + 1}].atSec - steps[$index].endSec"
+        }
     }
     return out
 }

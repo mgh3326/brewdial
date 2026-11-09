@@ -3,12 +3,14 @@
 // Format reference: xbloom-ble (MIT) YAML — see task/2026-09-22/brewdial-xbloom-yaml-mapper.
 // Roundtrip invariant: parse(toXBloomYaml(fromXBloomYaml(y))) deep-equals parse(y)
 // for every field the emitter produces (key order, comments, quoting style ignored).
+// xBloom fields with a RecipeDoc home are stored structurally on steps; tags retain
+// labels, string agitation, and unknown data. Export falls back to legacy tags.
 //
 // ── Machine tag format (finalized in this task) ─────────────────────────────
 // Fields with no RecipeDoc residence are preserved as bracketed `key=value` tags
 // instead of being dropped. Two tag shapes exist, both space-separated `k=v` lists:
 //
-//   step tag    (in steps[i].note):  [label="Bloom" pattern=spiral agitation=false rpm=100 temp_c=92 pause_s=40]
+//   step tag    (in steps[i].note):  [label="Bloom" agitation="gentle" extra=…]
 //   recipe tag  (in notes):          [xbloom v=1 stage_temps=110,90 time="2:45-3:00" kind=custom water_ml=256 dripper=Omni note=1]
 //
 // Grammar: value = bare `[^\s\]"]+` or `"double-quoted"`. Quoted values support
@@ -38,9 +40,9 @@
 // that is entirely whitelisted k=v pairs and contains `label=` is
 // indistinguishable from a machine tag (same for a well-formed `[xbloom …]`).
 //
-// agitation typing (N2): a boolean emits bare (`agitation=true`); a string that
-// equals a boolean literal emits force-quoted (`agitation="true"`). On parse, a
-// quoted value is always a string, a bare `true`/`false` a boolean.
+// Boolean `agitation` and `agitation_before` map to vibrationAfter and
+// vibrationBefore. String-valued `agitation` stays tagged; boolean-looking
+// strings are force-quoted (`agitation="true"`) so their type survives.
 //
 // Human `note` text is preserved VERBATIM (newlines, double spaces, padding) —
 // only the tag segment itself and the single `\n` separator that import inserts
@@ -52,8 +54,7 @@
 // `atSec(i+1) - endSec(i) === pause(i)` exactly — the pause of every non-final
 // pour is DERIVED from the schedule on export (this is what mutant M1 attacks).
 // The FINAL pour's pause has no successor to derive from, so it is carried by
-// its step tag (`pause_s=`); tag pause_s also marks presence so an explicit
-// `pause_s: 0` round-trips vs. an absent key.
+// its structured `pauseSec`; legacy tag pause_s remains readable and marks presence.
 //
 // Pour `label` is OPTIONAL (#589: real xbloom-ble files label only the first
 // pour). An absent label is recorded in the step tag as `label=""` — an empty
@@ -123,7 +124,8 @@ const KNOWN_POUR_KEYS = new Set([
   'pause_s',
   'rpm',
   'flow_ml_s',
-  'agitation'
+  'agitation',
+  'agitation_before'
 ]);
 
 interface XBloomPour {
@@ -135,6 +137,7 @@ interface XBloomPour {
   rpm?: number;
   flow_ml_s: number;
   agitation?: boolean | string;
+  agitation_before?: boolean;
 }
 
 interface XBloomFile {
@@ -381,21 +384,11 @@ function decodeExtras(s: string): Record<string, unknown> | null {
 
 function buildStepTag(p: XBloomPour): string {
   const parts = [`label=${tagValue(p.label ?? '')}`]; // `label=""` = no label key
-  if (p.pattern !== undefined) parts.push(`pattern=${tagValue(p.pattern)}`);
   // A string that reads as a boolean literal is force-quoted so the type
   // survives the tag (N2); other strings only quote when tagValue requires it.
-  if (p.agitation !== undefined) {
-    parts.push(
-      `agitation=${
-        typeof p.agitation === 'string'
-          ? tagValue(p.agitation, p.agitation === 'true' || p.agitation === 'false')
-          : String(p.agitation)
-      }`
-    );
+  if (typeof p.agitation === 'string') {
+    parts.push(`agitation=${tagValue(p.agitation, p.agitation === 'true' || p.agitation === 'false')}`);
   }
-  if (p.rpm !== undefined) parts.push(`rpm=${tagValue(String(p.rpm))}`);
-  if (p.temp_c !== undefined) parts.push(`temp_c=${tagValue(String(p.temp_c))}`);
-  if (p.pause_s !== undefined) parts.push(`pause_s=${tagValue(String(p.pause_s))}`);
   const extra = encodeExtras(p, KNOWN_POUR_KEYS);
   if (extra !== null) parts.push(`extra=${extra}`);
   return `[${parts.join(' ')}]`;
@@ -463,6 +456,9 @@ function validatePour(p: unknown, i: number, errors: string[]): void {
   }
   if (p.agitation !== undefined && typeof p.agitation !== 'boolean' && typeof p.agitation !== 'string') {
     errors.push(`${path}.agitation must be a boolean or string`);
+  }
+  if (p.agitation_before !== undefined && typeof p.agitation_before !== 'boolean') {
+    errors.push(`${path}.agitation_before must be a boolean`);
   }
 }
 
@@ -578,6 +574,12 @@ export function fromXBloomYaml(yamlText: string): CreateRecipeInput {
       pourRateGPerSec: p.flow_ml_s,
       note: `${stepProseNote(p, i)} ${buildStepTag(p)}`
     };
+    if (p.pattern !== undefined) step.pattern = p.pattern as RecipeStep['pattern'];
+    if (p.rpm !== undefined) step.rpm = p.rpm;
+    if (p.agitation_before !== undefined) step.vibrationBefore = p.agitation_before;
+    if (typeof p.agitation === 'boolean') step.vibrationAfter = p.agitation;
+    if (p.temp_c !== undefined) step.tempC = p.temp_c;
+    if (p.pause_s !== undefined) step.pauseSec = p.pause_s;
     // Next pour starts at endSec + pause — pure integer arithmetic, so fractional
     // ml (e.g. 30.4/3.2 = 9.4999…) cannot shift pause through double rounding.
     atSec = endSec + (p.pause_s ?? 0);
@@ -619,22 +621,32 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     // user edit in BrewDial propagates; later pours rely on their tags (or the
     // params.tempC fallback for authored recipes).
     const tempC =
-      i === 0 && params.tempC !== undefined
+      s.tempC !== undefined
+        ? s.tempC
+        : i === 0 && params.tempC !== undefined
         ? params.tempC
         : tag?.temp_c !== undefined
           ? Number(tag.temp_c)
           : params.tempC;
     if (tempC !== undefined) pour.temp_c = tempC;
-    if (tag?.pattern !== undefined) pour.pattern = tag.pattern;
+    if (s.pattern !== undefined) pour.pattern = s.pattern;
+    else if (tag?.pattern !== undefined) pour.pattern = tag.pattern;
     else if (!tag) pour.pattern = 'spiral'; // authored recipes get the format default
-    if (tag?.agitation !== undefined) {
+    if (s.vibrationAfter !== undefined) pour.agitation = s.vibrationAfter;
+    else if (tag?.agitation !== undefined) {
       // quoted value = string (even "true"/"false"); bare true/false = boolean
       pour.agitation =
         quoted.has('agitation') || (tag.agitation !== 'true' && tag.agitation !== 'false')
           ? tag.agitation
           : tag.agitation === 'true';
     }
-    if (tag?.rpm !== undefined) pour.rpm = Number(tag.rpm);
+    if (s.vibrationBefore !== undefined) pour.agitation_before = s.vibrationBefore;
+    else if (tag?.extra !== undefined) {
+      const legacyExtra = decodeExtras(tag.extra);
+      if (typeof legacyExtra?.agitation_before === 'boolean') pour.agitation_before = legacyExtra.agitation_before;
+    }
+    if (s.rpm !== undefined) pour.rpm = s.rpm;
+    else if (tag?.rpm !== undefined) pour.rpm = Number(tag.rpm);
     if (s.pourRateGPerSec !== undefined) pour.flow_ml_s = s.pourRateGPerSec;
     if (tag?.extra !== undefined) {
       const extra = decodeExtras(tag.extra);
@@ -656,10 +668,14 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
             `steps[${i}] endSec exceeds steps[${i + 1}] atSec (pours would overlap)`
           ]);
         }
-        if (derived > 0 || tag?.pause_s !== undefined) pour.pause_s = derived;
+        if (derived > 0 || s.pauseSec !== undefined || tag?.pause_s !== undefined) pour.pause_s = derived;
+      } else if (s.pauseSec !== undefined) {
+        pour.pause_s = s.pauseSec;
       } else if (tag?.pause_s !== undefined) {
         pour.pause_s = Number(tag.pause_s);
       }
+    } else if (s.pauseSec !== undefined) {
+      pour.pause_s = s.pauseSec;
     } else if (tag?.pause_s !== undefined) {
       pour.pause_s = Number(tag.pause_s);
     }
