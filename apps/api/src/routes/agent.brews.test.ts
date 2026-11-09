@@ -5,9 +5,11 @@ import { request } from '../test/request.js'
 
 const suffix = randomUUID().replace(/-/g, '').slice(0, 8)
 const recipeCode = `COF-0000${Date.now()}${Math.floor(Math.random() * 1_000_000)}`
-const xbloomRecipeId = String(80000000 + Math.floor(Math.random() * 10000000))
-const brewIds = Array.from({ length: 5 }, (_, index) => String(90000000 + Math.floor(Math.random() * 1000000) + index))
+const xbloomRecipeId = `8${Date.now()}${Math.floor(Math.random() * 1_000_000)}`
+const brewIds = Array.from({ length: 5 }, (_, index) => `9${Date.now()}${Math.floor(Math.random() * 1_000_000)}${index}`)
 let recipeInserted = false
+let recipeLinkCreated = false
+const insertedBrewIds = new Set<string>()
 
 function curve(cupAtPourEnd: number, delayed = false): Array<[number, number]> {
   const points: Array<[number, number]> = [[0, 0], [220, cupAtPourEnd]]
@@ -36,15 +38,17 @@ function agentReq(path: string, options?: RequestInit): Request {
 beforeAll(async () => {
   process.env.AGENT_TOKEN = 'test-token'
   const db = getDb()
+  expect(await db.selectFrom('recipes').select('code').where('code', '=', recipeCode).execute(), 'fixture recipe code already exists').toEqual([])
+  expect(await db.selectFrom('brews').select('xbloom_brew_id').where('xbloom_brew_id', 'in', brewIds).execute(), 'fixture brew id already exists').toEqual([])
+  expect(await db.selectFrom('xbloom_recipe_links').select('xbloom_recipe_id').where('xbloom_recipe_id', '=', xbloomRecipeId).execute(), 'fixture recipe link already exists').toEqual([])
   await db.insertInto('recipes').values({ code: recipeCode, method: 'v60', title: `Brew fixture ${suffix}`, status: 'active', owner_id: null }).execute()
   recipeInserted = true
-  await db.deleteFrom('brews').where('xbloom_brew_id', 'in', brewIds).execute()
 })
 
 afterAll(async () => {
   const db = getDb()
-  await db.deleteFrom('xbloom_recipe_links').where('xbloom_recipe_id', '=', xbloomRecipeId).execute()
-  await db.deleteFrom('brews').where('xbloom_brew_id', 'in', brewIds).execute()
+  if (recipeLinkCreated) await db.deleteFrom('xbloom_recipe_links').where('xbloom_recipe_id', '=', xbloomRecipeId).execute()
+  if (insertedBrewIds.size > 0) await db.deleteFrom('brews').where('xbloom_brew_id', 'in', [...insertedBrewIds]).execute()
   if (recipeInserted) await db.deleteFrom('recipes').where('code', '=', recipeCode).execute()
   await closeDb()
 })
@@ -65,13 +69,17 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
   const timestamps = [0, 1, 2, 3, 4].map((offset) => new Date(Date.UTC(2026, 0, 1, 0, 0, offset)).toISOString())
   const baseline = brewIds.slice(0, 4).map((id, index) => brew(id, timestamps[index]!))
   const first = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: baseline }) }))
+  const firstBody = await first.json() as { inserted: string[]; duplicate: string[] }
+  firstBody.inserted.forEach((id) => insertedBrewIds.add(id))
   expect(first.status).toBe(200)
-  expect(await first.json()).toEqual({ inserted: brewIds.slice(0, 4), duplicate: [] })
+  expect(firstBody).toEqual({ inserted: brewIds.slice(0, 4), duplicate: [] })
 
   const changedDuplicate = { ...baseline[0]!, recipeName: 'must remain unchanged', brewTimeSec: 999 }
   const second = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: [changedDuplicate, brew(brewIds[4]!, timestamps[4]!, 117.5, true)] }) }))
+  const secondBody = await second.json() as { inserted: string[]; duplicate: string[] }
+  secondBody.inserted.forEach((id) => insertedBrewIds.add(id))
   expect(second.status).toBe(200)
-  expect(await second.json()).toEqual({ inserted: [brewIds[4]], duplicate: [brewIds[0]] })
+  expect(secondBody).toEqual({ inserted: [brewIds[4]], duplicate: [brewIds[0]] })
 
   const invalid = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: [{ ...baseline[0], xbloomBrewId: '99999999', mac: 'not-allowed' }] }) }))
   expect(invalid.status).toBe(400)
@@ -81,6 +89,7 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
   expect(badGet.status).toBe(400)
 
   const link = await request(agentReq(`/api/agent/xbloom-recipe-links/${xbloomRecipeId}`, { method: 'PUT', body: JSON.stringify({ recipeCode }) }))
+  recipeLinkCreated = (await getDb().selectFrom('xbloom_recipe_links').select('xbloom_recipe_id').where('xbloom_recipe_id', '=', xbloomRecipeId).execute()).length > 0
   expect(link.status).toBe(200)
   const links = await request(agentReq('/api/agent/xbloom-recipe-links'))
   expect((await links.json() as Array<Record<string, unknown>>).some((item) => item['xbloomRecipeId'] === xbloomRecipeId && item['recipeCode'] === recipeCode)).toBe(true)
