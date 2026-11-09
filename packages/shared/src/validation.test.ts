@@ -416,7 +416,7 @@ describe('xBloom structured fields', () => {
     for (const waterG of [4.9, 101]) {
       const r = make('other', { bypass: { waterG } });
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.errors.join(' ')).toMatch(/bypass\.waterG.*5-100 ml.*clamps.*100 ml/);
+      if (!r.ok) expect(r.errors.join(' ')).toMatch(/bypass\.waterG.*5-100 ml.*rejects out-of-range.*clamps.*100 ml/);
     }
   });
 
