@@ -790,6 +790,29 @@
       }
     },
     {
+      "name": "recipe: conflicting first-pour temperatures rejected",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "tempC": 90
+        },
+        "steps": [
+          {
+            "note": "Pour",
+            "tempC": 92
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "params.tempC must match steps[0].tempC when both are provided"
+        ]
+      }
+    },
+    {
       "name": "recipe: xBloom rpm out of range",
       "validator": "CreateRecipe",
       "input": {

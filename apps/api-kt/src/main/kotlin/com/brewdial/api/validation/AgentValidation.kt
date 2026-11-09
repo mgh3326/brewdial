@@ -97,6 +97,7 @@ fun validateCreateRecipeInput(input: JsonNode?): ValidationResult<CreateRecipeIn
     val beanSnapshot = validateBeanSnapshot(objectInput, errors)
     val params = validateRecipeParams(objectInput, errors)
     val steps = validateRecipeSteps(objectInput, errors)
+    validateFirstPourTempC(params, steps, errors)
 
     val dripperPortability = if (objectInput.has("dripperPortability")) {
         val raw = objectInput.get("dripperPortability") as? ObjectNode
@@ -652,6 +653,14 @@ private fun validateRecipeSteps(input: ObjectNode, errors: MutableList<String>):
         }
     }
     return out
+}
+
+private fun validateFirstPourTempC(params: ObjectNode?, steps: ArrayNode?, errors: MutableList<String>) {
+    val paramsTempC = params?.get("tempC")?.takeIf(::isFiniteNumber)?.asDouble()
+    val firstStepTempC = (steps?.get(0) as? ObjectNode)?.get("tempC")?.takeIf(::isFiniteNumber)?.asDouble()
+    if (paramsTempC != null && firstStepTempC != null && paramsTempC != firstStepTempC) {
+        errors += "params.tempC must match steps[0].tempC when both are provided"
+    }
 }
 
 private class TimedStep(val atSec: Double, val endSec: Double?, val waterG: Double?)

@@ -5,6 +5,9 @@
 // for every field the emitter produces (key order, comments, quoting style ignored).
 // xBloom fields with a RecipeDoc home are stored structurally on steps; tags retain
 // labels, string agitation, and unknown data. Export falls back to legacy tags.
+// First-pour temperature lives in params.tempC and takes precedence on export;
+// steps[0].tempC is its fallback. Later pours prefer step tempC, then legacy tag,
+// then params.tempC. Validation rejects conflicting first-pour values.
 //
 // ── Machine tag format (finalized in this task) ─────────────────────────────
 // Fields with no RecipeDoc residence are preserved as bracketed `key=value` tags
@@ -578,7 +581,8 @@ export function fromXBloomYaml(yamlText: string): CreateRecipeInput {
     if (p.rpm !== undefined) step.rpm = p.rpm;
     if (p.agitation_before !== undefined) step.vibrationBefore = p.agitation_before;
     if (typeof p.agitation === 'boolean') step.vibrationAfter = p.agitation;
-    if (p.temp_c !== undefined) step.tempC = p.temp_c;
+    // params.tempC is canonical for pour one; only later pours store their own temperature.
+    if (p.temp_c !== undefined && i > 0) step.tempC = p.temp_c;
     if (p.pause_s !== undefined) step.pauseSec = p.pause_s;
     // Next pour starts at endSec + pause — pure integer arithmetic, so fractional
     // ml (e.g. 30.4/3.2 = 9.4999…) cannot shift pause through double rounding.
@@ -617,9 +621,9 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     const label = tag ? tag.label : text || `Pour ${i + 1}`;
     if (label !== '') pour.label = label;
     pour.ml = round3((s.waterG ?? 0) - prevWater);
-    // temp: for the FIRST pour params.tempC is the spec'd mapping and wins, so a
-    // user edit in BrewDial propagates; later pours rely on their tags (or the
-    // params.tempC fallback for authored recipes).
+    // Temperature precedence: pour one uses params.tempC ?? step.tempC ?? legacy
+    // tag; later pours use step.tempC ?? legacy tag ?? params.tempC. Imports keep
+    // pour one's value in params.tempC, so editing params propagates on export.
     const tempC =
       i === 0 && params.tempC !== undefined
         ? params.tempC

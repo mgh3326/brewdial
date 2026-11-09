@@ -489,6 +489,18 @@ function validateRecipeSteps(
   return out;
 }
 
+function validateFirstPourTempC(
+  params: RecipeParams | RecipeParamsPatch | undefined,
+  steps: RecipeStep[] | undefined,
+  errors: string[]
+): void {
+  const paramsTempC = params?.tempC;
+  const firstStepTempC = steps?.[0]?.tempC;
+  if (paramsTempC !== undefined && paramsTempC !== null && firstStepTempC !== undefined && paramsTempC !== firstStepTempC) {
+    errors.push('params.tempC must match steps[0].tempC when both are provided');
+  }
+}
+
 // ROB-608: cross-field arithmetic + range checks. Clear contradictions go to
 // `errors` (reject); convention deviations to `warnings` (soft). `method:'other'`
 // (instant sticks etc.) is exempt; espresso skips the pour-over water schedule.
@@ -608,6 +620,7 @@ export function validateCreateRecipeInput(
   const beanSnapshot = validateBeanSnapshot(input.beanSnapshot, errors);
   const params = validateRecipeParams(input.params, errors);
   const steps = validateRecipeSteps(input.steps, errors);
+  validateFirstPourTempC(params, steps, errors);
 
   let dripperPortability: DripperPortability | undefined;
   if (input.dripperPortability !== undefined) {
@@ -730,6 +743,7 @@ export function validateUpdateRecipeInput(
     const s = validateRecipeSteps(input.steps, errors);
     if (s !== undefined) value.steps = s;
   }
+  validateFirstPourTempC(value.params, value.steps, errors);
   if (input.notes !== undefined) {
     const n = pickString(input, 'notes', errors, 'input', { trim: false });
     if (n !== undefined) value.notes = n;

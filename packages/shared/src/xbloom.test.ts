@@ -97,7 +97,8 @@ describe('fromXBloomYaml mapping', () => {
   });
 
   it('stores xBloom machine values structurally and leaves only labels in tags', () => {
-    expect(input.steps![0]).toMatchObject({ pattern: 'spiral', rpm: 100, vibrationAfter: false, pauseSec: 40, tempC: 92 });
+    expect(input.steps![0]).toMatchObject({ pattern: 'spiral', rpm: 100, vibrationAfter: false, pauseSec: 40 });
+    expect(input.steps![0].tempC).toBeUndefined();
     expect(input.steps![0].note).toContain('[label=Bloom]');
     expect(input.steps![0].note).not.toMatch(/(?:pattern|rpm|temp_c|pause_s)=/);
   });

@@ -404,6 +404,16 @@ describe('xBloom structured fields', () => {
     if (r.ok) expect(r.value.params?.bypass).toEqual({ waterG: 50, tempC: 10 });
   });
 
+  it('rejects conflicting first-pour temperatures on create and update', () => {
+    const expected = 'params.tempC must match steps[0].tempC when both are provided';
+    const create = make('other', { tempC: 90 }, [{ tempC: 92 }]);
+    const update = validateUpdateRecipeInput({ params: { tempC: 90 }, steps: [{ note: 'Pour', tempC: 92 }] });
+    expect(create.ok).toBe(false);
+    if (!create.ok) expect(create.errors).toContain(expected);
+    expect(update.ok).toBe(false);
+    if (!update.ok) expect(update.errors).toContain(expected);
+  });
+
   it.each([
     [{ rpm: 55 }, /rpm/], [{ pauseSec: 256 }, /pauseSec/], [{ tempC: 96 }, /tempC/], [{ pattern: 'zigzag' }, /pattern/],
     [{ vibrationBefore: 'yes' }, /vibrationBefore/], [{ vibrationAfter: 1 }, /vibrationAfter/]

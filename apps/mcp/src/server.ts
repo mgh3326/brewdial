@@ -173,7 +173,7 @@ const STEPS_SCHEMA = {
       vibrationBefore: { type: 'boolean', description: '붓기 전 xBloom 진동 여부' },
       vibrationAfter: { type: 'boolean', description: '붓기 후 xBloom 진동 여부' },
       pauseSec: { type: 'integer', minimum: 0, maximum: 255, description: '다음 붓기까지 대기 시간(초)' },
-      tempC: { type: 'number', minimum: 40, maximum: 95, description: '이 붓기의 xBloom 물 온도(°C)' },
+      tempC: { type: 'number', minimum: 40, maximum: 95, description: 'xBloom 물 온도(°C). 첫 붓기는 params.tempC가 우선하며, 값이 없을 때만 이 값을 사용합니다. 둘 다 제공하면 같은 값이어야 합니다.' },
       note: { type: 'string' }
     },
     required: ['note']
