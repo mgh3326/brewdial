@@ -1,50 +1,52 @@
 # OCI: k3s → shiftgate, 이후 PostgreSQL → HeatWave MySQL (ROB-1435)
 
-OCI 호스트에서 실행 중인 `brewdial-api`를 k3s에서 shiftgate로 옮긴 뒤, Node API가 연결하는 데이터베이스를 PostgreSQL에서 HeatWave MySQL로 전환한다. shiftgate는 digest로 배포한 Docker 컨테이너를 HAProxy 뒤에서 blue-green 방식으로 운영한다. PostgreSQL은 §4.7 정리 시점까지 롤백 대상으로 유지한다. Node API와 `packages/db`도 이 전환 동안 계속 사용한다.
+현재 프로덕션은 shiftgate 뒤에서 실행되는 HeatWave MySQL 연결 Node API `brewdial-api-mysql` (`:8021`)이다. Dagu는 `production` 태그를 따라 배포한다. 이 문서는 k3s에서 shiftgate로, PostgreSQL에서 HeatWave MySQL로 전환한 이력을 기록한다. PostgreSQL은 중지 및 비활성화되어 더 이상 롤백 대상으로 사용할 수 없다. Node API와 `packages/db`는 계속 사용한다.
 
 | 단계 | 변경 내용 | 롤백 |
 |---|---|---|
-| 1. 호스트 준비 | Docker, shiftgate, HAProxy 컨테이너, 환경 파일, 배포 키 설치 | 아직 트래픽을 보내지 않음 |
-| 2. k3s → shiftgate 전환 | cloudflared `:30020`에서 PostgreSQL을 사용하는 Node API `:8020`으로 변경 | cloudflared를 `:30020`으로 되돌림 |
-| 3. k3s 제거 | `systemctl disable --now k3s`, 이후 관련 파일 제거 | 파일 제거 전에는 `systemctl start k3s` |
-| 4. Node API → HeatWave MySQL | 유지보수 창에서 Node API 중지, 복사와 검증 후 MySQL 연결 Node API 시작, 이어서 cloudflared를 `:8021`로 변경 | §4.5에서 복사 필요 여부를 확인하고 PostgreSQL 연결 Node API를 시작한 뒤 `:8020`으로 복귀 |
+| 1. 호스트 준비 | Docker, shiftgate, HAProxy 컨테이너, 환경 파일, 배포 키 설치 | 트래픽 전환 전 |
+| 2. k3s → shiftgate 전환 | cloudflared `:30020`에서 PostgreSQL 연결 Node API `:8020`으로 변경 | 완료 당시 k3s가 남아 있었음. 현재는 은퇴하여 사용 불가 |
+| 3. k3s 제거 | `systemctl disable --now k3s`, 이후 관련 파일 제거 | k3s 은퇴 후 복구 대상으로 사용 불가 |
+| 4. Node API → HeatWave MySQL | Node API 중지, 복사와 검증 후 MySQL 연결 Node API 시작, cloudflared를 `:8021`로 변경 | §4.5의 역사적 절차. PostgreSQL 은퇴 후 사용 불가 |
 
-1–3단계는 함께 수행한다. 4단계는 별도 유지보수 창에서 수행한다.
+1–3단계 및 4단계 전환은 완료되었다. 아래 절은 당시 절차와 결과를 위한 운영 기록이다.
 
 운영 규칙:
 
 - 명령은 `opc` 계정에서 `sudo`와 함께 실행한다. 명령 출력에 비밀 값이 나타나지 않도록 한다.
-- **데이터베이스 자격 증명은 환경 파일 경로로만 전달한다.** 파일은 `/etc/shiftgate/brewdial-api.env`와 `/etc/shiftgate/brewdial-api-mysql.env`이며 소유자는 `root:root`, 권한은 `0600`이다. shiftgate는 파일 내용을 출력하지 않고 `docker run --env-file`에 경로로 전달한다. 파일을 커밋하거나 티켓에 붙이거나 `cat`으로 출력하지 않는다. 키 존재 여부는 `sudo grep -c '^DATABASE_URL=' <file>`로 확인한다.
+- **현재 데이터베이스 자격 증명은 환경 파일 경로로만 전달한다.** 프로덕션 파일은 `/etc/shiftgate/brewdial-api-mysql.env`이며 소유자는 `root:root`, 권한은 `0600`이다. 이전 PostgreSQL 파일 `/etc/shiftgate/brewdial-api.env`는 현재 서비스에서 사용하지 않으며 최종 dump와 mirror를 확인한 뒤 삭제 대상이다. shiftgate는 현재 파일의 내용을 출력하지 않고 `docker run --env-file`에 경로로 전달한다. 파일을 커밋하거나 티켓에 붙이거나 `cat`으로 출력하지 않는다. 키 존재 여부는 `sudo grep -c '^DATABASE_URL=' <file>`로 확인한다.
 - 저장소 설정은 `deploy/oci/shiftgate/services.yaml` 및 `.github/workflows/deploy-oci.yml`이다.
 
 ---
 
 ---
 
-## 1. Host preparation
+## 1. 호스트 준비
 
-1. **Docker.** k3s ships its own containerd, so Docker is a separate install.
-   Install `docker-ce` for Oracle Linux 9 (aarch64) and run `sudo systemctl
-   enable --now docker`.
-2. **shiftgate.** Build the binary for linux/arm64 from the pinned revision,
-   (`.github/workflows/shiftgate-render.yml` pins c65b3a4428c9 for rendering only; the host needs `follow`, added in d0cc564):
+이 절은 전환 당시의 호스트 준비 기록이다. 현재 프로덕션에서 사용할 pull 명령은 7번 항목에 표시된 `brewdial-api-mysql` 대상이다.
+
+1. **Docker.** k3s는 자체 containerd를 제공하므로 Docker를 별도로 설치한다.
+   Oracle Linux 9 (aarch64)용 `docker-ce`를 설치하고 `sudo systemctl
+   enable --now docker`를 실행한다.
+2. **shiftgate.** 고정된 revision에서 linux/arm64 바이너리를 빌드한다.
+   (`.github/workflows/shiftgate-render.yml`은 렌더링 전용 revision을 고정한다. 호스트에는 `follow`가 추가된 revision이 필요하다.)
    ```sh
    git clone https://github.com/mgh3326/shiftgate && cd shiftgate && git checkout d0cc564   # first revision with `shiftgate follow`
    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o shiftgate ./cmd/shiftgate
    # Copy the binary to the host if you built it elsewhere, then on the host:
    sudo install -m 0755 shiftgate /usr/local/bin/shiftgate
    ```
-3. **Config.** Install the repository file:
+3. **설정.** 저장소의 파일을 설치한다:
    ```sh
    sudo install -d -m 0755 /etc/shiftgate /etc/shiftgate/haproxy /var/lib/shiftgate /run/shiftgate-haproxy
    sudo install -m 0644 deploy/oci/shiftgate/services.yaml /etc/shiftgate/services.yaml
    ```
-   To keep `/run/shiftgate-haproxy` across reboots, add a `tmpfiles.d` entry:
-   `d /run/shiftgate-haproxy 0755 99 99 -`. uid 99 is the `haproxy` user in
-   the official image.
-4. **HAProxy container.** Oracle Linux 9 ships HAProxy 2.4, and shiftgate needs
-   2.8 or newer. Run the pinned official image with host networking from a
-   systemd unit named `shiftgate-haproxy.service`:
+   재부팅 후에도 `/run/shiftgate-haproxy`를 유지하려면 `tmpfiles.d` 항목
+   `d /run/shiftgate-haproxy 0755 99 99 -`을 추가한다. 공식 이미지에서 uid 99는
+   `haproxy` 사용자다.
+4. **HAProxy 컨테이너.** Oracle Linux 9에는 HAProxy 2.4가 포함되며 shiftgate에는
+   2.8 이상이 필요하다. `shiftgate-haproxy.service`라는 systemd unit에서 고정된
+   공식 이미지를 host network로 실행한다:
    ```ini
    [Unit]
    After=docker.service
@@ -61,80 +63,84 @@ OCI 호스트에서 실행 중인 `brewdial-api`를 k3s에서 shiftgate로 옮�
    [Install]
    WantedBy=multi-user.target
    ```
-   Render once before starting it. Every colour starts disabled.
+   시작 전에 한 번 렌더링한다. 각 색상은 비활성 상태로 시작한다.
    ```sh
    sudo shiftgate render --no-reload        # validates with haproxy -c, writes the file
    sudo systemctl enable --now shiftgate-haproxy
    sudo shiftgate status
    ```
-5. **Env file for `brewdial-api` (Node API, PostgreSQL).** Copy the keys from
-   `/etc/brewdial/api.env` without displaying them:
+5. **`brewdial-api` 환경 파일 (Node API, PostgreSQL) — 과거 절차, 현재 실행 금지.**
+   이 항목은 PostgreSQL 전환 당시의 기록이다. 프로덕션 호스트에 이 PostgreSQL
+   환경 파일을 다시 만들지 않는다. 당시에는 값을 출력하지 않고
+   `/etc/brewdial/api.env`에서 키를 복사한다:
    ```sh
    sudo install -m 0600 -o root -g root /dev/null /etc/shiftgate/brewdial-api.env
    sudo sh -c 'grep -E "^(DATABASE_URL|AGENT_TOKEN|SENTRY_DSN)=" /etc/brewdial/api.env > /etc/shiftgate/brewdial-api.env'
    sudo grep -c '^DATABASE_URL=postgres://' /etc/shiftgate/brewdial-api.env   # expect 1
    ```
-   `DATABASE_URL` must use `127.0.0.1`, not the k3s bridge IP `10.42.0.1`,
-   because the container uses host networking. Leave `PORT`, `HOST` and
-   `GIT_SHA` out of the file: shiftgate sets `PORT` to the colour port,
-   services.yaml sets `HOST`, and the image bakes in `GIT_SHA`.
-6. **Registry login.** If the GHCR packages are private, log in once as the
-   user that runs shiftgate. Use a token with `read:packages` only.
-7. **Pull-based deploys (no CI access to the host).** CI only builds, pushes
-   and, on a release, moves the `production` tag. The host follows it:
-   Dagu on this host runs every few minutes
-   `sudo shiftgate follow brewdial-api --tag production`. No deploy user, SSH
-   key, tailnet OAuth client or repository secret is needed. The image is a
-   public GHCR package; if it ever becomes private, log in once on the host
-   with a `read:packages` token.
+   컨테이너는 host networking을 사용하므로 `DATABASE_URL`에는 k3s bridge IP가
+   아니라 `127.0.0.1`을 사용한다. `PORT`, `HOST`, `GIT_SHA`는 파일에
+   넣지 않는다. shiftgate가 색상 포트로 `PORT`를 설정하고, services.yaml이 `HOST`를
+   설정하며, 이미지에 `GIT_SHA`가 포함된다.
+6. **레지스트리 로그인.** GHCR 패키지가 비공개라면 shiftgate 실행 사용자로 한 번
+   로그인한다. `read:packages` 권한만 있는 토큰을 사용한다.
+7. **Pull 방식 배포 (CI에서 호스트에 접근하지 않음).** CI는 이미지를 빌드 및 푸시하고
+   릴리스 시 `production` 태그를 이동한다. 호스트가 해당 태그를 따라간다. 이 호스트의
+   Dagu는 몇 분마다 다음 명령을 실행한다:
+   `sudo shiftgate follow brewdial-api-mysql --tag production`. 배포 사용자, SSH key,
+   tailnet OAuth client 또는 저장소 secret은 필요하지 않다. 이미지는 공개 GHCR
+   패키지다. 비공개로 바뀌면 호스트에서 `read:packages` 토큰으로 한 번 로그인한다.
 
-## 2. Cutover: k3s → shiftgate (Node API, PostgreSQL)
+## 2. 전환: k3s → shiftgate (Node API, PostgreSQL)
 
-k3s keeps serving on `127.0.0.1:30020` throughout. shiftgate serves on
-`127.0.0.1:8020`. The cutover itself is the cloudflared ingress line.
+이 절은 완료된 과거 전환 절차이며 현재 실행하면 안 된다. 현재 PostgreSQL 및 k3s 서비스는 은퇴했다.
 
-1. **First deploy, from CI or by hand.** Use the digest that k3s serves now,
-   so the cutover changes nothing but the runtime:
+k3s는 전환 중 `127.0.0.1:30020`에서 계속 요청을 처리한다. shiftgate는
+`127.0.0.1:8020`에서 요청을 처리한다. 전환은 cloudflared ingress 설정으로 수행한다.
+
+1. **첫 배포 (CI 또는 수동).** 현재 k3s가 제공하는 digest를 사용해 runtime만
+   변경한다:
    ```sh
    kubectl -n brewdial get deploy brewdial-api -o jsonpath='{.spec.template.spec.containers[0].image}'   # …@sha256:<digest>
    sudo shiftgate deploy brewdial-api --digest sha256:<digest>
    sudo shiftgate status
    curl -fsS http://127.0.0.1:8020/api/health && curl -fsS http://127.0.0.1:8020/api/db/health
    ```
-   The container runs `node-pg-migrate up` before the server starts, as the
-   k3s initContainer did. Against the current database it is a no-op, because
-   `pgmigrations` already lists every migration.
-2. **Releases from CI.** Fast-forward `production` to the `main` commit you
-   intend to ship (`git push origin main:production`). The workflow builds it,
-   pushes it and moves `ghcr.io/mgh3326/brewdial:production` to that digest.
-   Within a few minutes the host follower deploys it into the idle colour,
-   which also makes `shiftgate rollback` available. Check `shiftgate status`
-   for the new digest. A rolled-back digest is held by the follower until a
-   newer one is tagged.
-3. **Switch traffic.** In `/etc/cloudflared/config.yml`, change the ingress
-   from `http://127.0.0.1:30020` to `http://127.0.0.1:8020`. Then run `sudo
-   systemctl restart cloudflared` and check the public `/api/health` and
-   `/api/db/health`.
-4. **Watch for one day.** Check the `shiftgate status` and `docker logs
-   shiftgate-brewdial-api-<colour>` output, and Sentry.
+   컨테이너는 k3s initContainer와 같이 서버 시작 전 `node-pg-migrate up`을 실행한다.
+   `pgmigrations`에 모든 마이그레이션이 기록되어 있으므로 당시 데이터베이스에서는
+   변경이 없었다.
+2. **CI 릴리스.** 배포할 `main` commit으로 `production`을 fast-forward 한다
+   (`git push origin main:production`). workflow가 빌드 및 푸시한 뒤 해당 digest로
+   `ghcr.io/mgh3326/brewdial:production` 태그를 이동한다. 몇 분 내 호스트 follower가
+   유휴 색상에 배포하며 `shiftgate rollback`도 사용할 수 있게 된다. 새 digest는
+   `shiftgate status`에서 확인한다. 롤백한 digest는 새 태그가 지정될 때까지 follower가
+   유지한다.
+3. **트래픽 전환.** `/etc/cloudflared/config.yml`에서 ingress를
+   `http://127.0.0.1:30020`에서 `http://127.0.0.1:8020`으로 변경한다. 이어서
+   `sudo systemctl restart cloudflared`를 실행하고 공개 `/api/health` 및
+   `/api/db/health`를 확인한다.
+4. **하루 동안 관찰.** `shiftgate status`, `docker logs
+   shiftgate-brewdial-api-<colour>` 출력 및 Sentry를 확인한다.
 
-**Rollback (phase 2):** point cloudflared back to `http://127.0.0.1:30020` and
-restart it. k3s is still running. Both runtimes use the same PostgreSQL, so no
-data moves. For a bad image on shiftgate, run `sudo shiftgate rollback
-brewdial-api`. It starts the kept previous colour, health-checks it, and flips
-HAProxy back.
+**롤백 (2단계, 현재 사용 불가):** 당시에는 cloudflared를
+`http://127.0.0.1:30020`으로 되돌리고 재시작했다. k3s가 계속 실행 중이었으며 두
+runtime이 같은 PostgreSQL을 사용해 데이터 이동은 없었다. shiftgate 이미지 문제에는
+`sudo shiftgate rollback brewdial-api`를 실행했다. 이전 색상을 시작하고 상태 확인 후
+HAProxy를 전환하는 절차다. k3s와 PostgreSQL이 은퇴한 현재는 이 롤백을 사용할 수 없다.
 
-## 3. k3s removal (desk)
+## 3. k3s 제거 (desk)
 
-Do this after phase 2 has been stable for the observation period.
+이 절은 완료된 과거 제거 절차이며 현재 k3s는 복구 대상으로 사용할 수 없다.
 
-1. Stop k3s and keep its files, so this step stays reversible:
+2단계가 관찰 기간 동안 안정적으로 동작한 뒤 수행하는 절차였다.
+
+1. 복구 가능성을 유지하도록 파일을 남긴 채 k3s를 중지한다:
    ```sh
    sudo systemctl disable --now k3s
    sudo /usr/local/bin/k3s-killall.sh      # stops leftover pods and containerd shims; keeps /var/lib/rancher
    free -m                                  # expect about 800 MB back
    ```
-2. **Keep for rollback until the next phase-4 window closes:**
+2. **다음 4단계 작업이 끝날 때까지 롤백을 위해 보존할 항목:**
    - `/etc/rancher/k3s/` (kubeconfig, registries) and `/var/lib/rancher/k3s/`
      (cluster state and images);
    - `deploy/oci/k3s/` and `.github/workflows/deploy-oci-k3s.yml` in the
@@ -142,9 +148,9 @@ Do this after phase 2 has been stable for the observation period.
    - the host PostgreSQL listener on the bridge IP `10.42.0.1` and its
      pod-CIDR `pg_hba` line.
 
-   To bring k3s back: `sudo systemctl enable --now k3s`, wait for the pod to
-   become ready, then point cloudflared back to `:30020`.
-3. **Final removal** (a later, separate change): run
+   당시 k3s 복구 방법은 `sudo systemctl enable --now k3s`로 시작하고 pod 준비 후
+   cloudflared를 `:30020`으로 되돌리는 것이었다. k3s 은퇴 후에는 사용할 수 없다.
+3. **최종 제거** (후속 별도 변경): 다음을 실행한다:
    `/usr/local/bin/k3s-uninstall.sh`. Then delete `deploy/oci/k3s/`,
    `deploy-oci-k3s.yml` and the k3d `k8s-validate.yml` job in one PR. Also
    remove the `10.42.0.1` PostgreSQL listener and its `pg_hba` line.
@@ -152,6 +158,16 @@ Do this after phase 2 has been stable for the observation period.
 ## 4. Node API → HeatWave MySQL
 
 이 단계에서는 현재 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작한다. 복사 도구만 `ghcr.io/mgh3326/brewdial-api-kt` 이미지에서 가져온다. 이 도구는 롤백 기간이 끝날 때까지 유지한다. 서비스 이미지와 복사 도구 이미지는 서로 다른 digest를 사용한다. 실제 전환은 운영자가 참석한 유지보수 시간에 수행한다.
+
+### 4.0 2026-11-09 — 4단계 완료 기록
+
+4단계 전환이 완료되었다. 첫 실행은 `/api/beans`의 순서만 달랐다. 레시피가 없는 원두 목록의 이름 정렬에서 데이터베이스 collation 차이가 있었으며, `--accept-order` 옵션으로 다시 실행했다.
+
+`start` 단계가 실행된 뒤 `--replace-target`을 사용한 재시도는 `copy`에서 실패했다. 대상의 Node MySQL 마이그레이션 테이블 `schema_migrations`가 복사 도구의 테이블 목록에 포함되지 않았기 때문이다. 대상 데이터베이스를 비운 뒤 다시 실행하는 방식으로 해결했다.
+
+`finish` 단계는 마커 디렉터리 `/var/lib/brewdial`이 없어 실패했고, 마커를 수동으로 기록했다. 또한 `sudo`의 `secure_path`에 `/usr/local/bin`이 없어 `shiftgate`를 찾지 못했다. `sudo env PATH=/usr/local/bin:…` 형태로 스크립트를 실행했다.
+
+전환 후 백업 및 검증 타이머는 HeatWave 스크립트를 실행한다. 저장소의 unit 파일은 이미 이를 가리키고 있었으며 호스트에는 이전 unit 파일이 설치되어 있었다. Mac pull 스크립트를 갱신했고, Dagu follow/check 작업은 `brewdial-api-mysql`을 대상으로 하도록 변경했다. `production`을 `main`에서 릴리스했다. PostgreSQL은 마지막 덤프 후 중지 및 비활성화했으며 데이터 디렉터리는 보존했다. PostgreSQL은 더 이상 롤백 대상이 아니다.
 
 ### 4.1 사전 조건
 
@@ -221,6 +237,8 @@ sudo sed -i -e 's#http://127.0.0.1:8020#http://127.0.0.1:8021#g' -e 's#http://lo
 
 ### 4.5 롤백
 
+**이 절차는 과거 기록이며 현재는 사용할 수 없다.** PostgreSQL은 최종 덤프 후 중지 및 비활성화되었고, 더 이상 롤백 대상으로 운영되지 않는다.
+
 롤백에는 cutover에 사용한 Node 이미지와 복사 도구의 digest를 모두 전달한다.
 
 ```sh
@@ -239,8 +257,28 @@ sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://lo
 
 ### 4.6 HeatWave 백업 타이머
 
-트래픽 전환 후 HeatWave 전용 백업 및 복구 검증 스크립트를 설정한다. 기존 타이머 일정은 유지한다. 읽기 전용 DB 사용자의 URL은 `/etc/brewdial/heatwave.env`에 저장하고 권한을 `0600`으로 설정한다. 백업과 검증을 각각 한 번 실행하고 성공 로그와 새 백업 파일을 확인한다. Mac 백업 가져오기 작업도 `.sql.gz` 형식을 지원하는 버전으로 갱신한다.
+2026-11-09 전환 완료 기록:
+
+- `brewdial-backup.service`가 06:49Z에 `backup-heatwave.sh`를 실행했다. 로그에 `dump OK (160K)`와 `backup complete`가 기록되었다. 백업 파일은 `/var/backups/brewdial/daily/brewdial-<YYYYMMDD-HHMM>.sql.gz`에 생성된다 (`BACKUP_DIR=/var/backups/brewdial`). Mac pull은 파일을 가져온 뒤 `gzip -t`와 완료 마커 행을 확인했고 `dump complete`를 기록했다.
+- `brewdial-verify.service`가 06:50Z에 `verify-restore-heatwave.sh`를 실행했다. 모든 테이블 비교가 통과했고 `triggers=15`, `views=1`, `recipe_code_seq=143 >= highest code 143`을 확인했다. 로그 결과는 `GATE PASS: the restored copy matches live HeatWave`였다.
+
+이 검증은 PostgreSQL을 중지하기 전에 수행했다. 비상 복구 시에는 API 쓰기를 중단하고, Mac에 보관된 검증 완료 `.sql.gz` 백업을 별도의 빈 HeatWave 데이터베이스에 MySQL 8.4 클라이언트로 복원한다. 이 dump에는 `CREATE DATABASE`와 `USE`가 없으므로 복원 대상 데이터베이스를 먼저 만들고 해당 대상으로 선택해야 한다. 원본 장애 데이터베이스는 보존한다. 복원 후 `verify-restore-heatwave.sh <dump.sql.gz>`로 테이블, 트리거, 뷰 및 시퀀스를 검증하고 `/api/db/health`를 확인한 다음, 운영자가 승인한 전환 절차로 API 연결을 복원된 데이터베이스로 변경한다. 이 비상 복구 절차 자체는 실행하지 않았다.
 
 ### 4.7 PostgreSQL 정리
 
-롤백 기간이 끝나고 HeatWave 백업과 복구 검증이 성공한 뒤 별도 운영 작업으로 PostgreSQL을 정리한다. 마지막 PostgreSQL 덤프를 기존 보관 위치에 저장한다. PostgreSQL 지원 코드와 복사 도구는 이 PR에서 제거하지 않는다.
+2026-11-09 07:05Z에 마지막 PostgreSQL dump를 생성했다. 데이터베이스 archive는 `/var/backups/brewdial/final/brewdial-pg-final-20261109-0705.dump` (`pg_dump -Fc`, `brewdial`, 16개 `TABLE DATA` 항목)이며, 전역 객체 dump는 `/var/backups/brewdial/final/globals-pg-final-20261109-0705.sql`이다. Mac pull이 두 파일을 가져왔고 양쪽 사본의 SHA-256 값이 일치했다. digest 값은 이 문서에 기록하지 않는다. 그 뒤 PostgreSQL 서비스는 중지 및 비활성화했고 데이터 디렉터리는 보존했다. 실제 데이터 디렉터리 제거는 운영자 결정이 남아 있다. 덤프와 Mac 사본을 확인했으므로 `/etc/shiftgate/brewdial-api.env`의 PostgreSQL 자격 증명 파일은 삭제한다.
+
+다음은 실행하지 않은 PostgreSQL 복구 절차다. 보존된 PostgreSQL 17 데이터 디렉터리를 사용할 수 있으면 서비스를 다시 시작한다:
+
+```sh
+sudo systemctl enable --now postgresql-17
+```
+
+데이터 디렉터리를 사용할 수 없으면 새 PostgreSQL 17 인스턴스를 준비하고 전역 객체와 데이터베이스를 archive에서 복원한다:
+
+```sh
+psql -d postgres -f /var/backups/brewdial/final/globals-pg-final-20261109-0705.sql
+pg_restore --create -d postgres /var/backups/brewdial/final/brewdial-pg-final-20261109-0705.dump
+```
+
+이 절차는 PostgreSQL 데이터베이스 복구 자료만 되살린다. `brewdial-api` 서비스 정의와 PostgreSQL 환경 파일은 현재 설정에서 제외되었으므로 이 절차는 Node API를 복구하지 않으며 프로덕션 롤백 경로가 아니다. PostgreSQL Node API를 다시 운영할 필요가 생기면 서비스 설정과 자격 증명을 별도 승인된 복구 작업으로 준비해야 한다. `brewdial-api` 서비스 정의는 shiftgate 설정에서 제거했다. 운영자는 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거해야 한다. 현재 호스트에 남은 컨테이너의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
