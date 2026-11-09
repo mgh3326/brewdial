@@ -172,14 +172,17 @@ class AgentWriteService(
         val before = readRepository.findFeedback(id.toString()) ?: throw AgentFeedbackMissingException()
         val after = LinkedHashMap(before)
         val changed = mutableListOf<String>()
+        val pending = mutableMapOf<String, Any?>()
         for ((key, column) in listOf("ratings" to "ratings", "actual" to "actual")) if (body.has(key)) {
             val incoming = body.get(key)
             if (!incoming.isObject) throw AgentInvalidRangeException("$key must be an object")
             val merged = parseJson(if (key == "ratings") row.ratings else row.actual)?.takeIf { it.isObject }?.deepCopy() as? ObjectNode
                 ?: objectMapper.createObjectNode()
+            if (key == "ratings") validateRatingsPatch(incoming) else validateActualPatch(incoming)
             incoming.properties().forEach { entry -> if (entry.value.isNull) merged.remove(entry.key) else merged.set(entry.key, entry.value) }
+            if (key == "actual" && !validActual(merged)) throw AgentInvalidRangeException("invalid actual")
             val serialized = if (merged.isEmpty) null else objectMapper.writeValueAsString(merged)
-            if (key == "ratings") row.ratings = serialized else row.actual = serialized
+            pending[key] = serialized
             after[column] = if (merged.isEmpty) null else merged
             changed += key
         }
@@ -187,24 +190,60 @@ class AgentWriteService(
         for ((key, column) in scalarFields) if (body.has(key)) {
             val value = body.get(key)
             if (key in listOf("rawComment", "comment") && !value.isNull && (!value.isTextual || value.asText().length > 2000)) throw AgentInvalidRangeException("$key must be a string of at most 2000 characters or null")
-            if (key == "quickTags" && !value.isNull && (!value.isArray || value.size() > 20)) throw AgentInvalidRangeException("quickTags must contain at most 20 items or be null")
-            when (key) {
-                "rawComment" -> row.rawComment = value.takeUnless { it.isNull }?.asText()
-                "comment" -> row.comment = value.takeUnless { it.isNull }?.asText()
-                "quickTags" -> row.quickTags = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
-                "desiredDirection" -> row.desiredDirection = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
-                "nextHint" -> row.nextHint = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
+            if (key in listOf("quickTags", "desiredDirection", "nextHint") && !value.isNull) {
+                val max = if (key == "quickTags") 20 else 100
+                if (!value.isArray || value.size() > max || value.values().any { !it.isTextual }) {
+                    throw AgentInvalidRangeException("$key must be an array of strings with at most $max items or null")
+                }
             }
+            val newValue: Any? = if (value.isNull) null else when (key) {
+                "rawComment", "comment" -> value.asText()
+                else -> value.values().map { it.asText() }
+            }
+            pending[key] = newValue
             after[column] = if (value.isNull) null else when (key) {
                 "rawComment", "comment" -> value.asText()
-                else -> value
+                else -> value.values().map { it.asText() }
             }
             changed += key
         }
         if (body.path("dryRun").asBoolean(false)) return linkedMapOf("dryRun" to true, "before" to before, "after" to after, "changed" to changed)
+        pending.forEach { (key, value) -> when (key) {
+            "ratings" -> row.ratings = value as String?
+            "actual" -> row.actual = value as String?
+            "rawComment" -> row.rawComment = value as String?
+            "comment" -> row.comment = value as String?
+            "quickTags" -> row.quickTags = value as List<String>?
+            "desiredDirection" -> row.desiredDirection = value as List<String>?
+            "nextHint" -> row.nextHint = value as List<String>?
+        } }
         entityManager.flush()
         entityManager.refresh(row)
         return readRepository.findFeedback(id.toString()) ?: throw AgentFeedbackMissingException()
+    }
+
+    private fun validateRatingsPatch(ratings: JsonNode) {
+        val allowed = setOf("overall", "burnt", "bitter", "sour", "sweetness", "body", "astringency", "clarity")
+        for (entry in ratings.properties()) {
+            val key = entry.key
+            val value = entry.value
+            if (key !in allowed) throw AgentInvalidRangeException("ratings.$key is not allowed")
+            if (value.isNull) continue
+            val min = if (key == "overall") 1 else 0
+            val max = if (key == "overall") 5 else 4
+            if (!value.isIntegralNumber || value.intValue() !in min..max) throw AgentInvalidRangeException("ratings.$key has an invalid rating")
+        }
+    }
+
+    private fun validateActualPatch(actual: JsonNode) {
+        val allowed = setOf("tempC", "grind", "timeSec", "doseG", "waterG", "blend")
+        val clean = objectMapper.createObjectNode()
+        for (entry in actual.properties()) {
+            if (entry.key !in allowed) throw AgentInvalidRangeException("actual.${entry.key} is not allowed")
+            if (entry.value.isNull) continue
+            clean.set(entry.key, entry.value)
+        }
+        if (!validActual(clean)) throw AgentInvalidRangeException("invalid actual")
     }
 
     @Transactional
