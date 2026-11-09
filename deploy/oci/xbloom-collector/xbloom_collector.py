@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from unittest.mock import patch
 
 from xbloom_ble.cloud import XBloomCloud, encrypt_form
@@ -21,7 +21,6 @@ DEFAULT_API_URL = "http://127.0.0.1:8021"
 DEFAULT_SINCE_HOURS = 72.0
 AUTH_ERROR_CODES = {20003}
 AUTH_MESSAGE = "xBloom 인증이 만료되었거나 설정되지 않았습니다. `xbloom cloud login`을 실행하고 Infisical의 XBLOOM_MEMBER_ID와 XBLOOM_TOKEN을 갱신하세요."
-RECORD_FIELDS = ("tableId", "createTimeStamp", "brewTime", "recipeName", "recipeVo", "lineChartData")
 RECIPE_FIELDS = ("tableId", "dose", "grinderSize", "rpm", "cupType", "isEnableBypassWater", "bypassVolume", "bypassTemp", "pourList")
 POUR_FIELDS = ("volume", "temperature", "flowRate", "pattern", "pausing", "isEnableVibrationBefore", "isEnableVibrationAfter")
 
@@ -51,7 +50,7 @@ def _new_client(member_id: int, token: str) -> XBloomCloud:
 
 def _is_record(value: Any) -> bool:
     record_fields = ("createTimeStamp", "brewTime", "recipeName", "recipeVo", "lineChartData")
-    return isinstance(value, dict) and "tableId" in value and any(key in value for key in record_fields)
+    return isinstance(value, dict) and any(key in value for key in record_fields)
 
 
 def _flatten_records(value: Any) -> Iterable[Dict[str, Any]]:
@@ -66,18 +65,70 @@ def _flatten_records(value: Any) -> Iterable[Dict[str, Any]]:
 
 
 def _allowlisted_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    result = {key: record[key] for key in RECORD_FIELDS if key in record}
+    result = {
+        key: record[key]
+        for key in ("tableId", "createTimeStamp", "brewTime", "recipeName")
+        if key in record and isinstance(record[key], (str, int, float)) and not isinstance(record[key], bool)
+    }
+    curve = record.get("lineChartData")
+    if isinstance(curve, str):
+        try:
+            curve = json.loads(curve)
+        except (TypeError, ValueError):
+            curve = None
+    if isinstance(curve, list) and curve and all(
+        isinstance(point, list)
+        and len(point) == 2
+        and all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in point)
+        for point in curve
+    ):
+        result["lineChartData"] = json.dumps(curve, separators=(",", ":"))
     recipe = record.get("recipeVo")
     if isinstance(recipe, dict):
-        allowed_recipe = {key: recipe[key] for key in RECIPE_FIELDS if key in recipe and key != "pourList"}
+        allowed_recipe = {
+            key: recipe[key]
+            for key in RECIPE_FIELDS
+            if key in recipe and key != "pourList"
+            and isinstance(recipe[key], (str, int, float)) and not isinstance(recipe[key], bool)
+        }
         pours = recipe.get("pourList")
         if isinstance(pours, list):
             allowed_recipe["pourList"] = [
-                {key: pour[key] for key in POUR_FIELDS if key in pour} if isinstance(pour, dict) else pour
+                {
+                    key: pour[key]
+                    for key in POUR_FIELDS
+                    if key in pour and isinstance(pour[key], (str, int, float)) and not isinstance(pour[key], bool)
+                }
+                if isinstance(pour, dict) else {}
                 for pour in pours
             ]
         result["recipeVo"] = allowed_recipe
     return result
+
+
+MAX_BATCH_BYTES = 512 * 1024
+
+
+def _batches(records: List[Dict[str, Any]]) -> Iterable[List[Dict[str, Any]]]:
+    batch: List[Dict[str, Any]] = []
+    for record in records:
+        candidate = batch + [record]
+        size = len(json.dumps({"records": candidate}, ensure_ascii=False).encode("utf-8"))
+        if batch and (len(candidate) > 200 or size > MAX_BATCH_BYTES):
+            yield batch
+            batch = [record]
+            size = len(json.dumps({"records": batch}, ensure_ascii=False).encode("utf-8"))
+        else:
+            batch = candidate
+        if size > MAX_BATCH_BYTES:
+            raise ValueError("a single record exceeds the API request size limit")
+    if batch:
+        yield batch
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _validated_api_url(value: str) -> str:
@@ -123,7 +174,7 @@ def _post_batch(api_url: str, agent_token: str, records: List[Dict[str, Any]]) -
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + agent_token},
         method="POST",
     )
-    with urlopen(request, timeout=30) as response:
+    with build_opener(_NoRedirectHandler()).open(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -151,8 +202,8 @@ def collect(
     recent = [_allowlisted_record(record) for record in records if _is_recent(record, cutoff_ms)]
     outside_since = len(records) - len(recent)
     counts = {"fetched": len(records), "selected": len(recent), "outside_since": outside_since, "inserted": 0, "duplicate": 0, "skipped": 0}
-    for start in range(0, len(recent), 200):
-        result = post_batch(api_url, agent_token, recent[start : start + 200])
+    for batch in _batches(recent):
+        result = post_batch(api_url, agent_token, batch)
         counts["inserted"] += len(result.get("inserted", []))
         counts["duplicate"] += len(result.get("duplicate", []))
         counts["skipped"] += len(result.get("skipped", []))

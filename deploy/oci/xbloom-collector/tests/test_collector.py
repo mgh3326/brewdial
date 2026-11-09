@@ -179,6 +179,61 @@ def test_record_missing_curve_is_forwarded_and_counted_as_skipped(monkeypatch):
     assert all("deviceId" not in pour for pour in sent["recipeVo"]["pourList"])
 
 
+def test_record_missing_table_id_is_forwarded_and_counted_as_skipped(monkeypatch):
+    malformed = raw_record("9000000010", 1_800_000_000_000)
+    del malformed["tableId"]
+    calls = []
+    client = fake_client(monkeypatch, {"result": "success", "gList": [malformed]}, calls)
+    monkeypatch.setattr(collector, "_new_client", lambda *_args: client)
+    batches = []
+
+    counts = collector.collect(dict(BASE_ENV), post_batch=lambda _url, _token, batch: batches.append(batch) or {"inserted": [], "duplicate": [], "skipped": [{"index": 0, "reason": "invalid id"}]}, now=1_800_000_000)
+
+    assert counts["fetched"] == counts["selected"] == counts["skipped"] == 1
+    assert len(batches) == 1
+    assert "tableId" not in batches[0][0]
+
+
+def test_malformed_nested_shapes_never_forward_identifier_fields(monkeypatch):
+    malformed = raw_record("9000000011", 1_800_000_000_000)
+    malformed["recipeVo"] = [{"deviceId": FIXTURE_ONLY}]
+    malformed["lineChartData"] = [{"deviceId": FIXTURE_ONLY}]
+    malformed["recipeName"] = {"memberId": FIXTURE_ONLY}
+    pour_shape = raw_record("9000000012", 1_800_000_000_000)
+    pour_shape["recipeVo"]["pourList"] = ["malformed", {"deviceId": FIXTURE_ONLY}]
+    calls = []
+    client = fake_client(monkeypatch, {"result": "success", "gList": [malformed, pour_shape]}, calls)
+    monkeypatch.setattr(collector, "_new_client", lambda *_args: client)
+    batches = []
+
+    collector.collect(dict(BASE_ENV), post_batch=lambda _url, _token, batch: batches.append(batch) or {"inserted": [], "duplicate": [], "skipped": [{"index": 0, "reason": "malformed"}]}, now=1_800_000_000)
+
+    sent = batches[0]
+    encoded = str(sent)
+    assert "deviceId" not in encoded
+    assert "memberId" not in encoded
+    assert "recipeVo" not in sent[0]
+    assert "lineChartData" not in sent[0]
+    assert sent[1]["recipeVo"]["pourList"] == [{}, {}]
+
+
+def test_batches_respect_serialized_body_size():
+    records = [raw_record(str(9000000100 + i), 1_800_000_000_000) for i in range(2)]
+    for i, record in enumerate(records):
+        record["recipeName"] = f"synthetic-{i}-" + ("x" * 300_000)
+
+    batches = list(collector._batches(records))
+
+    assert [len(batch) for batch in batches] == [1, 1]
+    assert all(len(collector.json.dumps({"records": batch}, ensure_ascii=False).encode("utf-8")) <= collector.MAX_BATCH_BYTES for batch in batches)
+
+
+def test_post_batch_refuses_redirects():
+    handler = collector._NoRedirectHandler()
+
+    assert handler.redirect_request(None, None, 302, "Found", {}, "http://elsewhere.invalid") is None
+
+
 @pytest.mark.parametrize("url", ["http://collector.invalid", "http://user:secret@localhost:8021", "https://localhost:8021/path?token=secret"])
 def test_api_url_must_be_tls_or_loopback_and_cannot_embed_credentials(monkeypatch, url):
     monkeypatch.setattr(collector, "_new_client", lambda *_args: pytest.fail("validate URL before xBloom fetch"))
