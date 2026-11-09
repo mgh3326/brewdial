@@ -163,6 +163,8 @@ class AgentWriteService(
     fun updateFeedback(id: UUID, body: ObjectNode): LinkedHashMap<String, Any?> {
         val row = entityManager.find(Feedback::class.java, id, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
             ?: throw AgentFeedbackMissingException()
+        val dryRunNode = body.get("dryRun")
+        if (dryRunNode != null && !dryRunNode.isBoolean) throw AgentInvalidRangeException("dryRun must be a boolean")
         val currentTimestamp = row.updatedAt?.toString() ?: ""
         if (body.has("expectedUpdatedAt")) {
             val expected = runCatching { java.time.Instant.parse(body.path("expectedUpdatedAt").asText()) }.getOrNull()
@@ -207,7 +209,7 @@ class AgentWriteService(
             }
             changed += key
         }
-        if (body.path("dryRun").asBoolean(false)) return linkedMapOf("dryRun" to true, "before" to before, "after" to after, "changed" to changed)
+        if (dryRunNode?.booleanValue() == true) return linkedMapOf("dryRun" to true, "before" to before, "after" to after, "changed" to changed)
         pending.forEach { (key, value) -> when (key) {
             "ratings" -> row.ratings = value as String?
             "actual" -> row.actual = value as String?

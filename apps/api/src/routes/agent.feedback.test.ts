@@ -164,6 +164,28 @@ test('feedback is pinned to its recipe version and snapshot; edits merge, confli
   expect(afterRows.find((row) => row.id === inserted.id)).toEqual(before)
 })
 
+test('PATCH feedback rejects non-boolean dryRun without changing the row', async () => {
+  const create = await request(agentReq('/api/agent/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ recipeCode: seededCode, rawComment: 'before invalid dryRun', actual: { waterG: 280 } }),
+  }))
+  expect(create.status).toBe(201)
+  const inserted = await create.json() as Record<string, any>
+  createdFeedbackIds.push(inserted.id)
+  const beforeRes = await request(`/api/recipes/${seededCode}/feedback`)
+  const beforeRows = await beforeRes.json() as Array<Record<string, any>>
+  const before = beforeRows.find((row) => row.id === inserted.id)!
+
+  const invalidDryRun = await request(agentReq(`/api/agent/feedback/${inserted.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ dryRun: 'yes', actual: { waterG: 300 } }),
+  }))
+  expect(invalidDryRun.status).toBe(400)
+  const afterRes = await request(`/api/recipes/${seededCode}/feedback`)
+  const afterRows = await afterRes.json() as Array<Record<string, any>>
+  expect(afterRows.find((row) => row.id === inserted.id)).toEqual(before)
+})
+
 // ─── GET /api/agent/preferences/global ───────────────────────────────────────
 
 test('GET /api/agent/preferences/global → 200 with shape {id, likes, dislikes, default_params}', async () => {
