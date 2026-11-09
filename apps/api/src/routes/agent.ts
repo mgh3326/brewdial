@@ -1,8 +1,64 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams } from '@brewdial/shared'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink, insertXBloomBrews, upsertXBloomRecipeLink, listXBloomRecipeLinks, listXBloomBrews, getXBloomBrew, listPriorXBloomBrewMetrics, recipeExists } from '@brewdial/db'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams, validateXBloomBrew, hintXBloomBrewAnomaly, isRecipeCode } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
+
+// POST /agent/brews — accept only normalized records; raw cloud parsing belongs to the collector.
+agentRouter.post('/brews', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'brews') || !Array.isArray((body as Record<string, unknown>).brews)) {
+    return c.json({ error: 'body must contain only a brews array' }, 400)
+  }
+  const brews = (body as { brews: unknown[] }).brews
+  if (brews.length < 1 || brews.length > 100) return c.json({ error: 'brews must contain 1 to 100 items' }, 400)
+  const validated = brews.map(validateXBloomBrew)
+  const errors = validated.flatMap((result, index) => result.ok ? [] : result.errors.map((error) => `brews[${index}].${error}`))
+  if (errors.length) return c.json({ error: 'validation failed', details: errors }, 400)
+  const result = await insertXBloomBrews(getDb(), validated.map((item) => item.ok ? item.value : null).filter((item) => item !== null))
+  return c.json(result, 200)
+})
+
+// GET /agent/brews — summaries only; the 1 Hz curve is available from the detail route.
+agentRouter.get('/brews', async (c) => {
+  const rawLimit = c.req.query('limit')
+  const limit = rawLimit === undefined ? 20 : Number(rawLimit)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json({ error: 'limit must be an integer from 1 to 100' }, 400)
+  const recipeCode = c.req.query('recipeCode')
+  if (recipeCode && !isRecipeCode(recipeCode)) return c.json({ error: 'invalid recipeCode' }, 400)
+  const xbloomRecipeId = c.req.query('xbloomRecipeId')
+  if (xbloomRecipeId && !/^\d{1,32}$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
+  const since = c.req.query('since')
+  if (since && (!Number.isFinite(Date.parse(since)) || Number.isNaN(Date.parse(since)))) return c.json({ error: 'invalid since timestamp' }, 400)
+  const rows = await listXBloomBrews(getDb(), { limit, recipeCode, xbloomRecipeId, since })
+  return c.json(rows)
+})
+
+// GET /agent/brews/:id — full brew, live recipe link, and prior-run advisory hint.
+agentRouter.get('/brews/:id', async (c) => {
+  const brew = await getXBloomBrew(getDb(), c.req.param('id'))
+  if (!brew) return c.json({ error: 'brew not found' }, 404)
+  const baseline = await listPriorXBloomBrewMetrics(getDb(), brew)
+  const { curve: _curve, recipeSnapshot: _snapshot, ...metricInput } = brew
+  const anomalyHint = hintXBloomBrewAnomaly(metricInput, baseline)
+  return c.json({ ...brew, linkedRecipe: brew.recipeCode ? { recipeCode: brew.recipeCode, title: brew.recipeTitle, currentVersion: brew.recipeVersion } : null, anomalyHint })
+})
+
+agentRouter.put('/xbloom-recipe-links/:xbloomRecipeId', async (c) => {
+  const xbloomRecipeId = c.req.param('xbloomRecipeId')
+  if (!/^\d{1,32}$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || typeof (body as Record<string, unknown>).recipeCode !== 'string' || !isRecipeCode((body as { recipeCode: string }).recipeCode)) {
+    return c.json({ error: 'recipeCode is required' }, 400)
+  }
+  const recipeCode = (body as { recipeCode: string }).recipeCode
+  const db = getDb()
+  if (!await recipeExists(db, recipeCode)) return c.json({ error: 'recipe not found' }, 404)
+  await upsertXBloomRecipeLink(db, xbloomRecipeId, recipeCode)
+  return c.json({ xbloomRecipeId, recipeCode })
+})
+
+agentRouter.get('/xbloom-recipe-links', async (c) => c.json(await listXBloomRecipeLinks(getDb())))
 
 // POST /agent/recipes — agent creates a recipe
 // Server hard-codes created_by='agent', owner_id=null, is_official=false, version=1, status='active'.

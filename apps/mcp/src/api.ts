@@ -82,6 +82,16 @@ export async function postJson<T>(
   return request<T>(config, path, { method: 'POST', body: JSON.stringify(body) }, fetchImpl);
 }
 
+/** PUT <path> with a JSON body. Returns the parsed response. */
+export async function putJson<T>(
+  config: ApiConfig,
+  path: string,
+  body: Record<string, unknown>,
+  fetchImpl: typeof fetch = fetch
+): Promise<T> {
+  return request<T>(config, path, { method: 'PUT', body: JSON.stringify(body) }, fetchImpl);
+}
+
 /** PATCH <path> with a JSON body. Returns the parsed response. */
 export async function patchJson<T>(
   config: ApiConfig,

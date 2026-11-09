@@ -146,6 +146,31 @@ export interface Feedback {
   updated_at: Generated<Timestamp>;
 }
 
+export interface Brews {
+  brewed_at: Timestamp;
+  brew_time_sec: number;
+  created_at: Generated<Timestamp>;
+  cup_at_pour_end_g: number;
+  curve: Json;
+  drawdown_sec: number;
+  early_drawdown_g_per_sec: number;
+  final_cup_g: number;
+  pour_end_sec: number;
+  recipe_name: string;
+  recipe_snapshot: Json;
+  retention_g: number;
+  total_water_ml: number;
+  xbloom_brew_id: string;
+  xbloom_recipe_id: string | null;
+}
+
+export interface XbloomRecipeLinks {
+  created_at: Generated<Timestamp>;
+  recipe_code: string;
+  updated_at: Generated<Timestamp>;
+  xbloom_recipe_id: string;
+}
+
 export interface GrinderCalibration {
   anchor_method: string | null;
   app_user_id: string;
@@ -262,6 +287,7 @@ export interface DB {
   bean_purchase_links: BeanPurchaseLinks;
   bean_summaries: BeanSummaries;
   beans: Beans;
+  brews: Brews;
   drippers: Drippers;
   feedback: Feedback;
   grinder_calibration: GrinderCalibration;
@@ -273,4 +299,5 @@ export interface DB {
   saved_recipes: SavedRecipes;
   user_gear: UserGear;
   user_identities: UserIdentities;
+  xbloom_recipe_links: XbloomRecipeLinks;
 }

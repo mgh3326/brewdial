@@ -12,7 +12,10 @@ import {
   handleListGrinders,
   handleSupersedeRecipe,
   handleUpdatePreferences,
-  handleUpdateRecipe
+  handleUpdateRecipe,
+  handleListBrews,
+  handleGetBrew,
+  handleLinkXBloomRecipe
 } from './tools.js';
 import type { ApiConfig } from './config.js';
 
@@ -334,17 +337,74 @@ describe('feedback recipe version context', () => {
       recipe_version: 1, recipe_snapshot: snapshot, recipe_current_version: 2,
       recipeVersion: 1, recipeSnapshot: snapshot, onCurrentVersion: false
     }];
+    const recentBrew = { xbloomBrewId: '123', brewedAt: '2026-01-01T00:00:00.000Z', brewTimeSec: 180, recipeName: 'Fixture', totalWaterMl: 220, finalCupG: 200, retentionG: 20, pourEndSec: 10, cupAtPourEndG: 120, drawdownSec: 20, earlyDrawdownGPerSec: 2 };
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);
-      const body = path.includes('/feedback') ? feedback : path.includes('/preferences') ? null : path.includes('/api/recipes?') ? [recipe] : recipe;
+      const body = path.includes('/feedback') ? feedback : path.includes('/preferences') ? null : path.includes('/api/agent/brews') ? [recentBrew] : path.includes('/api/recipes?') ? [recipe] : recipe;
       return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as unknown as typeof fetch;
     const config = { ...mockConfig, fetchImpl };
     const recipeContext = JSON.parse((await handleGetRecipeContext(config, { code: 'COF-0001' })).content[0].text);
     expect(recipeContext.feedback[0]).toMatchObject({ recipeVersion: 1, onCurrentVersion: false, recipeSnapshot: snapshot });
+    expect(recipeContext.recentBrews).toEqual([recentBrew]);
+    expect(recipeContext.recentBrews[0]).not.toHaveProperty('curve');
     const recent = JSON.parse((await handleGetRecentContext(config, { limit: 1 })).content[0].text);
     expect(recent.recentRecipes[0].feedback[0]).toMatchObject({ recipeVersion: 1, onCurrentVersion: false });
     expect(recent.recentRecipes[0].feedback[0]).not.toHaveProperty('recipeSnapshot');
+  });
+
+  it('keeps recipe context available when the supplementary brew list fails', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url)
+      if (path.includes('/api/agent/brews')) return new Response('{"error":"unavailable"}', { status: 503 })
+      if (path.includes('/feedback')) return new Response('[]', { status: 200 })
+      if (path.includes('/preferences')) return new Response('null', { status: 200 })
+      return new Response(JSON.stringify({
+        id: 'recipe-id', code: 'COF-0001', method: 'v60', title: 'Test', version: 2, params: {}, steps: [],
+        bean_id: null, bean_snapshot: null, intent: null, notes: null, adjustment_from_previous: null, created_by: 'agent',
+        status: 'active', supersedes: null, superseded_by: null, parent_code: null,
+        created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z'
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await handleGetRecipeContext({ ...mockConfig, fetchImpl }, { code: 'COF-0001' })
+    expect(result.isError).toBeUndefined()
+    const context = JSON.parse(result.content[0]!.text)
+    expect(context.recipe.code).toBe('COF-0001')
+    expect(context).not.toHaveProperty('recentBrews')
+  })
+});
+
+describe('xBloom brew tools', () => {
+  it('lists filtered brew summaries through the API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('[]', { status: 200 }));
+    const config = { ...mockConfig, fetchImpl: fetchMock as unknown as typeof fetch };
+    const result = await handleListBrews(config, { limit: 5, recipeCode: 'COF-0001', xbloomRecipeId: '42', since: '2026-01-01T00:00:00.000Z' });
+    expect(result.isError).toBeUndefined();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/agent/brews?limit=5&recipeCode=COF-0001&xbloomRecipeId=42&since=2026-01-01T00%3A00%3A00.000Z');
+  });
+
+  it('downsamples get_brew curves to 60 points unless fullCurve is true', async () => {
+    const curve = Array.from({ length: 120 }, (_, index) => [index * 2, index] as [number, number]);
+    const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({ xbloomBrewId: '42', curve, anomalyHint: { status: 'unusual', advisory: true } }), { status: 200 }));
+    const config = { ...mockConfig, fetchImpl: fetchMock as unknown as typeof fetch };
+    const partial = JSON.parse((await handleGetBrew(config, { xbloomBrewId: '42' })).content[0].text);
+    expect(partial.curve).toHaveLength(60);
+    expect(partial.curve[0]).toEqual(curve[0]);
+    expect(partial.curve[59]).toEqual(curve[119]);
+    const full = JSON.parse((await handleGetBrew(config, { xbloomBrewId: '42', fullCurve: true })).content[0].text);
+    expect(full.curve).toHaveLength(120);
+    expect(full.anomalyHint).toMatchObject({ status: 'unusual', advisory: true });
+  });
+
+  it('sets an xBloom recipe link with PUT', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ xbloomRecipeId: '42', recipeCode: 'COF-0001' }), { status: 200 }));
+    const config = { ...mockConfig, fetchImpl: fetchMock as unknown as typeof fetch };
+    const result = await handleLinkXBloomRecipe(config, { xbloomRecipeId: '42', recipeCode: 'COF-0001' });
+    expect(result.isError).toBeUndefined();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/agent/xbloom-recipe-links/42');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body as string)).toEqual({ recipeCode: 'COF-0001' });
   });
 });
 

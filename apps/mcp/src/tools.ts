@@ -25,6 +25,7 @@ import { findBeans, listBeans, updateBeanAttributes } from './repositories/beans
 import { listGrinders } from './repositories/grinders.js';
 import { listDrippers } from './repositories/drippers.js';
 import { updateGlobalPreferences } from './repositories/preferences.js';
+import { getBrew, linkXBloomRecipe, listBrews } from './repositories/brews.js';
 
 export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -346,5 +347,50 @@ export async function handleGetRecipeContext(
     return jsonResult(context);
   } catch (error) {
     return errorResult(`Error fetching recipe context: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleListBrews(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const filters = args ?? {}
+  const allowed = new Set(['limit', 'recipeCode', 'xbloomRecipeId', 'since'])
+  if (Object.keys(filters).some((key) => !allowed.has(key))) return jsonError({ ok: false, error: '허용되지 않은 필터가 있습니다.' })
+  if (filters.limit !== undefined && (typeof filters.limit !== 'number' || !Number.isInteger(filters.limit) || filters.limit < 1 || filters.limit > 100)) return jsonError({ ok: false, error: 'limit은 1에서 100 사이의 정수여야 합니다.' })
+  if (filters.recipeCode !== undefined && (typeof filters.recipeCode !== 'string' || !isRecipeCode(filters.recipeCode))) return jsonError({ ok: false, error: 'recipeCode 형식이 올바르지 않습니다.' })
+  if (filters.xbloomRecipeId !== undefined && (typeof filters.xbloomRecipeId !== 'string' || !/^\d{1,32}$/.test(filters.xbloomRecipeId))) return jsonError({ ok: false, error: 'xbloomRecipeId 형식이 올바르지 않습니다.' })
+  if (filters.since !== undefined && (typeof filters.since !== 'string' || !Number.isFinite(Date.parse(filters.since)))) return jsonError({ ok: false, error: 'since는 ISO 시각이어야 합니다.' })
+  try {
+    const rows = await listBrews(config, filters as { limit?: number; recipeCode?: string; xbloomRecipeId?: string; since?: string })
+    return jsonResult(rows)
+  } catch (error) {
+    return errorResult(`추출 기록을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+export async function handleGetBrew(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const id = args?.xbloomBrewId
+  const fullCurve = args?.fullCurve === true
+  if (typeof id !== 'string' || !/^\d+$/.test(id)) return jsonError({ ok: false, error: 'xbloomBrewId는 숫자 문자열이어야 합니다.' })
+  if (args?.fullCurve !== undefined && typeof args.fullCurve !== 'boolean') return jsonError({ ok: false, error: 'fullCurve는 boolean이어야 합니다.' })
+  try {
+    const brew = await getBrew(config, id)
+    if (!brew) return jsonResult({ found: false, xbloomBrewId: id })
+    if (!fullCurve && Array.isArray(brew.curve) && brew.curve.length > 60) {
+      const curve = brew.curve
+      brew.curve = Array.from({ length: 60 }, (_, index) => curve[Math.round(index * (curve.length - 1) / 59)]!)
+    }
+    return jsonResult(brew)
+  } catch (error) {
+    return errorResult(`추출 기록을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+export async function handleLinkXBloomRecipe(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const id = args?.xbloomRecipeId
+  const code = args?.recipeCode
+  if (typeof id !== 'string' || !/^\d{1,32}$/.test(id) || typeof code !== 'string' || !isRecipeCode(code)) return jsonError({ ok: false, error: 'xbloomRecipeId와 유효한 recipeCode를 입력하세요.' })
+  try {
+    return jsonResult(await linkXBloomRecipe(config, id, code))
+  } catch (error) {
+    return errorResult(`xBloom 레시피 연결에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`)
   }
 }

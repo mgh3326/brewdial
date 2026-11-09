@@ -14,6 +14,7 @@ import type { ApiConfig } from './config.js';
 import { getRecipeByCode, listRecentRecipes } from './repositories/recipes.js';
 import { listFeedbackForRecipe } from './repositories/feedback.js';
 import { getGlobalPreferences } from './repositories/preferences.js';
+import { listBrews } from './repositories/brews.js';
 
 export interface ContextGuidanceInput {
   preferences: PreferenceDoc | null;
@@ -218,9 +219,10 @@ export async function buildRecipeContext(
 ): Promise<RecipeContext | null> {
   const recipe = await getRecipeByCode(config, code, fetchImpl);
   if (!recipe) return null;
-  const [feedback, preferences] = await Promise.all([
+  const [feedback, preferences, recentBrews] = await Promise.all([
     listFeedbackForRecipe(config, code, fetchImpl),
-    getGlobalPreferences(config, fetchImpl)
+    getGlobalPreferences(config, fetchImpl),
+    listBrews(config, { recipeCode: code, limit: 5 }, fetchImpl).catch(() => [])
   ]);
   const feedbackSummary = summarizeFeedback(feedback);
   const guidance = buildRecipeGuidance({ preferences, recipe, feedbackSummary });
@@ -230,6 +232,7 @@ export async function buildRecipeContext(
     recipe,
     feedback,
     feedbackSummary,
-    guidance
+    guidance,
+    ...(recentBrews.length ? { recentBrews: recentBrews.map(({ xbloomBrewId, brewedAt, brewTimeSec, recipeName, totalWaterMl, finalCupG, retentionG, pourEndSec, cupAtPourEndG, drawdownSec, earlyDrawdownGPerSec }) => ({ xbloomBrewId, brewedAt, brewTimeSec, recipeName, totalWaterMl, finalCupG, retentionG, pourEndSec, cupAtPourEndG, drawdownSec, earlyDrawdownGPerSec })) } : {})
   };
 }

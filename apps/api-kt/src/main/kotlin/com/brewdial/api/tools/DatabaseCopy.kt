@@ -449,7 +449,8 @@ internal class DatabaseCopy(
         val TABLES = listOf(
             "app_users", "beans", "recipes", "feedback", "preferences", "bd_migration_meta",
             "user_identities", "grinders", "drippers", "user_gear", "grinder_calibration",
-            "saved_recipes", "saved_beans", "bean_photos", "bean_purchase_links"
+            "saved_recipes", "saved_beans", "bean_photos", "bean_purchase_links",
+            "brews", "xbloom_recipe_links"
         )
 
         /** Migration history belongs to each side; recipe_code_seq is MySQL's sequence table. */

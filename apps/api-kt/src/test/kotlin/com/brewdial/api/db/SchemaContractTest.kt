@@ -23,7 +23,8 @@ class SchemaContractTest {
         val actual = describeSchema()
         val contract = File(CONTRACT)
         if (System.getenv("UPDATE_SCHEMA_CONTRACT") == "1") contract.writeText(actual)
-        assertEquals(contract.readText(), actual, "schema differs from $CONTRACT (vendor-specific migration missing?)")
+        val expected = contract.readText()
+        assertEquals(expected, actual, "schema differs from $CONTRACT (vendor-specific migration missing?)\nExpected:\n$expected\nActual:\n$actual")
     }
 
     private fun describeSchema(): String = dataSource.connection.use { connection ->
