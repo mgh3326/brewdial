@@ -10,8 +10,8 @@ const brewIds = Array.from({ length: 5 }, (_, index) => String(90000000 + Math.f
 
 function curve(cupAtPourEnd: number, delayed = false): Array<[number, number]> {
   const points: Array<[number, number]> = [[0, 0], [220, cupAtPourEnd]]
-  for (let second = 2; second <= (delayed ? 13 : 7); second += 1) points.push([220, cupAtPourEnd + (second - 1) * 2])
-  if (delayed) points.push([220, 196], [220, 200])
+  for (let second = 2; second <= (delayed ? 11 : 7); second += 1) points.push([220, cupAtPourEnd + (second - 1) * 2])
+  if (delayed) points.push([220, 199], [220, 200])
   else points.push([220, 196], [220, 199], [220, 200], [220, 200])
   return points
 }
@@ -88,9 +88,12 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
   expect(brewRow.finalCupG).toBe(200)
   expect(brewRow.retentionG).toBe(20)
   expect(brewRow.linkedRecipe).toMatchObject({ recipeCode, title: `Brew fixture ${suffix}`, currentVersion: 1 })
-  expect(brewRow.anomalyHint.status).toBe('insufficient_baseline')
+  expect(brewRow.anomalyHint).toEqual({ status: 'insufficient_baseline', baselineCount: 0 })
   expect(brewRow.curve).toHaveLength(baseline[0]!.curve.length)
   expect(brewRow.recipeName).not.toBe(changedDuplicate.recipeName)
+
+  const normal = await request(agentReq(`/api/agent/brews/${brewIds[3]}`))
+  expect((await normal.json() as Record<string, any>).anomalyHint.status).toBe('normal')
 
   const anomaly = await request(agentReq(`/api/agent/brews/${brewIds[4]}`))
   const anomalyRow = await anomaly.json() as Record<string, any>
