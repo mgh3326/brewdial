@@ -52,7 +52,7 @@ export async function listFeedbackByRecipe(db: Kysely<DB>, code: string): Promis
     .innerJoin('recipes', 'recipes.code', 'feedback.recipe_code')
     .select([...FEEDBACK_COLS.map((col) => `feedback.${col}` as any), 'recipes.version as recipe_current_version'] as any)
     .where('feedback.recipe_code', '=', code)
-    .orderBy('created_at', 'desc')
+    .orderBy('feedback.created_at', 'desc')
     .execute() as unknown as FeedbackRow[]
   const normalize = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v
   return rows.map((row) => ({ ...row, ratings: normalize(row.ratings), actual: normalize(row.actual), quick_tags: normalize(row.quick_tags), desired_direction: normalize(row.desired_direction), next_hint: normalize(row.next_hint), recipe_snapshot: normalize(row.recipe_snapshot) }))
