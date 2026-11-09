@@ -176,8 +176,17 @@ describe('validateCreateFeedbackInput', () => {
   });
 
   it('validates feedback updates with null removal and replacement fields', () => {
-    const result = validateUpdateFeedbackInput({ id: 'feedback-id', ratings: { overall: null, sweetness: 3 }, actual: { doseG: null, waterG: 270 }, rawComment: 'new words', expectedUpdatedAt: '2026-11-09T00:00:00.000Z', dryRun: true });
+    const result = validateUpdateFeedbackInput({ id: 'd9428888-19fc-4f5a-a1d2-4db03e782009', ratings: { overall: null, sweetness: 3 }, actual: { doseG: null, waterG: 270 }, rawComment: 'new words', expectedUpdatedAt: '2026-11-09T00:00:00.000Z', dryRun: true });
     expect(result.ok).toBe(true);
+  });
+
+  it('rejects invalid feedback update controls and database-overflowing fields', () => {
+    const id = 'd9428888-19fc-4f5a-a1d2-4db03e782009';
+    expect(validateUpdateFeedbackInput({ id: 'not-a-uuid', comment: 'ok' }).ok).toBe(false);
+    expect(validateUpdateFeedbackInput({ id, expectedUpdatedAt: 'not-a-date' }).ok).toBe(false);
+    expect(validateUpdateFeedbackInput({ id, comment: 'x'.repeat(2001) }).ok).toBe(false);
+    expect(validateUpdateFeedbackInput({ id, rawComment: 'x'.repeat(2001) }).ok).toBe(false);
+    expect(validateUpdateFeedbackInput({ id, quickTags: Array(21).fill('sour') }).ok).toBe(false);
   });
 
   it('rejects when input is not an object', () => {

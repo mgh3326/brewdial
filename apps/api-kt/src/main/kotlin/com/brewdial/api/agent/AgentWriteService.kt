@@ -23,6 +23,8 @@ import java.util.UUID
 class AgentRecipeMissingException(code: String) : RuntimeException("recipe not found: $code")
 class AgentBeanMissingException : RuntimeException()
 class AgentInvalidRangeException(message: String) : RuntimeException(message)
+class AgentFeedbackMissingException : RuntimeException()
+class AgentFeedbackConflictException(val currentUpdatedAt: String) : RuntimeException()
 
 @Service
 class AgentWriteService(
@@ -91,7 +93,27 @@ class AgentWriteService(
 
     @Transactional
     fun createFeedback(recipeCode: String, source: String, body: ObjectNode): LinkedHashMap<String, Any?> {
-        if (readRepository.findRecipeAnyStatus(recipeCode) == null) throw AgentRecipeMissingException(recipeCode)
+        val recipe = entityManager.createQuery("select recipe from Recipe recipe where recipe.code = :code", Recipe::class.java)
+            .setParameter("code", recipeCode).setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+            .resultList.firstOrNull() ?: throw AgentRecipeMissingException(recipeCode)
+        val actual = body.get("actual")
+        if (actual != null && !validActual(actual)) throw AgentInvalidRangeException("invalid actual")
+        val params = parseJson(recipe.params)
+        val snapshot = objectMapper.createObjectNode()
+            .set<JsonNode>("params", params ?: objectMapper.createObjectNode())
+        snapshot.set<JsonNode>("steps", parseJson(recipe.steps) ?: objectMapper.createArrayNode())
+        snapshot.put("method", recipe.method)
+        recipe.beanId?.let { snapshot.put("beanId", it) }
+        params?.path("grind")?.path("perGrinder")?.takeIf { it.isArray }?.let { parts ->
+            val grinderIds = objectMapper.createArrayNode()
+            parts.mapNotNull { it.path("grinderId").takeIf { value -> value.isTextual }?.asText() }.forEach { grinderIds.add(it) }
+            if (!grinderIds.isEmpty) {
+                snapshot.set<JsonNode>("grinderIds", grinderIds)
+                snapshot.put("grinderId", grinderIds[0].asText())
+            }
+        }
+        val portability = parseJson(recipe.dripperPortability)
+        portability?.path("origin")?.path("dripperId")?.takeIf { it.isTextual }?.let { snapshot.set<JsonNode>("dripperId", it) }
         val feedback = Feedback().apply {
             id = UUID.randomUUID()
             this.recipeCode = recipeCode
@@ -104,12 +126,85 @@ class AgentWriteService(
             desiredDirection = body.get("desiredDirection").asStringList()
             nextHint = body.get("nextHint").asStringList()
             this.source = source
+            recipeVersion = recipe.version
+            recipeSnapshot = objectMapper.writeValueAsString(snapshot)
         }
         entityManager.persist(feedback)
         entityManager.flush()
         entityManager.refresh(feedback)
         return readRepository.findFeedback(feedback.id.toString())
             ?: error("inserted feedback ${feedback.id} could not be read")
+    }
+
+    private fun parseJson(value: String?): JsonNode? = value?.let { runCatching { objectMapper.readTree(it) }.getOrNull() }
+
+    private fun validActual(actual: JsonNode): Boolean {
+        if (!actual.isObject) return false
+        val allowed = setOf("tempC", "grind", "timeSec", "doseG", "waterG", "blend")
+        if (actual.fieldNames().asSequence().any { it !in allowed }) return false
+        if (actual.has("tempC") && !actual["tempC"].isNumber) return false
+        if (actual.has("timeSec") && !actual["timeSec"].isNumber) return false
+        if (actual.has("grind") && !actual["grind"].isTextual) return false
+        for (key in listOf("doseG", "waterG")) if (actual.has(key) && (!actual[key].isNumber || !actual[key].asDouble().isFinite() || actual[key].asDouble() <= 0)) return false
+        if (actual.has("blend")) {
+            val blend = actual["blend"]
+            if (!blend.isArray || blend.size() !in 1..5 || blend.any { part ->
+                    !part.isObject || part.fieldNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
+                        (!part.path("beanId").isTextual && !part.path("name").isTextual) ||
+                        (part.path("beanId").isTextual && part.path("beanId").asText().isBlank()) ||
+                        (part.path("name").isTextual && part.path("name").asText().isBlank()) ||
+                        !part.path("grams").isNumber || !part.path("grams").asDouble().isFinite() || part.path("grams").asDouble() <= 0
+                }) return false
+        }
+        return true
+    }
+
+    @Transactional
+    fun updateFeedback(id: UUID, body: ObjectNode): LinkedHashMap<String, Any?> {
+        val row = entityManager.find(Feedback::class.java, id, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+            ?: throw AgentFeedbackMissingException()
+        val currentTimestamp = row.updatedAt?.toString() ?: ""
+        if (body.has("expectedUpdatedAt")) {
+            val expected = runCatching { java.time.Instant.parse(body.path("expectedUpdatedAt").asText()) }.getOrNull()
+                ?: throw AgentInvalidRangeException("expectedUpdatedAt must be a valid timestamp string")
+            if (expected != row.updatedAt) throw AgentFeedbackConflictException(currentTimestamp)
+        }
+        val before = readRepository.findFeedback(id.toString()) ?: throw AgentFeedbackMissingException()
+        val after = LinkedHashMap(before)
+        val changed = mutableListOf<String>()
+        for ((key, column) in listOf("ratings" to "ratings", "actual" to "actual")) if (body.has(key)) {
+            val incoming = body.get(key)
+            if (!incoming.isObject) throw AgentInvalidRangeException("$key must be an object")
+            val merged = parseJson(if (key == "ratings") row.ratings else row.actual)?.takeIf { it.isObject }?.deepCopy() as? ObjectNode
+                ?: objectMapper.createObjectNode()
+            incoming.fields().forEachRemaining { (field, value) -> if (value.isNull) merged.remove(field) else merged.set<JsonNode>(field, value) }
+            val serialized = if (merged.isEmpty) null else objectMapper.writeValueAsString(merged)
+            if (key == "ratings") row.ratings = serialized else row.actual = serialized
+            after[column] = if (merged.isEmpty) null else merged
+            changed += key
+        }
+        val scalarFields = mapOf("rawComment" to "raw_comment", "comment" to "comment", "quickTags" to "quick_tags", "desiredDirection" to "desired_direction", "nextHint" to "next_hint")
+        for ((key, column) in scalarFields) if (body.has(key)) {
+            val value = body.get(key)
+            if (key in listOf("rawComment", "comment") && !value.isNull && (!value.isTextual || value.asText().length > 2000)) throw AgentInvalidRangeException("$key must be a string of at most 2000 characters or null")
+            if (key == "quickTags" && !value.isNull && (!value.isArray || value.size() > 20)) throw AgentInvalidRangeException("quickTags must contain at most 20 items or be null")
+            when (key) {
+                "rawComment" -> row.rawComment = value.takeUnless { it.isNull }?.asText()
+                "comment" -> row.comment = value.takeUnless { it.isNull }?.asText()
+                "quickTags" -> row.quickTags = value.takeUnless { it.isNull }?.map { it.asText() }
+                "desiredDirection" -> row.desiredDirection = value.takeUnless { it.isNull }?.map { it.asText() }
+                "nextHint" -> row.nextHint = value.takeUnless { it.isNull }?.map { it.asText() }
+            }
+            after[column] = if (value.isNull) null else when (key) {
+                "rawComment", "comment" -> value.asText()
+                else -> value
+            }
+            changed += key
+        }
+        if (body.path("dryRun").asBoolean(false)) return linkedMapOf("dryRun" to true, "before" to before, "after" to after, "changed" to changed)
+        entityManager.flush()
+        entityManager.refresh(row)
+        return readRepository.findFeedback(id.toString()) ?: throw AgentFeedbackMissingException()
     }
 
     @Transactional

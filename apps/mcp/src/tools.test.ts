@@ -298,21 +298,22 @@ describe('handleCreateFeedback', () => {
 });
 
 describe('handleUpdateFeedback', () => {
+  const feedbackId = 'd9428888-19fc-4f5a-a1d2-4db03e782009';
   it('validates updates and forwards merge controls', async () => {
-    const r = await handleUpdateFeedback(mockConfig, { id: 'feedback-1', actual: { doseG: null, waterG: 300 }, ratings: { overall: null, sweetness: 3 }, dryRun: true });
+    const r = await handleUpdateFeedback(mockConfig, { id: feedbackId, actual: { doseG: null, waterG: 300 }, ratings: { overall: null, sweetness: 3 }, dryRun: true });
     expect(r.content[0].text).toContain('Error updating feedback');
     expect(r.content[0].text).not.toContain('Invalid feedback update');
 
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ dryRun: true, before: {}, after: {}, changed: ['actual'] }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const ok = await handleUpdateFeedback(mockConfig, { id: 'feedback-1', actual: { waterG: 300 }, dryRun: true });
+    const ok = await handleUpdateFeedback(mockConfig, { id: feedbackId, actual: { waterG: 300 }, dryRun: true });
     expect(JSON.parse(ok.content[0].text)).toMatchObject({ ok: true, dryRun: true, changed: ['actual'] });
-    expect(fetchMock.mock.calls[0][0]).toContain('/api/agent/feedback/feedback-1');
+    expect(fetchMock.mock.calls[0][0]).toContain(`/api/agent/feedback/${feedbackId}`);
   });
 
   it('returns stale update conflicts from the API', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'version_conflict', currentUpdatedAt: '2026-11-09T00:00:00.000Z' }), { status: 409 })));
-    const r = await handleUpdateFeedback(mockConfig, { id: 'feedback-1', expectedUpdatedAt: '2020-01-01T00:00:00.000Z', rawComment: 'later' });
+    const r = await handleUpdateFeedback(mockConfig, { id: feedbackId, expectedUpdatedAt: '2020-01-01T00:00:00.000Z', rawComment: 'later' });
     expect(JSON.parse(r.content[0].text)).toMatchObject({ error: 'version_conflict', currentUpdatedAt: '2026-11-09T00:00:00.000Z' });
   });
 });

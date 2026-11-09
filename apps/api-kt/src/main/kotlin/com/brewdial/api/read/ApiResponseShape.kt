@@ -16,7 +16,8 @@ object ApiResponseShape {
     val feedbackColumns: List<String> = listOf(
         "id", "recipe_code", "bean_id", "owner_id", "ratings", "actual", "comment",
         "raw_comment", "quick_tags", "desired_direction", "next_hint", "source",
-        "created_at", "updated_at"
+        "created_at", "updated_at", "recipe_version", "recipe_snapshot", "recipe_current_version",
+        "recipeVersion", "recipeSnapshot", "onCurrentVersion"
     )
 
     val beanColumns: List<String> = listOf(

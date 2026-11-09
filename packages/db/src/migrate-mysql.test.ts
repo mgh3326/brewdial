@@ -49,15 +49,16 @@ test('backslash escapes inside string literals are honored', () => {
   expect(splitMysqlScript("select 'a\\';b'; select 2;")).toEqual(["select 'a\\';b'", 'select 2'])
 })
 
-test('the baseline migration splits into statements with no client directives left', async () => {
+test('migrations split into statements with no client directives left', async () => {
   const names = await listMysqlMigrations(migrationsDir)
-  expect(names).toEqual(['001_baseline.sql'])
-  const text = await readFile(path.join(migrationsDir, names[0]), 'utf8')
-  const statements = splitMysqlScript(text)
-  expect(statements.some((s) => /^delimiter/i.test(s))).toBe(false)
-  expect(statements.filter((s) => /^create trigger /i.test(s))).toHaveLength(15)
-  expect(statements.filter((s) => /^create table /i.test(s)).length).toBeGreaterThan(10)
-  expect(statements.filter((s) => /^create sql security invoker view bean_summaries/i.test(s))).toHaveLength(1)
+  expect(names).toEqual(['001_baseline.sql', '002_feedback_recipe_snapshot.sql'])
+  const scripts = await Promise.all(names.map((name) => readFile(path.join(migrationsDir, name), 'utf8')))
+  const statements = scripts.map(splitMysqlScript)
+  expect(statements.flat().some((s) => /^delimiter/i.test(s))).toBe(false)
+  expect(statements[0].filter((s) => /^create trigger /i.test(s))).toHaveLength(15)
+  expect(statements[0].filter((s) => /^create table /i.test(s)).length).toBeGreaterThan(10)
+  expect(statements[0].filter((s) => /^create sql security invoker view bean_summaries/i.test(s))).toHaveLength(1)
+  expect(statements[1]).toHaveLength(1)
 })
 
 test('checksums are stable and content-sensitive', () => {

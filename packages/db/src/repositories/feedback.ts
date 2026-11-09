@@ -183,9 +183,10 @@ export async function updateFeedback(db: Kysely<DB>, id: string, patch: UpdateFe
   return db.transaction().execute(async (trx) => {
     const current = await trx.selectFrom('feedback').select(FEEDBACK_COLS).where('id', '=', id).forUpdate().executeTakeFirst() as unknown as FeedbackRow | undefined
     if (!current) throw Object.assign(new Error('feedback not found'), { code: 'NOT_FOUND' })
+    const millis = (v: unknown) => new Date(v as string | Date).getTime()
     const iso = (v: unknown) => v instanceof Date ? v.toISOString() : String(v)
     const currentUpdatedAt = iso(current.updated_at)
-    if (options.expectedUpdatedAt && iso(options.expectedUpdatedAt) !== currentUpdatedAt) throw Object.assign(new Error('feedback version conflict'), { code: 'VERSION_CONFLICT', currentUpdatedAt })
+    if (options.expectedUpdatedAt && millis(options.expectedUpdatedAt) !== millis(current.updated_at)) throw Object.assign(new Error('feedback version conflict'), { code: 'VERSION_CONFLICT', currentUpdatedAt })
     const parse = (v: unknown): Record<string, unknown> => typeof v === 'string' ? JSON.parse(v) : (v && typeof v === 'object' ? { ...(v as Record<string, unknown>) } : {})
     const before = { ...current, ratings: current.ratings == null ? null : parse(current.ratings), actual: current.actual == null ? null : parse(current.actual) }
     const after: Record<string, unknown> = { ...before }

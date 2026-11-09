@@ -41,6 +41,13 @@ class Feedback {
     @Column(name = "raw_comment")
     var rawComment: String? = null
 
+    @Column(name = "recipe_version")
+    var recipeVersion: Int? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "recipe_snapshot")
+    var recipeSnapshot: String? = null
+
     @Column(name = "quick_tags")
     var quickTags: List<String>? = null
 

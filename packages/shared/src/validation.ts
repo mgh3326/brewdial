@@ -860,7 +860,7 @@ export function validateUpdateFeedbackInput(input: unknown): ValidationResult<Up
   const errors: string[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
   const id = input.id;
-  if (typeof id !== 'string' || !id) errors.push('id is required');
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) errors.push('id must be a UUID');
   const value: UpdateFeedbackInput = { id: typeof id === 'string' ? id : '' };
   if (input.ratings !== undefined) {
     if (!isPlainObject(input.ratings)) errors.push('ratings must be an object');
@@ -895,10 +895,12 @@ export function validateUpdateFeedbackInput(input: unknown): ValidationResult<Up
   }
   for (const key of ['rawComment', 'comment'] as const) if (input[key] !== undefined) {
     if (input[key] !== null && typeof input[key] !== 'string') errors.push(`${key} must be a string or null`);
+    else if (typeof input[key] === 'string' && input[key].length > 2000) errors.push(`${key} must be at most 2000 characters`);
     else value[key] = input[key] as string | null;
   }
   for (const key of ['quickTags', 'desiredDirection', 'nextHint'] as const) if (input[key] !== undefined) {
     if (input[key] !== null && !isStringArray(input[key])) errors.push(`${key} must be a string array or null`);
+    else if (key === 'quickTags' && Array.isArray(input[key]) && input[key].length > 20) errors.push('quickTags must contain at most 20 items');
     else if (key === 'quickTags' && Array.isArray(input[key])) {
       const invalid = input[key].filter((tag) => !QUICK_FEEDBACK_TAGS.includes(tag as QuickFeedbackTag));
       if (invalid.length) errors.push(`quickTags contains unknown values: ${invalid.join(', ')}`);
@@ -907,7 +909,7 @@ export function validateUpdateFeedbackInput(input: unknown): ValidationResult<Up
     else value.quickTags = input[key] as null;
   }
   if (input.expectedUpdatedAt !== undefined) {
-    if (typeof input.expectedUpdatedAt !== 'string' || !input.expectedUpdatedAt) errors.push('expectedUpdatedAt must be a timestamp string');
+    if (typeof input.expectedUpdatedAt !== 'string' || !input.expectedUpdatedAt || !Number.isFinite(Date.parse(input.expectedUpdatedAt))) errors.push('expectedUpdatedAt must be a valid timestamp string');
     else value.expectedUpdatedAt = input.expectedUpdatedAt;
   }
   if (input.dryRun !== undefined) {
