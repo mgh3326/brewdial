@@ -4,9 +4,10 @@ import { closeDb, getDb } from '@brewdial/db'
 import { request } from '../test/request.js'
 
 const suffix = randomUUID().replace(/-/g, '').slice(0, 8)
-const recipeCode = `COF-${String(1000 + Math.floor(Math.random() * 9000)).padStart(4, '0')}`
+const recipeCode = `COF-0000${Date.now()}${Math.floor(Math.random() * 1_000_000)}`
 const xbloomRecipeId = String(80000000 + Math.floor(Math.random() * 10000000))
 const brewIds = Array.from({ length: 5 }, (_, index) => String(90000000 + Math.floor(Math.random() * 1000000) + index))
+let recipeInserted = false
 
 function curve(cupAtPourEnd: number, delayed = false): Array<[number, number]> {
   const points: Array<[number, number]> = [[0, 0], [220, cupAtPourEnd]]
@@ -36,6 +37,7 @@ beforeAll(async () => {
   process.env.AGENT_TOKEN = 'test-token'
   const db = getDb()
   await db.insertInto('recipes').values({ code: recipeCode, method: 'v60', title: `Brew fixture ${suffix}`, status: 'active', owner_id: null }).execute()
+  recipeInserted = true
   await db.deleteFrom('brews').where('xbloom_brew_id', 'in', brewIds).execute()
 })
 
@@ -43,7 +45,7 @@ afterAll(async () => {
   const db = getDb()
   await db.deleteFrom('xbloom_recipe_links').where('xbloom_recipe_id', '=', xbloomRecipeId).execute()
   await db.deleteFrom('brews').where('xbloom_brew_id', 'in', brewIds).execute()
-  await db.deleteFrom('recipes').where('code', '=', recipeCode).execute()
+  if (recipeInserted) await db.deleteFrom('recipes').where('code', '=', recipeCode).execute()
   await closeDb()
 })
 
