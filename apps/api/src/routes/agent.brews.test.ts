@@ -56,12 +56,65 @@ afterAll(async () => {
 test('agent auth is required on every new brews and recipe-link route', async () => {
   const cases: Array<[string, string, unknown?]> = [
     ['POST', '/api/agent/brews', { brews: [brew(brewIds[0], '2026-01-01T00:00:00.000Z')] }],
+    ['POST', '/api/agent/xbloom/brew-records', { records: [{ tableId: '1' }] }],
     ['GET', '/api/agent/brews'], ['GET', `/api/agent/brews/${brewIds[0]}`],
     ['PUT', `/api/agent/xbloom-recipe-links/${xbloomRecipeId}`, { recipeCode }], ['GET', '/api/agent/xbloom-recipe-links']
   ]
   for (const [method, path, body] of cases) {
     const response = await request(new Request(`http://localhost${path}`, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }))
     expect(response.status, `${method} ${path}`).toBe(401)
+  }
+})
+
+test('POST /agent/xbloom/brew-records strips raw identifiers, skips bad records, and is idempotent', async () => {
+  const rawId = `7${Date.now()}${Math.floor(Math.random() * 1_000_000)}`
+  const marker = 'fixture-only-device-marker'
+  const raw = {
+    tableId: rawId,
+    createTimeStamp: Date.UTC(2026, 2, 3, 4, 5, 6),
+    brewTime: 180,
+    recipeName: 'Synthetic hand-made fixture',
+    recipeVo: {
+      tableId: `${rawId}1`, dose: 18, grinderSize: 42, rpm: 80, cupType: 2,
+      isEnableBypassWater: 1, bypassVolume: 100, bypassTemp: 80, pourList: []
+    },
+    lineChartData: [[0, 0], [220, 120], [220, 196], [220, 200]],
+    deviceId: marker,
+    machineId: marker,
+    device_id: marker,
+    memberUsedRecipesId: marker,
+    pid: marker,
+    mac: marker,
+    memberId: marker,
+    accountId: marker
+  }
+  const records = [raw, { ...raw, tableId: `${rawId}2`, brewTime: 0 }, { ...raw, tableId: `${rawId}3`, lineChartData: '{broken' }]
+  const first = await request(agentReq('/api/agent/xbloom/brew-records', { method: 'POST', body: JSON.stringify({ records }) }))
+  const firstBody = await first.json() as { inserted: string[]; duplicate: string[]; skipped: Array<{ index: number; reason: string }> }
+  expect(first.status, JSON.stringify(firstBody)).toBe(200)
+  firstBody.inserted.forEach((id) => insertedBrewIds.add(id))
+  expect(firstBody.inserted).toEqual([rawId])
+  expect(firstBody.duplicate).toEqual([])
+  expect(firstBody.skipped).toEqual([
+    { index: 1, reason: 'broken_run' },
+    { index: 2, reason: 'lineChartData must be valid JSON' }
+  ])
+  const firstJson = JSON.stringify(firstBody)
+  expect(firstJson).not.toContain(marker)
+  expect(firstJson).not.toContain('deviceId')
+  expect(firstJson).not.toContain('machineId')
+  expect(firstJson).not.toContain('memberUsedRecipesId')
+  expect(firstJson).not.toContain('accountId')
+
+  const stored = await getDb().selectFrom('brews').selectAll().where('xbloom_brew_id', '=', rawId).executeTakeFirstOrThrow()
+  expect(JSON.stringify(stored)).not.toContain(marker)
+  expect(stored['recipe_name']).toBe('Synthetic hand-made fixture')
+  const second = await request(agentReq('/api/agent/xbloom/brew-records', { method: 'POST', body: JSON.stringify({ records: [raw] }) }))
+  expect(await second.json()).toEqual({ inserted: [], duplicate: [rawId], skipped: [] })
+
+  for (const records of [[], Array.from({ length: 201 }, (_, index) => ({ ...raw, tableId: `${rawId}${index}` }))]) {
+    const response = await request(agentReq('/api/agent/xbloom/brew-records', { method: 'POST', body: JSON.stringify({ records }) }))
+    expect(response.status).toBe(400)
   }
 })
 
