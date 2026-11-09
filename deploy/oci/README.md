@@ -1,72 +1,32 @@
-# OCI deploy (M1) — BrewDial backend
+# OCI 배포 (M1) — BrewDial 백엔드
 
-Self-hosted backend host for the Supabase→OCI migration (epic ROB-618 / M1 ROB-619).
-Full runbook: `docs/superpowers/plans/2026-06-23-m1-oci-provisioning-runbook.md`.
+OCI 프로덕션 백엔드는 shiftgate 뒤에서 실행되는 Node API이며 HeatWave MySQL에 연결한다. 전체 전환 기록은 `docs/runbooks/oci-heatwave-cutover.md`를 참고한다.
 
-## Live host (2026-06-26)
-- **Oracle Linux 9.7, aarch64**, 2 vCPU / 10 GB. SSH: `opc@<host>`.
-- **PostgreSQL 17** (`postgresql-17.service`, enabled). DB `brewdial`, role `brewdial_app` (owner), `pgcrypto`. Bound to `127.0.0.1` only; `pg_hba` uses `scram-sha-256` for localhost.
-- **Node 24 (LTS) + pnpm 10.33.2.**
-- Repo at `/opt/brewdial`; backend chain (`@brewdial/shared` → `@brewdial/db` → `@brewdial/api`) built to `dist`. Migrations 001/002/003 applied (16 tables, `resolve_app_user`).
-- **`brewdial-api.service`** (this dir) running, env from `/etc/brewdial/api.env` (600). Binds `127.0.0.1:3020`. `GET /api/health` + `/api/db/health` green.
-- **firewalld:** only `ssh` open (3020/5432 NOT exposed). `cloudflared` installed.
+## 현재 프로덕션
 
-## k3s runtime (production since 2026-08-06 — ROB-1214) — DEPRECATED
+- Node API 서비스: `brewdial-api-mysql`, `127.0.0.1:8021`.
+- 배포: Dagu가 `production` 태그를 따라 새 이미지를 배포한다. CI에서 `main`을 빌드하고, 릴리스 시 `production` 태그를 이동한다.
+- shiftgate는 Docker 컨테이너를 HAProxy 뒤에서 blue-green 방식으로 운영한다. 외부 요청은 cloudflared를 통해 전달된다.
+- HeatWave 백업 및 복구 검증 타이머와 Mac pull 작업이 운영 중이다.
 
-Being replaced by shiftgate (ROB-1435): see `shiftgate/` and
-`docs/runbooks/oci-heatwave-cutover.md`. The manifests stay until cutover is
-complete so k3s remains a rollback target.
+## 은퇴한 환경: k3s 및 PostgreSQL
 
-Public API traffic is served by **k3s variant B** (pod network + NodePort
-30020). Manifests + full runbook: `k3s/` (`k3s/RUNBOOK.md`). Image builds:
-`.github/workflows/image.yml`. Always deploy by digest, never `:latest`.
+k3s와 PostgreSQL은 프로덕션에서 은퇴했다. PostgreSQL은 마지막 덤프 후 중지 및 비활성화되었으며 데이터 디렉터리는 운영자 결정에 따른 제거 전까지 보존한다. 아래 저장소 경로와 도구는 이전 환경을 위한 역사적 운영 자료다.
 
-**Confirmed at cutover (see RUNBOOK §0 for the full precondition list):**
-cloudflared ingress → `http://127.0.0.1:30020`; host Postgres also listens on
-bridge IP `10.42.0.1` with pod-CIDR `pg_hba`; systemd `brewdial-api` is still
-left running on `:3020` as a reversible fallback (not stopped — observation
-period is an operator decision).
+### 이전 OCI 호스트 및 systemd 구성
 
-## systemd path (fallback / recovery — not the public path)
+이전 구성은 Oracle Linux 9.7 (aarch64), Node 24 및 pnpm 10.33.2를 사용했다. `/opt/brewdial`의 백엔드와 `brewdial-api.service`는 `/etc/brewdial/api.env`를 사용해 `127.0.0.1:3020`에 바인딩했다. PostgreSQL 17은 로컬에서만 수신했고, cloudflared가 외부 요청을 전달했다. 이 systemd 서비스는 현재 프로덕션 경로가 아니다.
 
-The systemd unit below remains installed and was **not** disabled at cutover.
-Use it for emergency traffic rollback (re-point cloudflared to `:3020`) or
-manual rebuilds. It is **not** the Phase 2 k3s deployment path.
+### 배포 이력
 
-```bash
-# from a local checkout of main:
-rsync -az --exclude .git --exclude node_modules --exclude dist --exclude .superpowers \
-  -e "ssh -i <key>" ./ opc@<host>:/opt/brewdial/
-ssh -i <key> opc@<host> 'cd /opt/brewdial && pnpm install && \
-  pnpm --filter @brewdial/shared --filter @brewdial/db --filter @brewdial/api build && \
-  sudo systemctl restart brewdial-api && curl -s localhost:3020/api/health'
-# schema changes:
-ssh -i <key> opc@<host> 'cd /opt/brewdial/packages/db && \
-  DATABASE_URL=$(grep ^DATABASE_URL /etc/brewdial/api.env|cut -d= -f2-) pnpm exec node-pg-migrate -m migrations -j sql up'
+`deploy-oci.yml`은 이미지를 GHCR에 빌드 및 게시한다. 릴리스는 `main`을 `production`으로 fast-forward 하여 수행한다:
+
+```sh
+git push origin main:production
 ```
 
-## Remaining (needs operator action)
-1. **Cloudflare Tunnel** (interactive — your CF account + domain): `cloudflared tunnel login` → `cloudflared tunnel create brewdial` → write `~/.cloudflared/config.yml` (see `cloudflared-config.example.yml`) → `cloudflared tunnel route dns brewdial api.brewdial.<domain>` → `sudo cloudflared service install && sudo systemctl enable --now cloudflared`.
-2. **Backups (ROB-630):** implemented as `backup.sh` + `brewdial-backup.{service,timer}`
-   (`pg_dump -Fc` + globals, retention 7 daily / 4 weekly) → box-local `/var/backups/brewdial`,
-   pulled off-box to a Mac (`deploy/mac/`), with a **verified-restore gate** `verify-restore.sh`
-   + `brewdial-verify.timer` (the gate before decommissioning Supabase). Off-box target is the
-   Mac (not OCI Object Storage) to stay within the free tier. Full procedure + DR steps:
-   `docs/superpowers/plans/2026-06-29-rob-630-backup-restore-runbook.md`.
-3. **shiftgate deploy (ROB-1435, replaces k3s):** `.github/workflows/deploy-oci.yml`
-   builds the image, pushes it to GHCR and runs `shiftgate deploy brewdial-api
-   --digest <digest>` on the host over the tailnet. Host config:
-   `shiftgate/services.yaml`. Cutover, rollback and k3s removal:
-   `docs/runbooks/oci-heatwave-cutover.md`.
-4. **Phase 4 (HeatWave):** `heatwave-phase4.sh` runs the stop, copy, verify and start
-   window, and the rollback. `backup-heatwave.sh` and `verify-restore-heatwave.sh` replace the
-   PostgreSQL scripts behind the same timers when PostgreSQL retires. Procedure:
-   `docs/runbooks/oci-heatwave-cutover.md` §4.3–§4.7.
-5. **k3s CI deploy (ROB-1214 Phase 2+, DEPRECATED):** `.github/workflows/deploy-oci-k3s.yml`
-   (manual dispatch only).
-   **`main` = CI baseline** (images). **`production` push = release**
-   (fast-forward only: `git push origin main:production`). Rollback =
-   `gh workflow run deploy-oci-k3s.yml -f git_sha=<prior>`. Full procedure:
-   `k3s/RUNBOOK.md` §7. After the shiftgate cutover this only changes the k3s
-   image: traffic returns to k3s only when cloudflared points back at `:30020`
-   (`docs/runbooks/oci-heatwave-cutover.md` §2).
+Dagu는 `production` 태그를 감시하고 `brewdial-api-mysql`을 배포한다. 서비스 상태와 완료된 전환 절차는 `docs/runbooks/oci-heatwave-cutover.md`를 참고한다.
+
+- `k3s/`와 `.github/workflows/deploy-oci-k3s.yml`: deprecated k3s 배포 및 복구 자료.
+- PostgreSQL용 systemd, 백업 및 마이그레이션 스크립트: 이전 환경 지원용.
+- `heatwave-phase4.sh`: 완료된 전환을 위한 절차 스크립트이며, 향후 실행 작업이 아니다.
