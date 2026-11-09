@@ -72,8 +72,8 @@ table beans
   source_url null
   updated_at not null
 table brews
-  brewed_at not null
   brew_time_sec not null
+  brewed_at not null
   created_at not null
   cup_at_pour_end_g not null
   curve not null
