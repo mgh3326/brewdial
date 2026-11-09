@@ -24,6 +24,9 @@ import {
   handleUpdatePreferences,
   handleUpdateBeanAttributes,
   handleUpdateRecipe,
+  handleListBrews,
+  handleGetBrew,
+  handleLinkXBloomRecipe,
   type ToolResult
 } from './tools.js';
 import { BEAN_ATTRS_SOURCES, BEAN_FLAVOR_CATEGORIES, TASTE_TAGS } from '@brewdial/shared';
@@ -351,6 +354,38 @@ const TOOLS: Tool[] = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'list_brews',
+    title: '추출 기록 목록',
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    description: 'xBloom 추출 기록을 최신순으로 조회합니다. brewedAt은 ISO 8601, brewTimeSec와 pourEndSec, drawdownSec는 초, 물은 ml, 컵 무게와 유지량은 g, 초기 드로다운 속도는 g/s입니다. 물의 누적량에는 바이패스 물이 포함됩니다. 이상 징후 정보는 상세 조회에서 확인하며 참고용입니다.',
+    inputSchema: { type: 'object', properties: {
+      limit: { type: 'integer', minimum: 1, maximum: 100, description: '조회 개수 (기본 20, 최대 100)' },
+      recipeCode: { type: 'string', description: '연결된 BrewDial 레시피 코드 COF-NNNN' },
+      xbloomRecipeId: { type: 'string', description: 'xBloom 레시피 tableId' },
+      since: { type: 'string', description: '이 ISO 8601 시각 이후에 추출한 기록' }
+    } }
+  },
+  {
+    name: 'get_brew',
+    title: '추출 기록 상세',
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    description: 'xBloom 추출 기록 하나와 1 Hz 곡선, 저장된 파생 지표, 연결된 레시피, 같은 xBloom 레시피의 이전 기록에 대한 이상 징후 힌트를 조회합니다. brewedAt은 ISO 8601, brewTimeSec와 pourEndSec, drawdownSec는 초, 물은 ml, 컵 무게와 유지량은 g, 초기 드로다운 속도는 g/s입니다. 누적 물에는 바이패스 물이 포함됩니다. 힌트는 참고용입니다. 클라우드 1 Hz 곡선만으로는 필터가 밀린 원인 등을 약하게 구분하므로 unusual은 운영자에게 확인할 단서이지 결론이 아닙니다. 곡선은 기본 최대 60개 점이며 fullCurve=true로 전체를 받을 수 있습니다.',
+    inputSchema: { type: 'object', properties: {
+      xbloomBrewId: { type: 'string', description: 'xBloom 추출 기록 tableId' },
+      fullCurve: { type: 'boolean', description: 'true이면 전체 1 Hz 곡선을 반환합니다. 기본 false는 최대 60개 점으로 줄입니다.' }
+    }, required: ['xbloomBrewId'] }
+  },
+  {
+    name: 'link_xbloom_recipe',
+    title: 'xBloom 레시피 연결',
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    description: 'xBloom recipe tableId를 BrewDial 레시피 코드에 연결하거나 기존 연결을 바꿉니다. 연결은 brew read 시점에 적용되므로 저장된 과거 추출 기록에도 즉시 반영됩니다.',
+    inputSchema: { type: 'object', properties: {
+      xbloomRecipeId: { type: 'string', description: 'xBloom 레시피 tableId' },
+      recipeCode: { type: 'string', description: 'BrewDial 레시피 코드 COF-NNNN' }
+    }, required: ['xbloomRecipeId', 'recipeCode'] }
+  },
+  {
     name: 'get_recent_context',
 
     title: 'Get Recent Context',
@@ -510,6 +545,9 @@ export function createBrewdialMcpServer(
         case 'list_drippers': result = await handleListDrippers(api, a); break;
         case 'get_recent_context': result = await handleGetRecentContext(api, a); break;
         case 'get_recipe_context': result = await handleGetRecipeContext(api, a); break;
+        case 'list_brews': result = await handleListBrews(api, a); break;
+        case 'get_brew': result = await handleGetBrew(api, a); break;
+        case 'link_xbloom_recipe': result = await handleLinkXBloomRecipe(api, a); break;
         case 'create_feedback': result = await handleCreateFeedback(api, a); break;
         case 'update_feedback': result = await handleUpdateFeedback(api, a); break;
         case 'update_preferences': result = await handleUpdatePreferences(api, a); break;

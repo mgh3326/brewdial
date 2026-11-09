@@ -124,6 +124,19 @@ export interface RecipeContext {
   feedback: FeedbackDoc[];
   feedbackSummary: FeedbackSummary;
   guidance: string[];
+  recentBrews?: Array<{
+    xbloomBrewId: string;
+    brewedAt: string;
+    brewTimeSec: number;
+    recipeName: string;
+    totalWaterMl: number;
+    finalCupG: number;
+    retentionG: number;
+    pourEndSec: number;
+    cupAtPourEndG: number;
+    drawdownSec: number;
+    earlyDrawdownGPerSec: number;
+  }>;
 }
 
 export interface RecipeContextResponse {
