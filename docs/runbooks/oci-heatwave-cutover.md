@@ -23,6 +23,8 @@
 
 ## 1. 호스트 준비
 
+이 절은 전환 당시의 호스트 준비 기록이다. 현재 프로덕션에서 사용할 pull 명령은 7번 항목에 표시된 `brewdial-api-mysql` 대상이다.
+
 1. **Docker.** k3s는 자체 containerd를 제공하므로 Docker를 별도로 설치한다.
    Oracle Linux 9 (aarch64)용 `docker-ce`를 설치하고 `sudo systemctl
    enable --now docker`를 실행한다.
@@ -74,8 +76,8 @@
    sudo sh -c 'grep -E "^(DATABASE_URL|AGENT_TOKEN|SENTRY_DSN)=" /etc/brewdial/api.env > /etc/shiftgate/brewdial-api.env'
    sudo grep -c '^DATABASE_URL=postgres://' /etc/shiftgate/brewdial-api.env   # expect 1
    ```
-   컨테이너는 host networking을 사용하므로 `DATABASE_URL`에는 k3s bridge IP
-   `10.42.0.1`이 아니라 `127.0.0.1`을 사용한다. `PORT`, `HOST`, `GIT_SHA`는 파일에
+   컨테이너는 host networking을 사용하므로 `DATABASE_URL`에는 k3s bridge IP가
+   아니라 `127.0.0.1`을 사용한다. `PORT`, `HOST`, `GIT_SHA`는 파일에
    넣지 않는다. shiftgate가 색상 포트로 `PORT`를 설정하고, services.yaml이 `HOST`를
    설정하며, 이미지에 `GIT_SHA`가 포함된다.
 6. **레지스트리 로그인.** GHCR 패키지가 비공개라면 shiftgate 실행 사용자로 한 번
@@ -83,11 +85,13 @@
 7. **Pull 방식 배포 (CI에서 호스트에 접근하지 않음).** CI는 이미지를 빌드 및 푸시하고
    릴리스 시 `production` 태그를 이동한다. 호스트가 해당 태그를 따라간다. 이 호스트의
    Dagu는 몇 분마다 다음 명령을 실행한다:
-   `sudo shiftgate follow brewdial-api --tag production`. 배포 사용자, SSH key,
+   `sudo shiftgate follow brewdial-api-mysql --tag production`. 배포 사용자, SSH key,
    tailnet OAuth client 또는 저장소 secret은 필요하지 않다. 이미지는 공개 GHCR
    패키지다. 비공개로 바뀌면 호스트에서 `read:packages` 토큰으로 한 번 로그인한다.
 
 ## 2. 전환: k3s → shiftgate (Node API, PostgreSQL)
+
+이 절은 완료된 과거 전환 절차이며 현재 실행하면 안 된다. 현재 PostgreSQL 및 k3s 서비스는 은퇴했다.
 
 k3s는 전환 중 `127.0.0.1:30020`에서 계속 요청을 처리한다. shiftgate는
 `127.0.0.1:8020`에서 요청을 처리한다. 전환은 cloudflared ingress 설정으로 수행한다.
@@ -123,6 +127,8 @@ runtime이 같은 PostgreSQL을 사용해 데이터 이동은 없었다. shiftga
 HAProxy를 전환하는 절차다. k3s와 PostgreSQL이 은퇴한 현재는 이 롤백을 사용할 수 없다.
 
 ## 3. k3s 제거 (desk)
+
+이 절은 완료된 과거 제거 절차이며 현재 k3s는 복구 대상으로 사용할 수 없다.
 
 2단계가 관찰 기간 동안 안정적으로 동작한 뒤 수행하는 절차였다.
 
@@ -253,4 +259,4 @@ sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://lo
 
 ### 4.7 PostgreSQL 정리
 
-마지막 PostgreSQL 덤프를 보관한 뒤 PostgreSQL 서비스를 중지하고 비활성화했다. 데이터 디렉터리는 보존 중이며, 실제 제거는 운영자 결정이 남아 있다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
+마지막 PostgreSQL 덤프를 보관한 뒤 PostgreSQL 서비스를 중지하고 비활성화했다. 데이터 디렉터리는 보존 중이며, 실제 제거는 운영자 결정이 남아 있다. `brewdial-api` 서비스 정의도 shiftgate 설정에서 제거했다. 운영자는 마지막 덤프를 확인한 뒤 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거하고 `/etc/shiftgate/brewdial-api.env`를 보관하거나 삭제해야 한다. 현재 호스트에 남은 컨테이너나 환경 파일의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
