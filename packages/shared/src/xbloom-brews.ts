@@ -89,16 +89,22 @@ export function validateXBloomBrew(input: unknown): XBloomBrewValidationResult<X
   const errors: string[] = []
   if (!requireObject(input, BREW_KEYS, 'brew', errors)) return { ok: false, errors }
   const brew = input
-  if (typeof brew.xbloomBrewId !== 'string' || !/^\d+$/.test(brew.xbloomBrewId)) errors.push('xbloomBrewId must be a decimal string')
-  if (typeof brew.brewedAt !== 'string' || !Number.isFinite(Date.parse(brew.brewedAt)) || new Date(brew.brewedAt).toISOString() !== brew.brewedAt) errors.push('brewedAt must be an ISO timestamp')
+  if (typeof brew.xbloomBrewId !== 'string' || !/^\d{1,32}$/.test(brew.xbloomBrewId)) errors.push('xbloomBrewId must be a decimal string of at most 32 digits')
+  const brewedAt = typeof brew.brewedAt === 'string' ? new Date(brew.brewedAt) : null
+  if (brewedAt === null || !Number.isFinite(brewedAt.getTime()) || brewedAt.toISOString() !== brew.brewedAt || brewedAt.getUTCFullYear() < 1000 || brewedAt.getUTCFullYear() > 9999) errors.push('brewedAt must be a supported ISO timestamp')
   if (!finite(brew.brewTimeSec) || brew.brewTimeSec <= 0) errors.push('brewTimeSec must be a positive finite number')
   if (typeof brew.recipeName !== 'string') errors.push('recipeName must be a string')
-  if (brew.xbloomRecipeId !== null && (typeof brew.xbloomRecipeId !== 'string' || !/^\d+$/.test(brew.xbloomRecipeId))) errors.push('xbloomRecipeId must be a decimal string or null')
+  else {
+    if (/[\u0000-\u001f\u007f]/.test(brew.recipeName)) errors.push('recipeName must not contain control characters')
+    if (new TextEncoder().encode(brew.recipeName).length > 65535) errors.push('recipeName must fit in a MySQL TEXT column')
+  }
+  if (brew.xbloomRecipeId !== null && (typeof brew.xbloomRecipeId !== 'string' || !/^\d{1,32}$/.test(brew.xbloomRecipeId))) errors.push('xbloomRecipeId must be a decimal string of at most 32 digits or null')
 
   if (requireObject(brew.recipeSnapshot, SNAPSHOT_KEYS, 'recipeSnapshot', errors)) {
     const snapshot = brew.recipeSnapshot
     for (const key of ['doseG', 'grinderSize', 'rpm', 'cupType', 'bypassVolumeMl', 'bypassTemperatureC']) {
-      if (!finite(snapshot[key]) || snapshot[key] < 0) errors.push(`recipeSnapshot.${key} must be a finite non-negative number`)
+      const value = snapshot[key]
+      if (!finite(value) || value < 0) errors.push(`recipeSnapshot.${key} must be a finite non-negative number`)
     }
     if (typeof snapshot.bypassEnabled !== 'boolean') errors.push('recipeSnapshot.bypassEnabled must be a boolean')
     if (!Array.isArray(snapshot.pours)) errors.push('recipeSnapshot.pours must be an array')
@@ -106,7 +112,8 @@ export function validateXBloomBrew(input: unknown): XBloomBrewValidationResult<X
       const path = `recipeSnapshot.pours[${index}]`
       if (!requireObject(rawPour, POUR_KEYS, path, errors)) return
       for (const key of ['volumeMl', 'temperatureC', 'flowRate', 'pauseSec']) {
-        if (!finite(rawPour[key]) || rawPour[key] < 0) errors.push(`${path}.${key} must be a finite non-negative number`)
+        const value = rawPour[key]
+        if (!finite(value) || value < 0) errors.push(`${path}.${key} must be a finite non-negative number`)
       }
       if (!['spiral', 'ring', 'center'].includes(String(rawPour.pattern))) errors.push(`${path}.pattern must be spiral, ring, or center`)
       if (typeof rawPour.vibrationBefore !== 'boolean') errors.push(`${path}.vibrationBefore must be a boolean`)

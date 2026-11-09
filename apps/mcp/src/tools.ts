@@ -356,7 +356,7 @@ export async function handleListBrews(config: ApiConfig, args: Record<string, un
   if (Object.keys(filters).some((key) => !allowed.has(key))) return jsonError({ ok: false, error: '허용되지 않은 필터가 있습니다.' })
   if (filters.limit !== undefined && (typeof filters.limit !== 'number' || !Number.isInteger(filters.limit) || filters.limit < 1 || filters.limit > 100)) return jsonError({ ok: false, error: 'limit은 1에서 100 사이의 정수여야 합니다.' })
   if (filters.recipeCode !== undefined && (typeof filters.recipeCode !== 'string' || !isRecipeCode(filters.recipeCode))) return jsonError({ ok: false, error: 'recipeCode 형식이 올바르지 않습니다.' })
-  if (filters.xbloomRecipeId !== undefined && (typeof filters.xbloomRecipeId !== 'string' || !/^\d+$/.test(filters.xbloomRecipeId))) return jsonError({ ok: false, error: 'xbloomRecipeId 형식이 올바르지 않습니다.' })
+  if (filters.xbloomRecipeId !== undefined && (typeof filters.xbloomRecipeId !== 'string' || !/^\d{1,32}$/.test(filters.xbloomRecipeId))) return jsonError({ ok: false, error: 'xbloomRecipeId 형식이 올바르지 않습니다.' })
   if (filters.since !== undefined && (typeof filters.since !== 'string' || !Number.isFinite(Date.parse(filters.since)))) return jsonError({ ok: false, error: 'since는 ISO 시각이어야 합니다.' })
   try {
     const rows = await listBrews(config, filters as { limit?: number; recipeCode?: string; xbloomRecipeId?: string; since?: string })
@@ -387,7 +387,7 @@ export async function handleGetBrew(config: ApiConfig, args: Record<string, unkn
 export async function handleLinkXBloomRecipe(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
   const id = args?.xbloomRecipeId
   const code = args?.recipeCode
-  if (typeof id !== 'string' || !/^\d+$/.test(id) || typeof code !== 'string' || !isRecipeCode(code)) return jsonError({ ok: false, error: 'xbloomRecipeId와 유효한 recipeCode를 입력하세요.' })
+  if (typeof id !== 'string' || !/^\d{1,32}$/.test(id) || typeof code !== 'string' || !isRecipeCode(code)) return jsonError({ ok: false, error: 'xbloomRecipeId와 유효한 recipeCode를 입력하세요.' })
   try {
     return jsonResult(await linkXBloomRecipe(config, id, code))
   } catch (error) {

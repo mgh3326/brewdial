@@ -58,6 +58,10 @@ describe('xBloom brew records', () => {
     expect(validateXBloomBrew({ ...parsed.value, mac: 'unexpected' }).ok).toBe(false)
     expect(validateXBloomBrew({ ...parsed.value, curve: [[1, Number.NaN]] }).ok).toBe(false)
     expect(validateXBloomBrew({ ...parsed.value, curve: Array.from({ length: 1201 }, () => [1, 1]) }).ok).toBe(false)
+    expect(validateXBloomBrew({ ...parsed.value, xbloomBrewId: '1'.repeat(33) }).ok).toBe(false)
+    expect(validateXBloomBrew({ ...parsed.value, xbloomRecipeId: '1'.repeat(33) }).ok).toBe(false)
+    expect(validateXBloomBrew({ ...parsed.value, recipeName: 'unsafe\u0000name' }).ok).toBe(false)
+    expect(validateXBloomBrew({ ...parsed.value, recipeName: 'x'.repeat(65536) }).ok).toBe(false)
   })
 
   it('derives pour end, retention, drawdown, and early drawdown from the 1 Hz curve', () => {

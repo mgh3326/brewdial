@@ -222,7 +222,7 @@ export async function buildRecipeContext(
   const [feedback, preferences, recentBrews] = await Promise.all([
     listFeedbackForRecipe(config, code, fetchImpl),
     getGlobalPreferences(config, fetchImpl),
-    listBrews(config, { recipeCode: code, limit: 5 }, fetchImpl)
+    listBrews(config, { recipeCode: code, limit: 5 }, fetchImpl).catch(() => [])
   ]);
   const feedbackSummary = summarizeFeedback(feedback);
   const guidance = buildRecipeGuidance({ preferences, recipe, feedbackSummary });

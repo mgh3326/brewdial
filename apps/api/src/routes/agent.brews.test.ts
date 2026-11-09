@@ -69,6 +69,9 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
 
   const invalid = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: [{ ...baseline[0], xbloomBrewId: '99999999', mac: 'not-allowed' }] }) }))
   expect(invalid.status).toBe(400)
+  const badText = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: [{ ...baseline[0], xbloomBrewId: '99999998', recipeName: 'bad\u0000text' }] }) }))
+  expect(badText.status).toBe(400)
+  expect((await badText.json() as Record<string, any>).details[0]).toContain('brews[0]')
   const badGet = await request(agentReq('/api/agent/brews?limit=0'))
   expect(badGet.status).toBe(400)
 
@@ -85,7 +88,7 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
   expect(brewRow.finalCupG).toBe(200)
   expect(brewRow.retentionG).toBe(20)
   expect(brewRow.linkedRecipe).toMatchObject({ recipeCode, title: `Brew fixture ${suffix}`, currentVersion: 1 })
-  expect(brewRow.anomalyHint.status).toBe('normal')
+  expect(brewRow.anomalyHint.status).toBe('insufficient_baseline')
   expect(brewRow.curve).toHaveLength(baseline[0]!.curve.length)
   expect(brewRow.recipeName).not.toBe(changedDuplicate.recipeName)
 

@@ -27,7 +27,7 @@ agentRouter.get('/brews', async (c) => {
   const recipeCode = c.req.query('recipeCode')
   if (recipeCode && !isRecipeCode(recipeCode)) return c.json({ error: 'invalid recipeCode' }, 400)
   const xbloomRecipeId = c.req.query('xbloomRecipeId')
-  if (xbloomRecipeId && !/^\d+$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
+  if (xbloomRecipeId && !/^\d{1,32}$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
   const since = c.req.query('since')
   if (since && (!Number.isFinite(Date.parse(since)) || Number.isNaN(Date.parse(since)))) return c.json({ error: 'invalid since timestamp' }, 400)
   const rows = await listXBloomBrews(getDb(), { limit, recipeCode, xbloomRecipeId, since })
@@ -46,7 +46,7 @@ agentRouter.get('/brews/:id', async (c) => {
 
 agentRouter.put('/xbloom-recipe-links/:xbloomRecipeId', async (c) => {
   const xbloomRecipeId = c.req.param('xbloomRecipeId')
-  if (!/^\d+$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
+  if (!/^\d{1,32}$/.test(xbloomRecipeId)) return c.json({ error: 'invalid xbloomRecipeId' }, 400)
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || typeof (body as Record<string, unknown>).recipeCode !== 'string' || !isRecipeCode((body as { recipeCode: string }).recipeCode)) {
     return c.json({ error: 'recipeCode is required' }, 400)

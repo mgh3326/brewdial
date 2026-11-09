@@ -71,6 +71,22 @@ table beans
   roaster null
   source_url null
   updated_at not null
+table brews
+  brewed_at not null
+  brew_time_sec not null
+  created_at not null
+  cup_at_pour_end_g not null
+  curve not null
+  drawdown_sec not null
+  early_drawdown_g_per_sec not null
+  final_cup_g not null
+  pour_end_sec not null
+  recipe_name not null
+  recipe_snapshot not null
+  retention_g not null
+  total_water_ml not null
+  xbloom_brew_id not null
+  xbloom_recipe_id null
 table drippers
   class not null
   continuum_position null
@@ -188,3 +204,8 @@ table user_identities
   provider not null
   updated_at not null
   verified not null
+table xbloom_recipe_links
+  created_at not null
+  recipe_code not null
+  updated_at not null
+  xbloom_recipe_id not null

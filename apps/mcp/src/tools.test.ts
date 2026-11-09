@@ -352,6 +352,26 @@ describe('feedback recipe version context', () => {
     expect(recent.recentRecipes[0].feedback[0]).toMatchObject({ recipeVersion: 1, onCurrentVersion: false });
     expect(recent.recentRecipes[0].feedback[0]).not.toHaveProperty('recipeSnapshot');
   });
+
+  it('keeps recipe context available when the supplementary brew list fails', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url)
+      if (path.includes('/api/agent/brews')) return new Response('{"error":"unavailable"}', { status: 503 })
+      if (path.includes('/feedback')) return new Response('[]', { status: 200 })
+      if (path.includes('/preferences')) return new Response('null', { status: 200 })
+      return new Response(JSON.stringify({
+        id: 'recipe-id', code: 'COF-0001', method: 'v60', title: 'Test', version: 2, params: {}, steps: [],
+        bean_id: null, bean_snapshot: null, intent: null, notes: null, adjustment_from_previous: null, created_by: 'agent',
+        status: 'active', supersedes: null, superseded_by: null, parent_code: null,
+        created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z'
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await handleGetRecipeContext({ ...mockConfig, fetchImpl }, { code: 'COF-0001' })
+    expect(result.isError).toBeUndefined()
+    const context = JSON.parse(result.content[0]!.text)
+    expect(context.recipe.code).toBe('COF-0001')
+    expect(context).not.toHaveProperty('recentBrews')
+  })
 });
 
 describe('xBloom brew tools', () => {

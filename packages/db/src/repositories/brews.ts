@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { XBloomBrew, XBloomBrewMetrics } from '@brewdial/shared'
 import { deriveXBloomBrewMetrics } from '@brewdial/shared'
 import type { DB } from '../types.js'
@@ -54,7 +54,7 @@ export async function insertXBloomBrews(db: Kysely<DB>, brews: XBloomBrew[]): Pr
     }
     const query = db.insertInto('brews').values(values)
     const result = dbVendor() === 'mysql'
-      ? await query.ignore().executeTakeFirst()
+      ? await query.onDuplicateKeyUpdate({ xbloom_brew_id: sql`xbloom_brew_id` }).executeTakeFirst()
       : await query.onConflict((conflict) => conflict.column('xbloom_brew_id').doNothing()).executeTakeFirst()
     const affected = Number(result.numInsertedOrUpdatedRows ?? 0)
     if (affected > 0) inserted.push(brew.xbloomBrewId)
