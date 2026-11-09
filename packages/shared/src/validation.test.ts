@@ -427,6 +427,11 @@ describe('xBloom structured fields', () => {
     if (!r.ok) expect(r.errors.join(' ')).toMatch(/pauseSec must equal/);
   });
 
+  it('accepts decimal schedule seconds within floating-point tolerance', () => {
+    const r = make('other', {}, [{ atSec: 0, endSec: 0.3, pauseSec: 2 }, { atSec: 2.3 }]);
+    expect(r.ok).toBe(true);
+  });
+
   it('accepts and preserves bypass null removal in params patch', () => {
     const r = validateUpdateRecipeInput({ params: { bypass: null } });
     expect(r.ok).toBe(true);

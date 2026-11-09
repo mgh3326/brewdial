@@ -647,7 +647,7 @@ private fun validateRecipeSteps(input: ObjectNode, errors: MutableList<String>):
         val step = out.get(index) as ObjectNode
         val next = out.get(index + 1) as ObjectNode
         if (step.has("pauseSec") && step.has("endSec") && next.has("atSec") &&
-            next.get("atSec").asDouble() - step.get("endSec").asDouble() != step.get("pauseSec").asDouble()) {
+            abs(next.get("atSec").asDouble() - step.get("endSec").asDouble() - step.get("pauseSec").asDouble()) > 1e-9) {
             errors += "steps[$index].pauseSec must equal steps[${index + 1}].atSec - steps[$index].endSec"
         }
     }

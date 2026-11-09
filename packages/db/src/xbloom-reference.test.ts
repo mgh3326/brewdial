@@ -18,7 +18,7 @@ import {
   PoliteFetcher,
   verifyXBloomReferences,
 } from './xbloom-reference.js'
-import { mockYaml, startXBloomMockSite, type XBloomMockSite } from './testing.js'
+import { startXBloomMockSite, type XBloomMockSite } from './testing.js'
 
 // #589: reference loader against a self-authored mock site (no network, no real
 // site content). Every row is keyed under the mock's unique http://127.0.0.1:<port>
@@ -274,8 +274,9 @@ describe('load + storage rules', () => {
     })
 
     it('verifies a stored row using legacy step tags', async () => {
-      const code = firstCodes[0]
-      const yamlText = mockYaml({ name: 'Mock Roastery Kenya', dose: 16, grind: 59, temp: 94 })
+      const row = (await rowsFor(site)).find((r) => r.bean_snapshot.sourceUrl?.endsWith(site.yamlPaths.hotA))!
+      const code = row.code
+      const yamlText = await (await fetch(`${site.origin}${site.yamlPaths.hotA}`)).text()
       const doc = fromXBloomYaml(yamlText)
       const pours = (parse(yamlText) as { pours: Array<Record<string, unknown>> }).pours
       const legacySteps = doc.steps!.map((step, i) => {
@@ -294,6 +295,7 @@ describe('load + storage rules', () => {
       if (dbVendor() === 'mysql') await sql`update recipes set steps = cast(${json} as json) where code = ${code}`.execute(db)
       else await sql`update recipes set steps = ${json}::jsonb where code = ${code}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast(), expect: 3 })
+      expect(v.items.filter((item) => !item.ok)).toEqual([])
       expect(v).toMatchObject({ passed: 3, failed: 0, exitCode: 0 })
     })
 

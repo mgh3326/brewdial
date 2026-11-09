@@ -894,6 +894,46 @@
           "steps[0].pauseSec must equal steps[1].atSec - steps[0].endSec"
         ]
       }
+    },
+    {
+      "name": "recipe: decimal seconds tolerate floating-point schedule subtraction",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "atSec": 0,
+            "endSec": 0.3,
+            "pauseSec": 2
+          },
+          {
+            "note": "Next",
+            "atSec": 2.3
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "steps": [
+            {
+              "note": "Pour",
+              "atSec": 0,
+              "endSec": 0.3,
+              "pauseSec": 2
+            },
+            {
+              "note": "Next",
+              "atSec": 2.3
+            }
+          ]
+        },
+        "warnings": []
+      }
     }
   ]
 }

@@ -480,7 +480,7 @@ function validateRecipeSteps(
   for (let i = 0; i < out.length - 1; i += 1) {
     const step = out[i];
     const next = out[i + 1];
-    if (step.pauseSec !== undefined && step.endSec !== undefined && next.atSec !== undefined && next.atSec - step.endSec !== step.pauseSec) {
+    if (step.pauseSec !== undefined && step.endSec !== undefined && next.atSec !== undefined && Math.abs(next.atSec - step.endSec - step.pauseSec) > 1e-9) {
       errors.push(`steps[${i}].pauseSec must equal steps[${i + 1}].atSec - steps[${i}].endSec`);
     }
   }

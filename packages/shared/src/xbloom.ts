@@ -621,13 +621,13 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     // user edit in BrewDial propagates; later pours rely on their tags (or the
     // params.tempC fallback for authored recipes).
     const tempC =
-      s.tempC !== undefined
-        ? s.tempC
-        : i === 0 && params.tempC !== undefined
+      i === 0 && params.tempC !== undefined
         ? params.tempC
-        : tag?.temp_c !== undefined
-          ? Number(tag.temp_c)
-          : params.tempC;
+        : s.tempC !== undefined
+          ? s.tempC
+          : tag?.temp_c !== undefined
+            ? Number(tag.temp_c)
+            : params.tempC;
     if (tempC !== undefined) pour.temp_c = tempC;
     if (s.pattern !== undefined) pour.pattern = s.pattern;
     else if (tag?.pattern !== undefined) pour.pattern = tag.pattern;

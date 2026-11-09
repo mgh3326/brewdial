@@ -431,7 +431,7 @@ pours:
 
   it('lets params.tempC rewrite the first pour and targetTimeSec rewrite time (N5)', () => {
     const doc = fromXBloomYaml(loadFixture('three-pour-spiral.yaml'));
-    doc.steps![0].tempC = 80;
+    doc.params!.tempC = 80;
     const out = parse(toXBloomYaml(doc));
     expect(out.pours[0].temp_c).toBe(80);
     expect(out.pours[1].temp_c).toBe(92); // structured per-pour temperature survives independently
