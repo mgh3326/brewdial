@@ -281,7 +281,8 @@ describe('load + storage rules', () => {
       const pours = (parse(yamlText) as { pours: Array<Record<string, unknown>> }).pours
       const legacySteps = doc.steps!.map((step, i) => {
         const p = pours[i]
-        const tag = `[label=${String(p.label ?? '')} pattern=${String(p.pattern)} agitation=${String(p.agitation)} rpm=${String(p.rpm)} temp_c=${String(p.temp_c)} pause_s=${String(p.pause_s)}]`
+        const label = p.label === undefined ? '""' : String(p.label)
+        const tag = `[label=${label} pattern=${String(p.pattern)} agitation=${String(p.agitation)} rpm=${String(p.rpm)} temp_c=${String(p.temp_c)} pause_s=${String(p.pause_s)}]`
         const legacy = { ...step, note: `${step.note.replace(/\s+\[label=.*\]$/, '')} ${tag}` }
         delete legacy.pattern
         delete legacy.rpm
