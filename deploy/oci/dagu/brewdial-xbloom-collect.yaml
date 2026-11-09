@@ -1,5 +1,10 @@
 name: brewdial-xbloom-collect
 schedule: "*/30 * * * *"
+max_active_runs: 1
+timeout_sec: 300
+# The Dagu service PATH does not include the user's ~/.local/bin, where hk-infisical and uv live.
+env:
+  - PATH: ${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
 steps:
   - id: collect
     run: hk-infisical run /xbloom -- hk-infisical run /brewdial -- uv run --locked --project /opt/brewdial-xbloom-collector brewdial-xbloom-collector
