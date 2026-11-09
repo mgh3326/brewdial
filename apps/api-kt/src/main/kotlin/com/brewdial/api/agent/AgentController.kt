@@ -140,7 +140,7 @@ class AgentController(
     private fun validActual(actual: JsonNode): Boolean {
         if (!actual.isObject) return false
         val allowed = setOf("tempC", "grind", "timeSec", "doseG", "waterG", "blend")
-        if (actual.fieldNames().asSequence().any { it !in allowed }) return false
+        if (actual.propertyNames().asSequence().any { it !in allowed }) return false
         if (actual.has("tempC") && !actual["tempC"].isNumber) return false
         if (actual.has("timeSec") && !actual["timeSec"].isNumber) return false
         if (actual.has("grind") && !actual["grind"].isTextual) return false
@@ -148,7 +148,7 @@ class AgentController(
         if (actual.has("blend")) {
             val blend = actual["blend"]
             if (!blend.isArray || blend.size() !in 1..5 || blend.any { part ->
-                    !part.isObject || part.fieldNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
+                    !part.isObject || part.propertyNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
                         (!part.path("beanId").isTextual && !part.path("name").isTextual) ||
                         (part.path("beanId").isTextual && part.path("beanId").asText().isBlank()) ||
                         (part.path("name").isTextual && part.path("name").asText().isBlank()) ||

@@ -96,24 +96,24 @@ class AgentWriteService(
         val recipe = entityManager.createQuery("select recipe from Recipe recipe where recipe.code = :code", Recipe::class.java)
             .setParameter("code", recipeCode).setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
             .resultList.firstOrNull() ?: throw AgentRecipeMissingException(recipeCode)
-        val actual = body.get("actual")
-        if (actual != null && !validActual(actual)) throw AgentInvalidRangeException("invalid actual")
+        val actualNode = body.get("actual")
+        if (actualNode != null && !validActual(actualNode)) throw AgentInvalidRangeException("invalid actual")
         val params = parseJson(recipe.params)
         val snapshot = objectMapper.createObjectNode()
-            .set<JsonNode>("params", params ?: objectMapper.createObjectNode())
-        snapshot.set<JsonNode>("steps", parseJson(recipe.steps) ?: objectMapper.createArrayNode())
+            .set("params", params ?: objectMapper.createObjectNode())
+        snapshot.set("steps", parseJson(recipe.steps) ?: objectMapper.createArrayNode())
         snapshot.put("method", recipe.method)
         recipe.beanId?.let { snapshot.put("beanId", it) }
         params?.path("grind")?.path("perGrinder")?.takeIf { it.isArray }?.let { parts ->
             val grinderIds = objectMapper.createArrayNode()
             parts.mapNotNull { it.path("grinderId").takeIf { value -> value.isTextual }?.asText() }.forEach { grinderIds.add(it) }
             if (!grinderIds.isEmpty) {
-                snapshot.set<JsonNode>("grinderIds", grinderIds)
+                snapshot.set("grinderIds", grinderIds)
                 snapshot.put("grinderId", grinderIds[0].asText())
             }
         }
         val portability = parseJson(recipe.dripperPortability)
-        portability?.path("origin")?.path("dripperId")?.takeIf { it.isTextual }?.let { snapshot.set<JsonNode>("dripperId", it) }
+        portability?.path("origin")?.path("dripperId")?.takeIf { it.isTextual }?.let { snapshot.set("dripperId", it) }
         val feedback = Feedback().apply {
             id = UUID.randomUUID()
             this.recipeCode = recipeCode
@@ -141,7 +141,7 @@ class AgentWriteService(
     private fun validActual(actual: JsonNode): Boolean {
         if (!actual.isObject) return false
         val allowed = setOf("tempC", "grind", "timeSec", "doseG", "waterG", "blend")
-        if (actual.fieldNames().asSequence().any { it !in allowed }) return false
+        if (actual.propertyNames().asSequence().any { it !in allowed }) return false
         if (actual.has("tempC") && !actual["tempC"].isNumber) return false
         if (actual.has("timeSec") && !actual["timeSec"].isNumber) return false
         if (actual.has("grind") && !actual["grind"].isTextual) return false
@@ -149,7 +149,7 @@ class AgentWriteService(
         if (actual.has("blend")) {
             val blend = actual["blend"]
             if (!blend.isArray || blend.size() !in 1..5 || blend.any { part ->
-                    !part.isObject || part.fieldNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
+                    !part.isObject || part.propertyNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
                         (!part.path("beanId").isTextual && !part.path("name").isTextual) ||
                         (part.path("beanId").isTextual && part.path("beanId").asText().isBlank()) ||
                         (part.path("name").isTextual && part.path("name").asText().isBlank()) ||
@@ -177,7 +177,7 @@ class AgentWriteService(
             if (!incoming.isObject) throw AgentInvalidRangeException("$key must be an object")
             val merged = parseJson(if (key == "ratings") row.ratings else row.actual)?.takeIf { it.isObject }?.deepCopy() as? ObjectNode
                 ?: objectMapper.createObjectNode()
-            incoming.fields().forEachRemaining { (field, value) -> if (value.isNull) merged.remove(field) else merged.set<JsonNode>(field, value) }
+            incoming.properties().forEach { entry -> if (entry.value.isNull) merged.remove(entry.key) else merged.set(entry.key, entry.value) }
             val serialized = if (merged.isEmpty) null else objectMapper.writeValueAsString(merged)
             if (key == "ratings") row.ratings = serialized else row.actual = serialized
             after[column] = if (merged.isEmpty) null else merged
@@ -191,9 +191,9 @@ class AgentWriteService(
             when (key) {
                 "rawComment" -> row.rawComment = value.takeUnless { it.isNull }?.asText()
                 "comment" -> row.comment = value.takeUnless { it.isNull }?.asText()
-                "quickTags" -> row.quickTags = value.takeUnless { it.isNull }?.map { it.asText() }
-                "desiredDirection" -> row.desiredDirection = value.takeUnless { it.isNull }?.map { it.asText() }
-                "nextHint" -> row.nextHint = value.takeUnless { it.isNull }?.map { it.asText() }
+                "quickTags" -> row.quickTags = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
+                "desiredDirection" -> row.desiredDirection = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
+                "nextHint" -> row.nextHint = value.takeUnless { it.isNull }?.values()?.map { it.asText() }
             }
             after[column] = if (value.isNull) null else when (key) {
                 "rawComment", "comment" -> value.asText()
