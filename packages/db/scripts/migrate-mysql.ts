@@ -159,11 +159,14 @@ export async function migrateMysql(
         }
 
         // The Kotlin copy tool starts Spring Boot against the MySQL target, so
-        // Flyway applies V1__baseline.sql before copying. That file's SQL body
-        // is kept byte-identical to 001_baseline.sql. Adopt only Flyway's
-        // successful V1 record; trying to replay the baseline would fail on
-        // the already-created tables and prevent the Node service from booting.
-        if (version === '001_baseline') {
+        // Flyway applies V1/V2 before copying. Adopt matching successful Flyway
+        // records; replaying either migration would fail on already-present
+        // tables or columns and prevent the Node service from booting.
+        const flywayMigration = {
+          '001_baseline': { version: '1', script: 'V1__baseline.sql' },
+          '002_feedback_recipe_snapshot': { version: '2', script: 'V2__feedback_recipe_snapshot.sql' },
+        }[version as '001_baseline' | '002_feedback_recipe_snapshot']
+        if (flywayMigration) {
           const [flywayTableRows] = await connection.query(
             `select count(*) as count from information_schema.tables
              where table_schema = database() and table_name = 'flyway_schema_history'`,
@@ -174,7 +177,8 @@ export async function migrateMysql(
           if (flywayTableExists) {
             const [flywayRows] = await connection.query(
               `select script from flyway_schema_history
-               where version = '1' and success = 1 and script = 'V1__baseline.sql' limit 1`,
+               where version = ? and success = 1 and script = ? limit 1`,
+              [flywayMigration.version, flywayMigration.script],
             )
             if ((flywayRows as unknown[]).length > 0) {
               await connection.query(
@@ -182,7 +186,7 @@ export async function migrateMysql(
                 [version, checksum],
               )
               result.alreadyApplied.push(version)
-              log(`adopted ${version} from successful Flyway V1__baseline.sql`)
+              log(`adopted ${version} from successful Flyway ${flywayMigration.script}`)
               continue
             }
           }

@@ -110,13 +110,52 @@ class AgentController(
                 linkedMapOf("error" to "invalid source", "valid" to FEEDBACK_SOURCES)
             )
         }
+        if (body.has("actual") && !validActual(body.get("actual"))) return error("invalid actual", HttpStatus.BAD_REQUEST)
         return try {
             ResponseEntity.status(HttpStatus.CREATED).body(
                 writes.createFeedback(recipeCode.asText(), rawSource?.asText() ?: "agent", body)
             )
         } catch (_: AgentRecipeMissingException) {
             ResponseEntity.status(HttpStatus.NOT_FOUND).body(linkedMapOf("error" to "recipe not found"))
+        } catch (exception: AgentInvalidRangeException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(linkedMapOf("error" to "validation failed", "details" to listOf(exception.message)))
         }
+    }
+
+    @PatchMapping("/feedback/{id}")
+    fun patchFeedback(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<Any> {
+        val uuid = runCatching { java.util.UUID.fromString(id) }.getOrNull() ?: return error("invalid id", HttpStatus.BAD_REQUEST)
+        val body = bodies.read(request) as? ObjectNode ?: return error("invalid body", HttpStatus.BAD_REQUEST)
+        return try {
+            ResponseEntity.ok(writes.updateFeedback(uuid, body))
+        } catch (_: AgentFeedbackMissingException) {
+            notFound()
+        } catch (exception: AgentFeedbackConflictException) {
+            ResponseEntity.status(HttpStatus.CONFLICT).body(linkedMapOf("error" to "version_conflict", "currentUpdatedAt" to exception.currentUpdatedAt))
+        } catch (exception: AgentInvalidRangeException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(linkedMapOf("error" to "validation failed", "details" to listOf(exception.message)))
+        }
+    }
+
+    private fun validActual(actual: JsonNode): Boolean {
+        if (!actual.isObject) return false
+        val allowed = setOf("tempC", "grind", "timeSec", "doseG", "waterG", "blend")
+        if (actual.propertyNames().asSequence().any { it !in allowed }) return false
+        if (actual.has("tempC") && !actual["tempC"].isNumber) return false
+        if (actual.has("timeSec") && !actual["timeSec"].isNumber) return false
+        if (actual.has("grind") && !actual["grind"].isTextual) return false
+        for (key in listOf("doseG", "waterG")) if (actual.has(key) && (!actual[key].isNumber || !actual[key].asDouble().isFinite() || actual[key].asDouble() <= 0)) return false
+        if (actual.has("blend")) {
+            val blend = actual["blend"]
+            if (!blend.isArray || blend.size() !in 1..5 || blend.any { part ->
+                    !part.isObject || part.propertyNames().asSequence().any { it !in setOf("beanId", "name", "grams") } ||
+                        (!part.path("beanId").isTextual && !part.path("name").isTextual) ||
+                        (part.path("beanId").isTextual && part.path("beanId").asText().isBlank()) ||
+                        (part.path("name").isTextual && part.path("name").asText().isBlank()) ||
+                        !part.path("grams").isNumber || !part.path("grams").asDouble().isFinite() || part.path("grams").asDouble() <= 0
+                }) return false
+        }
+        return true
     }
 
     @GetMapping("/preferences/global")

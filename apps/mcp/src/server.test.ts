@@ -20,6 +20,7 @@ const EXPECTED_ANNOTATIONS: Record<string, { readOnlyHint?: boolean; destructive
   get_recipe_context: { readOnlyHint: true, openWorldHint: false },
   create_recipe: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   create_feedback: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  update_feedback: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   update_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   archive_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   supersede_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -47,11 +48,11 @@ afterEach(() => {
 });
 
 describe('createBrewdialMcpServer', () => {
-  it('lists exactly the 13 snake_case tools', async () => {
+  it('lists exactly the 14 snake_case tools', async () => {
     const { client } = await connect(baseConfig);
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(14);
     expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(EXPECTED_ANNOTATIONS).sort());
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);

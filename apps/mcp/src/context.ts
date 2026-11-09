@@ -192,7 +192,7 @@ export async function buildRecentContext(
       const feedback = await listFeedbackForRecipe(config, recipe.code, fetchImpl);
       return {
         recipe,
-        feedback,
+        feedback: feedback.map(({ recipeSnapshot: _recipeSnapshot, ...item }) => item),
         feedbackSummary: summarizeFeedback(feedback)
       };
     })

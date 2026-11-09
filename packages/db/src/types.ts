@@ -140,6 +140,8 @@ export interface Feedback {
   ratings: Json | null;
   raw_comment: string | null;
   recipe_code: string;
+  recipe_version: number | null;
+  recipe_snapshot: Json | null;
   source: Generated<string>;
   updated_at: Generated<Timestamp>;
 }

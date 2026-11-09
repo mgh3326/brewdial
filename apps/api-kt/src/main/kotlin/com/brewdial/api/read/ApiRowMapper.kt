@@ -41,7 +41,11 @@ class ApiRowMapper(
             resultSet.getString("comment"), resultSet.getString("raw_comment"),
             textArray(resultSet, "quick_tags"), textArray(resultSet, "desired_direction"),
             textArray(resultSet, "next_hint"), resultSet.getString("source"),
-            timestamp(resultSet, "created_at"), timestamp(resultSet, "updated_at")
+            timestamp(resultSet, "created_at"), timestamp(resultSet, "updated_at"),
+            resultSet.getObject("recipe_version")?.let { (it as Number).toInt() }, json(resultSet, "recipe_snapshot"),
+            resultSet.getObject("recipe_current_version")?.let { (it as Number).toInt() },
+            resultSet.getObject("recipe_version")?.let { (it as Number).toInt() }, json(resultSet, "recipe_snapshot"),
+            resultSet.getObject("recipe_version") != null && resultSet.getObject("recipe_version") == resultSet.getObject("recipe_current_version")
         )
     )
 

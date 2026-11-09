@@ -1,4 +1,4 @@
-import type { CreateFeedbackInput, CreateRecipeInput } from './api-types.js';
+import type { CreateFeedbackInput, CreateRecipeInput, UpdateFeedbackInput } from './api-types.js';
 import { isRecipeCode } from './schemas.js';
 import type {
   ActualBrewParams,
@@ -813,7 +813,7 @@ function validateRatings(
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
-function validateActual(
+export function validateActualBrewParams(
   raw: unknown,
   errors: string[]
 ): ActualBrewParams | undefined {
@@ -823,6 +823,8 @@ function validateActual(
     return undefined;
   }
   const out: ActualBrewParams = {};
+  const actualKeys = new Set(['tempC', 'grind', 'timeSec', 'doseG', 'waterG', 'blend']);
+  for (const key of Object.keys(raw)) if (!actualKeys.has(key)) errors.push(`actual.${key} is not allowed`);
   if (raw.tempC !== undefined) {
     if (typeof raw.tempC !== 'number') errors.push('actual.tempC must be a number');
     else out.tempC = raw.tempC;
@@ -835,7 +837,100 @@ function validateActual(
     if (typeof raw.timeSec !== 'number') errors.push('actual.timeSec must be a number');
     else out.timeSec = raw.timeSec;
   }
+  for (const key of ['doseG', 'waterG'] as const) {
+    if (raw[key] !== undefined) {
+      if (typeof raw[key] !== 'number' || !Number.isFinite(raw[key]) || raw[key] <= 0) errors.push(`actual.${key} must be a positive finite number`);
+      else out[key] = raw[key];
+    }
+  }
+  if (raw.blend !== undefined) {
+    if (!Array.isArray(raw.blend) || raw.blend.length < 1 || raw.blend.length > 5) errors.push('actual.blend must contain 1-5 parts');
+    else {
+      const blend: NonNullable<ActualBrewParams['blend']> = [];
+      raw.blend.forEach((part, i) => {
+        if (!isPlainObject(part)) { errors.push(`actual.blend[${i}] must be an object`); return; }
+        for (const key of Object.keys(part)) if (!['beanId', 'name', 'grams'].includes(key)) errors.push(`actual.blend[${i}].${key} is not allowed`);
+        const beanId = part.beanId;
+        const name = part.name;
+        const grams = part.grams;
+        if (beanId !== undefined && !isNonEmptyString(beanId)) errors.push(`actual.blend[${i}].beanId must be a non-empty string`);
+        if (name !== undefined && !isNonEmptyString(name)) errors.push(`actual.blend[${i}].name must be a non-empty string`);
+        if ((typeof beanId !== 'string' || !beanId.trim()) && (typeof name !== 'string' || !name.trim())) errors.push(`actual.blend[${i}] requires beanId or name`);
+        if (typeof grams !== 'number' || !Number.isFinite(grams) || grams <= 0) errors.push(`actual.blend[${i}].grams must be a positive finite number`);
+        if ((beanId === undefined || isNonEmptyString(beanId)) && (name === undefined || isNonEmptyString(name)) && typeof grams === 'number' && Number.isFinite(grams) && grams > 0) {
+          blend.push({ ...(typeof beanId === 'string' ? { beanId: beanId.trim() } : {}), ...(typeof name === 'string' ? { name: name.trim() } : {}), grams });
+        }
+      });
+      if (blend.length === raw.blend.length) out.blend = blend;
+    }
+  }
   return out;
+}
+
+const validateActual = validateActualBrewParams;
+
+export function validateUpdateFeedbackInput(input: unknown): ValidationResult<UpdateFeedbackInput> {
+  const errors: string[] = [];
+  if (!isPlainObject(input)) return { ok: false, errors: ['input must be an object'] };
+  const id = input.id;
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) errors.push('id must be a UUID');
+  const value: UpdateFeedbackInput = { id: typeof id === 'string' ? id : '' };
+  if (input.ratings !== undefined) {
+    if (!isPlainObject(input.ratings)) errors.push('ratings must be an object');
+    else {
+      const allowed = new Set(['overall', ...SENSORY_RATING_KEYS]);
+      const ratings: Record<string, number | null> = {};
+      for (const [key, v] of Object.entries(input.ratings)) {
+        if (!allowed.has(key)) { errors.push(`ratings.${key} is not allowed`); continue; }
+        if (v === null) { ratings[key] = null; continue; }
+        if (!isInt(v) || v < (key === 'overall' ? 1 : 0) || v > (key === 'overall' ? 5 : 4)) errors.push(`ratings.${key} has an invalid rating`);
+        else ratings[key] = v;
+      }
+      value.ratings = ratings as UpdateFeedbackInput['ratings'];
+    }
+  }
+  if (input.actual !== undefined) {
+    if (!isPlainObject(input.actual)) errors.push('actual must be an object');
+    else {
+      const clean: Record<string, unknown> = {};
+      const removals: string[] = [];
+      for (const [key, v] of Object.entries(input.actual)) {
+        if (v === null) {
+          if (!['tempC', 'grind', 'timeSec', 'doseG', 'waterG', 'blend'].includes(key)) errors.push(`actual.${key} is not allowed`);
+          else removals.push(key);
+          continue;
+        }
+        clean[key] = v;
+      }
+      const actual = validateActual(clean, errors);
+      if (actual) value.actual = { ...actual, ...Object.fromEntries(removals.map((key) => [key, null])) } as UpdateFeedbackInput['actual'];
+    }
+  }
+  for (const key of ['rawComment', 'comment'] as const) if (input[key] !== undefined) {
+    if (input[key] !== null && typeof input[key] !== 'string') errors.push(`${key} must be a string or null`);
+    else if (typeof input[key] === 'string' && input[key].length > 2000) errors.push(`${key} must be at most 2000 characters`);
+    else value[key] = input[key] as string | null;
+  }
+  for (const key of ['quickTags', 'desiredDirection', 'nextHint'] as const) if (input[key] !== undefined) {
+    if (input[key] !== null && !isStringArray(input[key])) errors.push(`${key} must be a string array or null`);
+    else if (key === 'quickTags' && Array.isArray(input[key]) && input[key].length > 20) errors.push('quickTags must contain at most 20 items');
+    else if (key === 'quickTags' && Array.isArray(input[key])) {
+      const invalid = input[key].filter((tag) => !QUICK_FEEDBACK_TAGS.includes(tag as QuickFeedbackTag));
+      if (invalid.length) errors.push(`quickTags contains unknown values: ${invalid.join(', ')}`);
+      else value.quickTags = input[key] as QuickFeedbackTag[];
+    } else if (key !== 'quickTags') value[key] = input[key] as string[] | null;
+    else value.quickTags = input[key] as null;
+  }
+  if (input.expectedUpdatedAt !== undefined) {
+    if (typeof input.expectedUpdatedAt !== 'string' || !input.expectedUpdatedAt || !Number.isFinite(Date.parse(input.expectedUpdatedAt))) errors.push('expectedUpdatedAt must be a valid timestamp string');
+    else value.expectedUpdatedAt = input.expectedUpdatedAt;
+  }
+  if (input.dryRun !== undefined) {
+    if (typeof input.dryRun !== 'boolean') errors.push('dryRun must be a boolean');
+    else value.dryRun = input.dryRun;
+  }
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, value, warnings: [] };
 }
 
 export function validateCreateFeedbackInput(

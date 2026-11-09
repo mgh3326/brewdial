@@ -1,6 +1,6 @@
-import type { CreateFeedbackInput, FeedbackDoc, RecipeCode } from '@brewdial/shared';
+import type { CreateFeedbackInput, FeedbackDoc, RecipeCode, UpdateFeedbackInput } from '@brewdial/shared';
 import type { ApiConfig } from '../config.js';
-import { getJson, postJson } from '../api.js';
+import { getJson, postJson, patchJson } from '../api.js';
 import { rowToFeedback, type FeedbackRow } from '../mappers.js';
 import { getRecipeByCode } from './recipes.js';
 
@@ -27,6 +27,13 @@ export async function createFeedback(
 
   const row = await postJson<FeedbackRow>(config, '/api/agent/feedback', body, fetchImpl);
   return rowToFeedback(row);
+}
+
+export async function editFeedback(config: ApiConfig, input: UpdateFeedbackInput, fetchImpl: typeof fetch = fetch) {
+  const { id, ...body } = input;
+  const result = await patchJson<Record<string, unknown>>(config, `/api/agent/feedback/${encodeURIComponent(id)}`, body, fetchImpl);
+  if (result['dryRun'] === true) return result;
+  return rowToFeedback(result as unknown as FeedbackRow);
 }
 
 export async function listFeedbackForRecipe(

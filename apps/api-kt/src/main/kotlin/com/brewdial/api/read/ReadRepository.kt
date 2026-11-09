@@ -130,7 +130,7 @@ class ReadRepository(
     )
 
     fun findFeedback(id: String): LinkedHashMap<String, Any?>? = queryOne(
-        "select $FEEDBACK_SELECT from feedback where id = ${sql.uuid}",
+        "select $FEEDBACK_SELECT, recipes.version as recipe_current_version from feedback inner join recipes on recipes.code = feedback.recipe_code where feedback.id = ${sql.uuid}",
         feedbackRow,
         id
     )
@@ -161,9 +161,10 @@ class ReadRepository(
 
     fun listFeedback(code: String): List<LinkedHashMap<String, Any?>> = jdbcTemplate.query(
         """
-        select $FEEDBACK_SELECT from feedback
-        where recipe_code = ?
-        order by created_at desc
+        select $FEEDBACK_SELECT, recipes.version as recipe_current_version from feedback
+        inner join recipes on recipes.code = feedback.recipe_code
+        where feedback.recipe_code = ?
+        order by feedback.created_at desc
         """.trimIndent(),
         feedbackRow,
         code
@@ -189,8 +190,10 @@ class ReadRepository(
             supersedes, superseded_by, parent_code, created_at, updated_at
         """
         const val FEEDBACK_SELECT = """
-            id, recipe_code, bean_id, owner_id, ratings, actual, comment, raw_comment, quick_tags,
-            desired_direction, next_hint, source, created_at, updated_at
+            feedback.id, feedback.recipe_code, feedback.bean_id, feedback.owner_id, feedback.ratings,
+            feedback.actual, feedback.comment, feedback.raw_comment, feedback.quick_tags,
+            feedback.desired_direction, feedback.next_hint, feedback.source, feedback.created_at,
+            feedback.updated_at, feedback.recipe_version, feedback.recipe_snapshot
         """
         const val BEAN_SELECT = """
             id, name, roaster, origin, process, roast_level, notes, recipe_count, latest_recipe_at,

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   handleArchiveRecipe,
   handleCreateFeedback,
+  handleUpdateFeedback,
   handleCreateRecipe,
   handleFindBean,
   handleGetRecentContext,
@@ -30,7 +31,7 @@ beforeEach(() => {
 });
 
 // A stored feedback row as the agent endpoint returns it (snake_case columns).
-function feedbackRowResponse(overrides: { comment: string | null; raw_comment: string | null }): Response {
+function feedbackRowResponse(overrides: Record<string, unknown> = {}): Response {
   return new Response(
     JSON.stringify({
       id: 1,
@@ -284,6 +285,66 @@ describe('handleCreateFeedback', () => {
     const body = JSON.parse(r.content[0].text);
     expect(body.feedback.rawComment).toBe('산미가 강했음');
     expect(body.feedback.comment).toBe('agent summary');
+  });
+
+  it('accepts and forwards actual dose, water, and blend details', async () => {
+    const actual = { doseG: 18, waterG: 280, blend: [{ name: 'Ethiopia', grams: 18 }] };
+    const fetchMock = vi.fn().mockResolvedValue(feedbackRowResponse({ actual, raw_comment: 'note' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await handleCreateFeedback(mockConfig, { recipeCode: 'COF-0001', rawComment: 'note', actual });
+    expect(r.isError).not.toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).actual).toEqual(actual);
+  });
+});
+
+describe('handleUpdateFeedback', () => {
+  const feedbackId = 'd9428888-19fc-4f5a-a1d2-4db03e782009';
+  it('validates updates and forwards merge controls', async () => {
+    const r = await handleUpdateFeedback(mockConfig, { id: feedbackId, actual: { doseG: null, waterG: 300 }, ratings: { overall: null, sweetness: 3 }, dryRun: true });
+    expect(r.content[0].text).toContain('Error updating feedback');
+    expect(r.content[0].text).not.toContain('Invalid feedback update');
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ dryRun: true, before: {}, after: {}, changed: ['actual'] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const ok = await handleUpdateFeedback(mockConfig, { id: feedbackId, actual: { waterG: 300 }, dryRun: true });
+    expect(JSON.parse(ok.content[0].text)).toMatchObject({ ok: true, dryRun: true, changed: ['actual'] });
+    expect(fetchMock.mock.calls[0][0]).toContain(`/api/agent/feedback/${feedbackId}`);
+  });
+
+  it('returns stale update conflicts from the API', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'version_conflict', currentUpdatedAt: '2026-11-09T00:00:00.000Z' }), { status: 409 })));
+    const r = await handleUpdateFeedback(mockConfig, { id: feedbackId, expectedUpdatedAt: '2020-01-01T00:00:00.000Z', rawComment: 'later' });
+    expect(JSON.parse(r.content[0].text)).toMatchObject({ error: 'version_conflict', currentUpdatedAt: '2026-11-09T00:00:00.000Z' });
+  });
+});
+
+describe('feedback recipe version context', () => {
+  it('returns version status in both contexts and the snapshot only in recipe context', async () => {
+    const recipe = {
+      id: 'recipe-id', code: 'COF-0001', method: 'v60', title: 'Test', version: 2, params: {}, steps: [],
+      bean_id: null, bean_snapshot: null, intent: null, notes: null, adjustment_from_previous: null, created_by: 'agent',
+      status: 'active', supersedes: null, superseded_by: null, parent_code: null,
+      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z'
+    };
+    const snapshot = { params: { doseG: 18 }, steps: [], method: 'v60', beanId: 'bean-1' };
+    const feedback = [{
+      id: 'feedback-1', recipe_code: 'COF-0001', bean_id: 'bean-1', ratings: { overall: 4 }, actual: null,
+      comment: null, raw_comment: 'good', quick_tags: null, desired_direction: null, next_hint: null,
+      source: 'mcp', created_at: '2026-01-02T00:00:00.000Z', updated_at: '2026-01-02T00:00:00.000Z',
+      recipe_version: 1, recipe_snapshot: snapshot, recipe_current_version: 2,
+      recipeVersion: 1, recipeSnapshot: snapshot, onCurrentVersion: false
+    }];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      const body = path.includes('/feedback') ? feedback : path.includes('/preferences') ? null : path.includes('/api/recipes?') ? [recipe] : recipe;
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const config = { ...mockConfig, fetchImpl };
+    const recipeContext = JSON.parse((await handleGetRecipeContext(config, { code: 'COF-0001' })).content[0].text);
+    expect(recipeContext.feedback[0]).toMatchObject({ recipeVersion: 1, onCurrentVersion: false, recipeSnapshot: snapshot });
+    const recent = JSON.parse((await handleGetRecentContext(config, { limit: 1 })).content[0].text);
+    expect(recent.recentRecipes[0].feedback[0]).toMatchObject({ recipeVersion: 1, onCurrentVersion: false });
+    expect(recent.recentRecipes[0].feedback[0]).not.toHaveProperty('recipeSnapshot');
   });
 });
 

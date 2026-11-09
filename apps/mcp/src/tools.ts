@@ -4,12 +4,14 @@ import {
   validateCreateFeedbackInput,
   validateCreateRecipeInput,
   validateUpdateBeanAttributesInput,
+  validateUpdateFeedbackInput,
   validateUpdatePreferencesInput,
   validateUpdateRecipeInput
 } from '@brewdial/shared';
 import type { ApiConfig } from './config.js';
+import { ApiError } from './api.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
-import { createFeedback } from './repositories/feedback.js';
+import { createFeedback, editFeedback } from './repositories/feedback.js';
 import {
   createRecipe,
   findSimilarRecipes,
@@ -270,17 +272,31 @@ export async function handleCreateFeedback(
       ok: true,
       feedback: {
         _id: feedback._id,
+        id: feedback.id,
         recipeCode: feedback.recipeCode,
         rawComment: feedback.rawComment ?? null,
         ...(feedback.comment != null ? { comment: feedback.comment } : {}),
         quickTags: feedback.quickTags ?? [],
         ratings: feedback.ratings ?? null,
+        actual: feedback.actual ?? null,
         source: feedback.source,
         createdAt: feedback.createdAt,
       },
     });
   } catch (error) {
     return errorResult(`Error creating feedback: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleUpdateFeedback(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const validation = validateUpdateFeedbackInput(args ?? {});
+  if (!validation.ok) return jsonError({ ok: false, error: 'Invalid feedback update', details: validation.errors });
+  try {
+    const feedback = await editFeedback(config, validation.value);
+    return jsonResult({ ok: true, ...(feedback && typeof feedback === 'object' && 'dryRun' in feedback ? feedback : { feedback }) });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) return jsonError({ ok: false, ...(error.body as Record<string, unknown>) });
+    return errorResult(`Error updating feedback: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
