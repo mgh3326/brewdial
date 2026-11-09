@@ -10,9 +10,13 @@ const brewIds = Array.from({ length: 5 }, (_, index) => String(90000000 + Math.f
 
 function curve(cupAtPourEnd: number, delayed = false): Array<[number, number]> {
   const points: Array<[number, number]> = [[0, 0], [220, cupAtPourEnd]]
-  for (let second = 2; second <= (delayed ? 11 : 7); second += 1) points.push([220, cupAtPourEnd + (second - 1) * 2])
+  for (let second = 2; second <= 11; second += 1) {
+    const cupG = delayed
+      ? cupAtPourEnd + (second - 1) * 8
+      : second === 2 ? 196 : second === 3 ? 199 : 200
+    points.push([220, cupG])
+  }
   if (delayed) points.push([220, 199], [220, 200])
-  else points.push([220, 196], [220, 199], [220, 200], [220, 200])
   return points
 }
 
