@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -21,7 +22,10 @@ def raw_record(record_id, timestamp, *, device_marker=FIXTURE_ONLY):
         "createTimeStamp": timestamp,
         "brewTime": 180,
         "recipeName": "Handmade synthetic fixture",
-        "recipeVo": {"tableId": "9081726354", "dose": 18, "pourList": []},
+        "recipeVo": {
+            "tableId": "9081726354", "dose": 18, "deviceId": device_marker,
+            "pourList": [{"volume": 220, "temperature": 92, "flowRate": 3, "pattern": 2, "deviceId": device_marker}],
+        },
         "lineChartData": "[[0,0],[220,120],[220,200]]",
         "deviceId": device_marker,
         "mac": device_marker,
@@ -36,7 +40,8 @@ def fake_client(monkeypatch, response, calls):
 
     monkeypatch.setattr(XBloomCloud, "_post", post)
     monkeypatch.setattr(XBloomCloud, "_check", staticmethod(lambda response, _what: response))
-    return XBloomCloud(member_id=123456789, token=BASE_ENV["XBLOOM_TOKEN"], auth_path=Path("/dev/null"))
+    with patch.dict(os.environ, {}, clear=True):
+        return XBloomCloud(member_id=123456789, token=BASE_ENV["XBLOOM_TOKEN"], auth_path=Path("/dev/null"))
 
 
 def test_invariant_1_reads_only_tu_brew_record_list_once(monkeypatch):
@@ -117,13 +122,17 @@ def test_since_filter_batches_at_200_and_posts_counts_only(monkeypatch, capsys):
     assert [len(batch[2]) for batch in batches] == [200, 1]
     assert all(batch[0] == collector.DEFAULT_API_URL for batch in batches)
     assert all(batch[1] == BASE_ENV["BREWDIAL_AGENT_TOKEN"] for batch in batches)
-    assert counts == {"fetched": 202, "selected": 201, "inserted": 201, "duplicate": 0, "skipped": 0}
+    assert counts == {"fetched": 202, "selected": 201, "outside_since": 1, "inserted": 201, "duplicate": 0, "skipped": 0}
+    assert all("deviceId" not in record and "mac" not in record and "memberId" not in record for batch in batches for record in batch[2])
+    assert all("deviceId" not in record["recipeVo"] for batch in batches for record in batch[2])
+    assert all("deviceId" not in pour for batch in batches for record in batch[2] for pour in record["recipeVo"]["pourList"])
     monkeypatch.setattr(collector, "collect", lambda: counts)
     assert collector.main() == 0
     output = capsys.readouterr()
     assert output.err == ""
     assert "조회 202건" in output.out
     assert "전송 201건" in output.out
+    assert "기간 이전 1건" in output.out
     assert FIXTURE_ONLY not in output.out
     assert BASE_ENV["XBLOOM_TOKEN"] not in output.out
     assert BASE_ENV["BREWDIAL_AGENT_TOKEN"] not in output.out
@@ -140,6 +149,7 @@ def test_since_window_is_overridable():
     counts = collector.collect(dict(BASE_ENV, XBLOOM_COLLECT_SINCE_HOURS="6"), client_factory=lambda *_: client, post_batch=lambda _url, _token, batch: batches.append(batch) or {"inserted": [], "duplicate": [], "skipped": []}, now=now)
 
     assert counts["selected"] == 1
+    assert counts["outside_since"] == 0
     assert len(batches) == 1
 
 
@@ -150,3 +160,32 @@ def test_no_records_produce_no_empty_post(monkeypatch):
     monkeypatch.setattr(collector, "_post_batch", lambda *_args: pytest.fail("must not post"))
 
     assert collector.collect(dict(BASE_ENV), now=1_800_000_000)["selected"] == 0
+
+
+def test_record_missing_curve_is_forwarded_and_counted_as_skipped(monkeypatch):
+    malformed = raw_record("9000000009", 1_800_000_000_000)
+    del malformed["lineChartData"]
+    calls = []
+    client = fake_client(monkeypatch, {"result": "success", "gList": [malformed]}, calls)
+    monkeypatch.setattr(collector, "_new_client", lambda *_args: client)
+    batches = []
+
+    counts = collector.collect(dict(BASE_ENV), post_batch=lambda _url, _token, batch: batches.append(batch) or {"inserted": [], "duplicate": [], "skipped": [{"index": 0, "reason": "broken_run"}]}, now=1_800_000_000)
+
+    assert counts == {"fetched": 1, "selected": 1, "outside_since": 0, "inserted": 0, "duplicate": 0, "skipped": 1}
+    sent = batches[0][0]
+    assert "lineChartData" not in sent
+    assert "deviceId" not in sent["recipeVo"]
+    assert all("deviceId" not in pour for pour in sent["recipeVo"]["pourList"])
+
+
+@pytest.mark.parametrize("url", ["http://collector.invalid", "http://user:secret@localhost:8021", "https://localhost:8021/path?token=secret"])
+def test_api_url_must_be_tls_or_loopback_and_cannot_embed_credentials(monkeypatch, url):
+    monkeypatch.setattr(collector, "_new_client", lambda *_args: pytest.fail("validate URL before xBloom fetch"))
+
+    with pytest.raises(ValueError):
+        collector.collect(dict(BASE_ENV, BREWDIAL_API_URL=url), now=1_800_000_000)
+
+
+def test_public_https_api_url_is_allowed():
+    assert collector._validated_api_url("https://api.example.test/") == "https://api.example.test"

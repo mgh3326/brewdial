@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import math
 import os
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
@@ -19,6 +21,9 @@ DEFAULT_API_URL = "http://127.0.0.1:8021"
 DEFAULT_SINCE_HOURS = 72.0
 AUTH_ERROR_CODES = {20003}
 AUTH_MESSAGE = "xBloom 인증이 만료되었거나 설정되지 않았습니다. `xbloom cloud login`을 실행하고 Infisical의 XBLOOM_MEMBER_ID와 XBLOOM_TOKEN을 갱신하세요."
+RECORD_FIELDS = ("tableId", "createTimeStamp", "brewTime", "recipeName", "recipeVo", "lineChartData")
+RECIPE_FIELDS = ("tableId", "dose", "grinderSize", "rpm", "cupType", "isEnableBypassWater", "bypassVolume", "bypassTemp", "pourList")
+POUR_FIELDS = ("volume", "temperature", "flowRate", "pattern", "pausing", "isEnableVibrationBefore", "isEnableVibrationAfter")
 
 
 class XBloomAuthenticationError(Exception):
@@ -45,7 +50,8 @@ def _new_client(member_id: int, token: str) -> XBloomCloud:
 
 
 def _is_record(value: Any) -> bool:
-    return isinstance(value, dict) and all(key in value for key in ("tableId", "brewTime", "lineChartData"))
+    record_fields = ("createTimeStamp", "brewTime", "recipeName", "recipeVo", "lineChartData")
+    return isinstance(value, dict) and "tableId" in value and any(key in value for key in record_fields)
 
 
 def _flatten_records(value: Any) -> Iterable[Dict[str, Any]]:
@@ -57,6 +63,36 @@ def _flatten_records(value: Any) -> Iterable[Dict[str, Any]]:
     elif isinstance(value, list):
         for nested in value:
             yield from _flatten_records(nested)
+
+
+def _allowlisted_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    result = {key: record[key] for key in RECORD_FIELDS if key in record}
+    recipe = record.get("recipeVo")
+    if isinstance(recipe, dict):
+        allowed_recipe = {key: recipe[key] for key in RECIPE_FIELDS if key in recipe and key != "pourList"}
+        pours = recipe.get("pourList")
+        if isinstance(pours, list):
+            allowed_recipe["pourList"] = [
+                {key: pour[key] for key in POUR_FIELDS if key in pour} if isinstance(pour, dict) else pour
+                for pour in pours
+            ]
+        result["recipeVo"] = allowed_recipe
+    return result
+
+
+def _validated_api_url(value: str) -> str:
+    parts = urlsplit(value)
+    host = parts.hostname
+    if not parts.netloc or host is None or parts.path not in ("", "/") or parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise ValueError("BREWDIAL_API_URL must be an origin URL without credentials, query, or fragment")
+    is_loopback = host.lower() == "localhost"
+    try:
+        is_loopback = is_loopback or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    if parts.scheme != "https" and not (parts.scheme == "http" and is_loopback):
+        raise ValueError("BREWDIAL_API_URL must use HTTPS or a loopback HTTP address")
+    return value.rstrip("/")
 
 
 def fetch_records(client: XBloomCloud) -> List[Dict[str, Any]]:
@@ -107,13 +143,14 @@ def collect(
     if not math.isfinite(since_hours) or since_hours <= 0:
         raise ValueError("XBLOOM_COLLECT_SINCE_HOURS must be a positive number")
 
+    api_url = _validated_api_url(values.get("BREWDIAL_API_URL", DEFAULT_API_URL))
     client = client_factory(member_id, token)
     records = fetch_records(client)
     current_time = time.time() if now is None else now
     cutoff_ms = (current_time - since_hours * 3600) * 1000
-    recent = [record for record in records if _is_recent(record, cutoff_ms)]
-    counts = {"fetched": len(records), "selected": len(recent), "inserted": 0, "duplicate": 0, "skipped": 0}
-    api_url = values.get("BREWDIAL_API_URL", DEFAULT_API_URL)
+    recent = [_allowlisted_record(record) for record in records if _is_recent(record, cutoff_ms)]
+    outside_since = len(records) - len(recent)
+    counts = {"fetched": len(records), "selected": len(recent), "outside_since": outside_since, "inserted": 0, "duplicate": 0, "skipped": 0}
     for start in range(0, len(recent), 200):
         result = post_batch(api_url, agent_token, recent[start : start + 200])
         counts["inserted"] += len(result.get("inserted", []))
@@ -132,9 +169,7 @@ def main() -> int:
         # Never print exception text: HTTP/client exceptions can contain credentials.
         print("xBloom 수집에 실패했습니다. 설정과 서비스 상태를 확인하세요.", file=sys.stderr)
         return 1
-    print(
-        "xBloom 수집 완료: 조회 {fetched}건, 전송 {selected}건, 신규 {inserted}건, 중복 {duplicate}건, 건너뜀 {skipped}건".format(**counts)
-    )
+    print("xBloom 수집 완료: 조회 {fetched}건, 전송 {selected}건, 기간 이전 {outside_since}건, 신규 {inserted}건, 중복 {duplicate}건, 건너뜀 {skipped}건".format(**counts))
     return 0
 
 

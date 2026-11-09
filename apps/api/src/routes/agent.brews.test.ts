@@ -91,8 +91,8 @@ test('POST /agent/xbloom/brew-records strips raw identifiers, skips bad records,
   const records = [raw, { ...raw, tableId: `${rawId}2`, brewTime: 0 }, { ...raw, tableId: `${rawId}3`, lineChartData: '{broken' }]
   const first = await request(agentReq('/api/agent/xbloom/brew-records', { method: 'POST', body: JSON.stringify({ records }) }))
   const firstBody = await first.json() as { inserted: string[]; duplicate: string[]; skipped: Array<{ index: number; reason: string }> }
+  expect(first.status, JSON.stringify(firstBody)).toBe(200)
   firstBody.inserted.forEach((id) => insertedBrewIds.add(id))
-  expect(first.status).toBe(200)
   expect(firstBody.inserted).toEqual([rawId])
   expect(firstBody.duplicate).toEqual([])
   expect(firstBody.skipped).toEqual([

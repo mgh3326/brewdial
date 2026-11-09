@@ -53,6 +53,15 @@ class AgentController(
         return ResponseEntity.ok(brews.ingest(brewItems))
     }
 
+    @PostMapping("/xbloom/brew-records")
+    fun ingestXBloomBrewRecords(request: HttpServletRequest): ResponseEntity<Any> {
+        val body = bodies.read(request) as? ObjectNode ?: return error("body must contain only a records array", HttpStatus.BAD_REQUEST)
+        if (body.propertyNames().any { it != "records" }) return error("body must contain only a records array", HttpStatus.BAD_REQUEST)
+        val items = body.get("records")
+        if (items == null || !items.isArray || items.size() !in 1..200) return error("records must contain 1 to 200 items", HttpStatus.BAD_REQUEST)
+        return ResponseEntity.ok(brews.ingestRaw(items.toList()))
+    }
+
     @GetMapping("/brews")
     fun listBrews(
         @RequestParam(required = false) limit: String?,

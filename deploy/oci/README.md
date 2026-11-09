@@ -39,7 +39,7 @@ xBloom brew record 수집기는 30분마다 실행되는 Dagu 작업이다. 운�
 
 - `/xbloom`: `XBLOOM_MEMBER_ID`, `XBLOOM_TOKEN`
 - `/brewdial`: `BREWDIAL_AGENT_TOKEN`
-- 선택 항목: `/brewdial`의 `BREWDIAL_API_URL` (기본값은 `http://127.0.0.1:8021`), `/xbloom`의 `XBLOOM_COLLECT_SINCE_HOURS` (기본값 `72`)
+- 선택 항목: `/brewdial`의 `BREWDIAL_API_URL` (기본값은 `http://127.0.0.1:8021`; 외부 주소는 HTTPS만 허용), `/xbloom`의 `XBLOOM_COLLECT_SINCE_HOURS` (기본값 `72`)
 
 ### 설치 및 실행
 
@@ -55,4 +55,4 @@ uv sync --locked --project /opt/brewdial-xbloom-collector --no-dev
 hk-infisical run /xbloom -- hk-infisical run /brewdial -- uv run --locked --project /opt/brewdial-xbloom-collector brewdial-xbloom-collector
 ```
 
-성공 시 조회·전송·신규·중복·건너뜀 건수만 한 줄로 출력한다. 종료 코드 `2`는 xBloom 토큰이 없거나 거부되었다는 뜻이다. 운영자는 자신의 기기에서 `xbloom cloud login`을 다시 실행한 뒤 `/xbloom`의 `XBLOOM_MEMBER_ID`와 `XBLOOM_TOKEN`을 갱신하고 작업을 다시 실행한다. 종료 코드 `1`은 다른 수집 오류다. 로그에는 토큰이나 원시 record가 출력되지 않는다.
+성공 시 조회·전송·기간 이전·신규·중복·건너뜀 건수만 한 줄로 출력한다. 종료 코드 `2`는 xBloom 토큰이 없거나 거부되었다는 뜻이다. 운영자는 자신의 기기에서 `xbloom cloud login`을 다시 실행한 뒤 `/xbloom`의 `XBLOOM_MEMBER_ID`와 `XBLOOM_TOKEN`을 갱신하고 작업을 다시 실행한다. 토큰 문제로 수집이 72시간 넘게 중단되었다면 재수집 전에 `XBLOOM_COLLECT_SINCE_HOURS`를 중단 기간 이상으로 늘리고, 복구가 끝난 뒤 `72`로 되돌린다. `기간 이전` 건수는 현재 설정의 시간 범위 밖에 있는 record 수다. 종료 코드 `1`은 다른 수집 오류다. 로그에는 토큰이나 원시 record가 출력되지 않는다.
