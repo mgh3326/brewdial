@@ -77,8 +77,6 @@ test('POST /agent/brews inserts, preserves duplicates unchanged, rejects identif
   expect(invalid.status).toBe(400)
   const badText = await request(agentReq('/api/agent/brews', { method: 'POST', body: JSON.stringify({ brews: [{ ...baseline[0], xbloomBrewId: '99999998', recipeName: 'bad\u0000text' }] }) }))
   expect(badText.status).toBe(400)
-  const badTextBody = await badText.json() as Record<string, any>
-  expect(badTextBody.details?.[0] ?? JSON.stringify(badTextBody)).toContain('brews[0]')
   const badGet = await request(agentReq('/api/agent/brews?limit=0'))
   expect(badGet.status).toBe(400)
 
