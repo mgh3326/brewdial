@@ -14,7 +14,7 @@
 운영 규칙:
 
 - 명령은 `opc` 계정에서 `sudo`와 함께 실행한다. 명령 출력에 비밀 값이 나타나지 않도록 한다.
-- **데이터베이스 자격 증명은 환경 파일 경로로만 전달한다.** 파일은 `/etc/shiftgate/brewdial-api.env`와 `/etc/shiftgate/brewdial-api-mysql.env`이며 소유자는 `root:root`, 권한은 `0600`이다. shiftgate는 파일 내용을 출력하지 않고 `docker run --env-file`에 경로로 전달한다. 파일을 커밋하거나 티켓에 붙이거나 `cat`으로 출력하지 않는다. 키 존재 여부는 `sudo grep -c '^DATABASE_URL=' <file>`로 확인한다.
+- **현재 데이터베이스 자격 증명은 환경 파일 경로로만 전달한다.** 프로덕션 파일은 `/etc/shiftgate/brewdial-api-mysql.env`이며 소유자는 `root:root`, 권한은 `0600`이다. 이전 PostgreSQL 파일 `/etc/shiftgate/brewdial-api.env`는 현재 서비스에서 사용하지 않으며 최종 dump와 mirror를 확인한 뒤 삭제 대상이다. shiftgate는 현재 파일의 내용을 출력하지 않고 `docker run --env-file`에 경로로 전달한다. 파일을 커밋하거나 티켓에 붙이거나 `cat`으로 출력하지 않는다. 키 존재 여부는 `sudo grep -c '^DATABASE_URL=' <file>`로 확인한다.
 - 저장소 설정은 `deploy/oci/shiftgate/services.yaml` 및 `.github/workflows/deploy-oci.yml`이다.
 
 ---
@@ -281,4 +281,4 @@ psql -d postgres -f /var/backups/brewdial/final/globals-pg-final-20261109-0705.s
 pg_restore --create -d postgres /var/backups/brewdial/final/brewdial-pg-final-20261109-0705.dump
 ```
 
-이 절차는 PostgreSQL 복구 자료를 되살리며 프로덕션 롤백 절차가 아니다. `brewdial-api` 서비스 정의도 shiftgate 설정에서 제거했다. 운영자는 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거해야 한다. 현재 호스트에 남은 컨테이너의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
+이 절차는 PostgreSQL 데이터베이스 복구 자료만 되살린다. `brewdial-api` 서비스 정의와 PostgreSQL 환경 파일은 현재 설정에서 제외되었으므로 이 절차는 Node API를 복구하지 않으며 프로덕션 롤백 경로가 아니다. PostgreSQL Node API를 다시 운영할 필요가 생기면 서비스 설정과 자격 증명을 별도 승인된 복구 작업으로 준비해야 한다. `brewdial-api` 서비스 정의는 shiftgate 설정에서 제거했다. 운영자는 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거해야 한다. 현재 호스트에 남은 컨테이너의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
