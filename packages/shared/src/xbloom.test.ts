@@ -242,8 +242,8 @@ describe('validation boundaries (hardware ranges)', () => {
   it.each([
     ['pause -1', -1, false],
     ['pause 0', 0, true],
-    ['pause 255', 255, true],
-    ['pause 256', 256, false]
+    ['pause 127', 127, true],
+    ['pause 128', 128, false]
   ])('pause_s %s', (_l, pause_s, ok) => {
     const run = () =>
       fromXBloomYaml(mkYaml({}, [{ ...basePour, pause_s }, { ...basePour, label: 'P2' }]));
@@ -492,7 +492,24 @@ describe('toXBloomYaml export validation + guards', () => {
     expect(() => toXBloomYaml(mkDoc(over))).toThrow(re);
   });
 
-  it('rejects pause_s beyond 255 carried by a final-pour tag', () => {
+  it('rejects exporting more than nine pours', () => {
+    const doc = mkDoc();
+    doc.steps = Array.from({ length: 10 }, (_, i) => ({
+      atSec: i * 10,
+      endSec: i * 10 + 5,
+      waterG: (i + 1) * 20,
+      pourRateGPerSec: 3,
+      note: `P${i + 1}`
+    }));
+    expect(() => toXBloomYaml(doc)).toThrow(/xBloom.*붓기.*9/);
+  });
+
+  it('rejects importing more than nine pours', () => {
+    const pours = Array.from({ length: 10 }, (_, i) => ({ ...basePour, label: `P${i + 1}` }));
+    expect(() => fromXBloomYaml(mkYaml({}, pours))).toThrow(/pours.*9.*xBloom/);
+  });
+
+  it('rejects pause_s beyond 127 carried by a final-pour tag', () => {
     const doc = mkDoc();
     doc.steps![1].note = 'B [label=B pause_s=300]';
     expect(() => toXBloomYaml(doc)).toThrow(/pause_s/);

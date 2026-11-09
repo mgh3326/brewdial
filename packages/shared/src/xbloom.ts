@@ -67,7 +67,7 @@
 //
 // Hardware validity is enforced in BOTH directions: grind 1-80 (0 = 무분쇄),
 // temp_c 40-95, flow_ml_s 3.0-3.5 in 0.1 steps, rpm 0 or 60-120 in steps of 10,
-// pause_s 0-255, pours >= 2.
+// pause_s 0-127, pours 2-9.
 
 import { parse, stringify } from 'yaml';
 import type { CreateRecipeInput } from './api-types.js';
@@ -444,8 +444,8 @@ function validatePour(p: unknown, i: number, errors: string[]): void {
     errors.push(`${path}.pattern must be one of ${PATTERNS.join('|')}`);
   }
   if (p.pause_s !== undefined) {
-    if (!isInt(p.pause_s) || p.pause_s < 0 || p.pause_s > 255) {
-      errors.push(`${path}.pause_s must be an integer in 0-255`);
+    if (!isInt(p.pause_s) || p.pause_s < 0 || p.pause_s > 127) {
+      errors.push(`${path}.pause_s must be an integer in 0-127 (xBloom machine limit)`);
     }
   }
   if (p.rpm !== undefined) {
@@ -487,8 +487,8 @@ export function assertXBloomRecipe(raw: unknown): asserts raw is XBloomFile {
       errors.push('stage_temps must be a number array');
     }
   }
-  if (!Array.isArray(raw.pours) || raw.pours.length < 2) {
-    errors.push('pours must be an array with at least 2 entries');
+  if (!Array.isArray(raw.pours) || raw.pours.length < 2 || raw.pours.length > 9) {
+    errors.push('pours must be an array with at least 2 and at most 9 entries for xBloom');
   } else {
     raw.pours.forEach((p, i) => validatePour(p, i, errors));
   }
@@ -613,6 +613,9 @@ export function toXBloomYaml(recipe: XBloomExportSource): string {
     recipe.notes !== undefined ? extractRecipeTag(recipe.notes) : { tag: null, text: '' };
 
   const steps = recipe.steps ?? [];
+  if (steps.length > 9) {
+    throw new XBloomValidationError(['xBloom 기기 제한으로 붓기는 최대 9회입니다.']);
+  }
   const pours = steps.map((s, i) => {
     const { tag, quoted, text } = extractStepTag(s.note ?? '');
     const prevWater = i === 0 ? 0 : (steps[i - 1].waterG ?? 0);

@@ -362,14 +362,14 @@ private fun validateRecipeParams(input: ObjectNode, errors: MutableList<String>)
         else {
             val outBypass = objectNode()
             val water = bypass.get("waterG")
-            if (!isFiniteNumber(water) || water!!.asDouble() <= 0) errors += "params.bypass.waterG must be a positive finite number"
+            if (!isFiniteNumber(water) || water!!.asDouble() < 5 || water.asDouble() > 100) errors += "params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml"
             else outBypass.set("waterG", water)
             if (bypass.has("tempC")) {
                 val temp = bypass.get("tempC")
                 if (!isFiniteNumber(temp) || temp!!.asDouble() < 0 || temp.asDouble() > 100) errors += "params.bypass.tempC must be between 0 and 100"
                 else outBypass.set("tempC", temp)
             }
-            if (outBypass.has("waterG")) out.set("bypass", outBypass)
+            if (outBypass.has("waterG") && outBypass.get("waterG").asDouble() in 5.0..100.0) out.set("bypass", outBypass)
         }
     }
     if (raw.has("grind")) {
@@ -634,7 +634,7 @@ private fun validateRecipeSteps(input: ObjectNode, errors: MutableList<String>):
         if (stepObject.has("pauseSec")) {
             val value = stepObject.get("pauseSec")
             val pause = value?.takeIf(::isFiniteNumber)?.asDouble()
-            if (pause == null || pause % 1.0 != 0.0 || pause !in 0.0..255.0) errors += "steps[$index].pauseSec must be an integer in 0-255"
+            if (pause == null || pause % 1.0 != 0.0 || pause !in 0.0..127.0) errors += "steps[$index].pauseSec must be an integer in 0-127 (xBloom machine limit)"
             else built.set("pauseSec", value)
         }
         if (stepObject.has("tempC")) {
@@ -670,6 +670,10 @@ private fun validateRecipeCrossFields(
     errors: MutableList<String>,
     warnings: MutableList<String>
 ) {
+    val rpms = value.steps?.mapNotNull { step ->
+        step.get("rpm")?.takeIf(::isFiniteNumber)?.asDouble()?.takeIf { it != 0.0 }
+    }?.distinct().orEmpty()
+    if (rpms.size > 1) warnings += "xBloom 기기는 첫 붓기의 rpm을 전체 추출에 적용합니다."
     if (value.method == "other") return
     val params = value.params
     val doseG = params?.get("doseG")?.takeIf(::isFiniteNumber)?.asDouble()

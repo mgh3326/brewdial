@@ -154,15 +154,15 @@ function validateRecipeParams(
       errors.push('params.bypass must be an object');
     } else {
       const bypass: NonNullable<RecipeParams['bypass']> = { waterG: 0 };
-      if (typeof raw.bypass.waterG !== 'number' || !Number.isFinite(raw.bypass.waterG) || raw.bypass.waterG <= 0) {
-        errors.push('params.bypass.waterG must be a positive finite number');
+      if (typeof raw.bypass.waterG !== 'number' || !Number.isFinite(raw.bypass.waterG) || raw.bypass.waterG < 5 || raw.bypass.waterG > 100) {
+        errors.push('params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml');
       } else bypass.waterG = raw.bypass.waterG;
       if (raw.bypass.tempC !== undefined) {
         if (typeof raw.bypass.tempC !== 'number' || !Number.isFinite(raw.bypass.tempC) || raw.bypass.tempC < 0 || raw.bypass.tempC > 100) {
           errors.push('params.bypass.tempC must be between 0 and 100');
         } else bypass.tempC = raw.bypass.tempC;
       }
-      if (bypass.waterG > 0) out.bypass = bypass;
+      if (bypass.waterG >= 5 && bypass.waterG <= 100) out.bypass = bypass;
     }
   }
   // ROB-611: grind is string (legacy free text) | GrindSpec (structured).
@@ -470,7 +470,7 @@ function validateRecipeSteps(
       }
     }
     if (step.pauseSec !== undefined) {
-      if (!isInt(step.pauseSec) || step.pauseSec < 0 || step.pauseSec > 255) errors.push(`steps[${i}].pauseSec must be an integer in 0-255`);
+      if (!isInt(step.pauseSec) || step.pauseSec < 0 || step.pauseSec > 127) errors.push(`steps[${i}].pauseSec must be an integer in 0-127 (xBloom machine limit)`);
       else built.pauseSec = step.pauseSec;
     }
     if (step.tempC !== undefined) {
@@ -510,6 +510,8 @@ function validateRecipeCrossFields(
   warnings: string[]
 ): void {
   const { method } = value;
+  const rpmWarning = xBloomRpmWarning(value.steps);
+  if (rpmWarning) warnings.push(rpmWarning);
   if (method === 'other') return;
 
   const params = value.params ?? {};
@@ -597,6 +599,15 @@ function validateRecipeCrossFields(
       warnings.push(`params.targetTimeSec (${targetTimeSec}s) is outside the typical 60–600s range`);
     }
   }
+}
+
+function xBloomRpmWarning(steps: RecipeStep[] | undefined): string | undefined {
+  const rpms = new Set(
+    (steps ?? [])
+      .map((step) => step.rpm)
+      .filter((rpm): rpm is number => typeof rpm === 'number' && rpm !== 0)
+  );
+  return rpms.size > 1 ? 'xBloom 기기는 첫 붓기의 rpm을 전체 추출에 적용합니다.' : undefined;
 }
 
 export function validateCreateRecipeInput(
@@ -770,7 +781,9 @@ export function validateUpdateRecipeInput(
   }
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value, warnings: [] };
+  const rpmWarning = xBloomRpmWarning(value.steps);
+  const warnings = rpmWarning ? [rpmWarning] : [];
+  return { ok: true, value, warnings };
 }
 
 function validateRatings(
