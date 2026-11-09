@@ -86,7 +86,7 @@ class AgentXBloomBrewService(
             mapped.put("vibrationBefore", number(pour?.get("isEnableVibrationBefore")) == 1.0)
             mapped.put("vibrationAfter", number(pour?.get("isEnableVibrationAfter")) == 1.0)
         }
-        output.set<JsonNode>("curve", curve.deepCopy<JsonNode>())
+        output.set("curve", curve.deepCopy())
         val errors = validateXBloomBrew(output)
         if (errors.isNotEmpty()) throw RawBrewRecordException("invalid xBloom brew record: ${errors.joinToString("; ")}")
         return output
