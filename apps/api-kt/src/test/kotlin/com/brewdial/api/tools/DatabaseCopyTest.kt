@@ -348,6 +348,9 @@ class DatabaseCopyTest {
                 '[{"t":0,"pour":40.25},{"t":45,"pour":120}]', 'bean-1', '{"name":"Gesha 게이샤"}', array['clarity','단맛'], 'agent', 'active', null, true, '{"cone":true}', '2026-03-01 01:02:03.654321+00'),
                ('66666666-6666-4666-8666-666666666666', 'COF-0042', 'espresso', 'private', 1,
                 '{}', '[]', null, null, '{}', 'manual', 'reference', '$alice', false, null, '2026-03-01 01:02:03+00')""",
+            """insert into brews (xbloom_brew_id, brewed_at, brew_time_sec, recipe_name, xbloom_recipe_id, total_water_ml, final_cup_g, retention_g, pour_end_sec, cup_at_pour_end_g, drawdown_sec, early_drawdown_g_per_sec, recipe_snapshot, curve) values
+               ('brew-fixture-1', '2026-03-01 01:02:03+00', 180, 'Fixture brew', 'xbloom-recipe-1', 220, 200, 20, 1, 120, 10, 8, '{"doseG":18}', '[[0,0],[220,120],[220,200]]')""",
+            """insert into xbloom_recipe_links (xbloom_recipe_id, recipe_code) values ('xbloom-recipe-1', 'COF-0041')""",
             """insert into feedback (id, recipe_code, bean_id, ratings, actual, comment, quick_tags, desired_direction, next_hint, source, owner_id) values
                ('77777777-7777-4777-8777-777777777777', 'COF-0041', 'bean-1', '{"overall":4.5}', '{"dose":18}', 'good', array['tag, "comma"','태그'], '{}', null, 'web', '$alice'),
                ('88888888-8888-4888-8888-888888888888', 'COF-0042', null, null, null, null, null, null, array['next'], 'mcp', null)""",
