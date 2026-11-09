@@ -12,5 +12,10 @@ feedback.get('/:code/feedback', async (c) => {
   const recipe = await getRecipeByCode(db, code, appUserId)
   if (!recipe) return c.json({ error: 'recipe not found' }, 404)
   const rows = await listFeedbackByRecipe(db, code)
-  return c.json(rows)
+  return c.json(rows.map((row) => ({
+    ...row,
+    recipeVersion: row.recipe_version,
+    recipeSnapshot: row.recipe_snapshot,
+    onCurrentVersion: row.recipe_version != null && row.recipe_version === row.recipe_current_version,
+  })))
 })

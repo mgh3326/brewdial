@@ -209,9 +209,13 @@ export interface ActualBrewParams {
   tempC?: number;
   grind?: string;
   timeSec?: number;
+  doseG?: number;
+  waterG?: number;
+  blend?: Array<{ beanId?: string; name?: string; grams: number }>;
 }
 
 export interface FeedbackDoc {
+  id?: string;
   _id: string;
   _rev?: string;
   type: 'feedback';
@@ -228,6 +232,19 @@ export interface FeedbackDoc {
   source: FeedbackSource;
   createdAt: string;
   updatedAt: string;
+  recipeVersion?: number;
+  recipeSnapshot?: RecipeSnapshot;
+  onCurrentVersion?: boolean;
+}
+
+export interface RecipeSnapshot {
+  params: RecipeParams;
+  steps: RecipeStep[];
+  method: BrewMethod;
+  dripperId?: string;
+  grinderId?: string;
+  grinderIds?: string[];
+  beanId?: string;
 }
 
 export interface PreferenceDoc {

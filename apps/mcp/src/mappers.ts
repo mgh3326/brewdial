@@ -90,13 +90,17 @@ export interface FeedbackRow {
   source: string;
   created_at: string;
   updated_at: string;
+  recipe_version?: number | null;
+  recipe_snapshot?: import('@brewdial/shared').RecipeSnapshot | string | null;
+  recipe_current_version?: number;
 }
 
 export const FEEDBACK_COLUMNS =
-  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at';
+  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at,recipe_version,recipe_snapshot,recipe_current_version,recipeVersion,recipeSnapshot,onCurrentVersion';
 
 export function rowToFeedback(r: FeedbackRow): FeedbackDoc {
   const doc: FeedbackDoc = {
+    id: r.id,
     _id: `feedback:${r.recipe_code}:${r.id}`,
     type: 'feedback',
     recipeCode: r.recipe_code as RecipeCode,
@@ -113,6 +117,9 @@ export function rowToFeedback(r: FeedbackRow): FeedbackDoc {
   if (r.quick_tags != null) doc.quickTags = r.quick_tags as QuickFeedbackTag[];
   if (r.desired_direction != null) doc.desiredDirection = r.desired_direction;
   if (r.next_hint != null) doc.nextHint = r.next_hint;
+  if (r.recipe_version != null) doc.recipeVersion = r.recipe_version;
+  if (r.recipe_snapshot != null) doc.recipeSnapshot = typeof r.recipe_snapshot === 'string' ? JSON.parse(r.recipe_snapshot) : r.recipe_snapshot;
+  if (r.recipe_current_version !== undefined && r.recipe_version != null) doc.onCurrentVersion = r.recipe_version === r.recipe_current_version;
   return doc;
 }
 

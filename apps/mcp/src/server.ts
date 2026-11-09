@@ -12,6 +12,7 @@ import type { ApiConfig } from './config.js';
 import {
   handleArchiveRecipe,
   handleCreateFeedback,
+  handleUpdateFeedback,
   handleCreateRecipe,
   handleFindBean,
   handleGetRecentContext,
@@ -408,11 +409,55 @@ const TOOLS: Tool[] = [
             clarity: { type: 'integer', minimum: 0, maximum: 4 }
           }
         },
+        actual: {
+          type: 'object',
+          description: '실제 추출값입니다. doseG, waterG는 양수이고 blend는 최대 5개 원두별 grams를 기록합니다.',
+          properties: {
+            tempC: { type: 'number' }, grind: { type: 'string' }, timeSec: { type: 'number' },
+            doseG: { type: 'number', exclusiveMinimum: 0 }, waterG: { type: 'number', exclusiveMinimum: 0 },
+            blend: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'object', required: ['grams'], anyOf: [{ required: ['beanId'] }, { required: ['name'] }], properties: { beanId: { type: 'string' }, name: { type: 'string' }, grams: { type: 'number', exclusiveMinimum: 0 } }, additionalProperties: false } }
+          }
+        },
         source: { type: 'string', enum: ['coffee_profile', 'agent', 'mcp', 'api'], description: 'Defaults to coffee_profile for this tool.' },
         desiredDirection: { type: 'array', items: { type: 'string' } },
         nextHint: { type: 'array', items: { type: 'string' } }
       },
       required: ['recipeCode']
+    }
+  },
+  {
+    name: 'update_feedback',
+    title: 'Update Feedback',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    description: '저장된 피드백을 수정합니다. ratings와 actual은 키 단위로 병합되고 null인 키는 삭제됩니다. 텍스트와 태그 배열은 전달한 값으로 교체됩니다. expectedUpdatedAt이 오래되면 충돌을 반환하고 dryRun은 저장하지 않고 before/after/changed를 보여줍니다.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '피드백 UUID' }, expectedUpdatedAt: { type: 'string' }, dryRun: { type: 'boolean' },
+        ratings: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            overall: { type: ['integer', 'null'], minimum: 1, maximum: 5 },
+            sweetness: { type: ['integer', 'null'], minimum: 0, maximum: 4 }, burnt: { type: ['integer', 'null'], minimum: 0, maximum: 4 },
+            bitter: { type: ['integer', 'null'], minimum: 0, maximum: 4 }, sour: { type: ['integer', 'null'], minimum: 0, maximum: 4 },
+            body: { type: ['integer', 'null'], minimum: 0, maximum: 4 }, astringency: { type: ['integer', 'null'], minimum: 0, maximum: 4 },
+            clarity: { type: ['integer', 'null'], minimum: 0, maximum: 4 }
+          }
+        },
+        actual: {
+          type: 'object', additionalProperties: false,
+          description: '실제 추출값을 키별로 병합합니다. 키 값을 null로 보내면 해당 값을 삭제합니다.',
+          properties: {
+            tempC: { type: ['number', 'null'] }, grind: { type: ['string', 'null'] }, timeSec: { type: ['number', 'null'] },
+            doseG: { type: ['number', 'null'], exclusiveMinimum: 0 }, waterG: { type: ['number', 'null'], exclusiveMinimum: 0 },
+            blend: { type: ['array', 'null'], minItems: 1, maxItems: 5, items: { type: 'object', required: ['grams'], anyOf: [{ required: ['beanId'] }, { required: ['name'] }], properties: { beanId: { type: 'string' }, name: { type: 'string' }, grams: { type: 'number', exclusiveMinimum: 0 } }, additionalProperties: false } }
+          }
+        },
+        rawComment: { type: ['string', 'null'] }, comment: { type: ['string', 'null'] },
+        quickTags: { type: ['array', 'null'], items: { type: 'string' } },
+        desiredDirection: { type: ['array', 'null'], items: { type: 'string' } },
+        nextHint: { type: ['array', 'null'], items: { type: 'string' } }
+      }, required: ['id']
     }
   },
   {
@@ -462,6 +507,7 @@ export function createBrewdialMcpServer(
         case 'get_recent_context': result = await handleGetRecentContext(api, a); break;
         case 'get_recipe_context': result = await handleGetRecipeContext(api, a); break;
         case 'create_feedback': result = await handleCreateFeedback(api, a); break;
+        case 'update_feedback': result = await handleUpdateFeedback(api, a); break;
         case 'update_preferences': result = await handleUpdatePreferences(api, a); break;
         default:
           result = { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

@@ -58,6 +58,19 @@ export interface CreateFeedbackInput {
   source?: FeedbackSource;
 }
 
+export interface UpdateFeedbackInput {
+  id: string;
+  ratings?: Record<string, number | null>;
+  actual?: Record<string, unknown>;
+  rawComment?: string | null;
+  comment?: string | null;
+  quickTags?: QuickFeedbackTag[] | null;
+  desiredDirection?: string[] | null;
+  nextHint?: string[] | null;
+  expectedUpdatedAt?: string;
+  dryRun?: boolean;
+}
+
 export interface CreateFeedbackResponse {
   feedback: FeedbackDoc;
 }

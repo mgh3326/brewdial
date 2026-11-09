@@ -17,7 +17,7 @@ const RECIPE_COLUMNS =
   'id,code,method,title,version,params,steps,bean_id,bean_snapshot,intent,notes,adjustment_from_previous,created_by,owner_id,is_official,dripper_portability,status,supersedes,superseded_by,parent_code,created_at,updated_at'
 
 const FEEDBACK_COLUMNS =
-  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at'
+  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at,recipe_version,recipe_snapshot,recipe_current_version,recipeVersion,recipeSnapshot,onCurrentVersion'
 
 const recipeColumnSet = new Set(RECIPE_COLUMNS.split(','))
 const feedbackColumnSet = new Set(FEEDBACK_COLUMNS.split(','))

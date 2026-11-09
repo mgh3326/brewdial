@@ -5,6 +5,7 @@ import {
   validateCreateRecipeInput,
   validateUpdateBeanAttributesInput,
   validateUpdatePreferencesInput,
+  validateUpdateFeedbackInput,
   validateUpdateRecipeInput
 } from './validation.js';
 
@@ -157,6 +158,25 @@ describe('validateCreateFeedbackInput', () => {
       nextHint: ['try +2C'],
       source: 'agent'
     });
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts positive dose, water, and up to five named blend parts', () => {
+    const result = validateCreateFeedbackInput({ recipeCode: 'COF-0042', rawComment: 'balanced', actual: { doseG: 18, waterG: 280, blend: [{ name: 'A', grams: 10 }, { beanId: 'bean-b', grams: 8 }] } });
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    { doseG: 0 }, { waterG: Number.POSITIVE_INFINITY }, { blend: [] },
+    { blend: [{ name: 'A', grams: 0 }] }, { blend: [{ grams: 5 }] },
+    { blend: Array.from({ length: 6 }, () => ({ name: 'A', grams: 1 })) }, { unknown: 1 }
+  ])('rejects invalid actual details %#', (actual) => {
+    const result = validateCreateFeedbackInput({ recipeCode: 'COF-0042', rawComment: 'note', actual });
+    expect(result.ok).toBe(false);
+  });
+
+  it('validates feedback updates with null removal and replacement fields', () => {
+    const result = validateUpdateFeedbackInput({ id: 'feedback-id', ratings: { overall: null, sweetness: 3 }, actual: { doseG: null, waterG: 270 }, rawComment: 'new words', expectedUpdatedAt: '2026-11-09T00:00:00.000Z', dryRun: true });
     expect(result.ok).toBe(true);
   });
 

@@ -92,7 +92,7 @@ export interface FeedbackRow {
 }
 
 export const FEEDBACK_COLUMNS =
-  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at';
+  'id,recipe_code,bean_id,ratings,actual,comment,raw_comment,quick_tags,desired_direction,next_hint,source,created_at,updated_at,recipe_version,recipe_snapshot,recipe_current_version,recipeVersion,recipeSnapshot,onCurrentVersion';
 
 export function rowToFeedback(r: FeedbackRow): FeedbackDoc {
   const doc: FeedbackDoc = {

@@ -1,7 +1,7 @@
 import { request } from '../test/request.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { getDb, closeDb, dbVendor } from '@brewdial/db'
+import { getDb, closeDb, dbVendor, updateRecipe } from '@brewdial/db'
 
 
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -111,6 +111,57 @@ test('POST /api/agent/feedback nonexistent recipeCode → 404 (NOT 500)', async 
     body: JSON.stringify({ recipeCode: `DOES-NOT-EXIST-${SEED_SUFFIX}`, rawComment: 'ghost' }),
   }))
   expect(res.status).toBe(404)
+})
+
+test('POST feedback validates actual dose, water, blend, and rejects unknown keys', async () => {
+  for (const actual of [{ doseG: 0 }, { waterG: Number.POSITIVE_INFINITY }, { blend: [{ grams: 5 }] }, { unknown: 1 }]) {
+    const res = await request(agentReq('/api/agent/feedback', { method: 'POST', body: JSON.stringify({ recipeCode: seededCode, rawComment: 'test', actual }) }))
+    expect(res.status).toBe(400)
+  }
+})
+
+test('feedback is pinned to its recipe version and snapshot; edits merge, conflict, and dryRun correctly', async () => {
+  const create = await request(agentReq('/api/agent/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ recipeCode: seededCode, rawComment: 'first words', ratings: { overall: 4 }, actual: { doseG: 18, waterG: 280, blend: [{ beanId: 'bean-a', grams: 18 }] } }),
+  }))
+  expect(create.status).toBe(201)
+  const inserted = await create.json() as Record<string, any>
+  createdFeedbackIds.push(inserted.id)
+  expect(inserted.recipe_version).toBe(1)
+  const originalSnapshot = inserted.recipe_snapshot
+  expect(originalSnapshot).toMatchObject({ method: 'v60', params: {}, steps: [] })
+
+  await updateRecipe(getDb(), seededCode, { params: { doseG: 19 } })
+  const listedRes = await request(`/api/recipes/${seededCode}/feedback`)
+  expect(listedRes.status).toBe(200)
+  const listed = await listedRes.json() as Array<Record<string, any>>
+  const pinned = listed.find((row) => row.id === inserted.id)!
+  expect(pinned.recipe_version).toBe(1)
+  expect(pinned.recipeVersion).toBe(1)
+  expect(pinned.recipe_current_version).toBe(2)
+  expect(pinned.onCurrentVersion).toBe(false)
+  expect(pinned.recipe_snapshot).toEqual(originalSnapshot)
+
+  const edit = await request(agentReq(`/api/agent/feedback/${inserted.id}`, { method: 'PATCH', body: JSON.stringify({ ratings: { overall: null, sweetness: 3 }, actual: { doseG: null, timeSec: 180 }, rawComment: 'updated words' }) }))
+  expect(edit.status).toBe(200)
+  const updated = await edit.json() as Record<string, any>
+  expect(updated.ratings).toEqual({ sweetness: 3 })
+  expect(updated.actual).toEqual({ waterG: 280, blend: [{ beanId: 'bean-a', grams: 18 }], timeSec: 180 })
+  expect(updated.raw_comment).toBe('updated words')
+
+  const dryRun = await request(agentReq(`/api/agent/feedback/${inserted.id}`, { method: 'PATCH', body: JSON.stringify({ dryRun: true, actual: { waterG: 300 } }) }))
+  expect(dryRun.status).toBe(200)
+  expect((await dryRun.json()).dryRun).toBe(true)
+  const beforeConflict = await request(`/api/recipes/${seededCode}/feedback`)
+  const beforeRows = await beforeConflict.json() as Array<Record<string, any>>
+  const before = beforeRows.find((row) => row.id === inserted.id)!
+  const conflict = await request(agentReq(`/api/agent/feedback/${inserted.id}`, { method: 'PATCH', body: JSON.stringify({ expectedUpdatedAt: '2099-01-01T00:00:00.000Z', ratings: { overall: 5 } }) }))
+  expect(conflict.status).toBe(409)
+  expect(await conflict.json()).toMatchObject({ error: 'version_conflict', currentUpdatedAt: before.updated_at })
+  const afterConflictRes = await request(`/api/recipes/${seededCode}/feedback`)
+  const afterRows = await afterConflictRes.json() as Array<Record<string, any>>
+  expect(afterRows.find((row) => row.id === inserted.id)).toEqual(before)
 })
 
 // ─── GET /api/agent/preferences/global ───────────────────────────────────────

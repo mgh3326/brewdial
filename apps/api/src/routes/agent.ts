@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
-import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls } from '@brewdial/shared'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink } from '@brewdial/db'
+import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams } from '@brewdial/shared'
 
 export const agentRouter = new Hono()
 
@@ -178,6 +178,10 @@ agentRouter.post('/feedback', async (c) => {
   }
   const source = (rawSource as string | undefined) ?? 'agent'
 
+  const actualErrors: string[] = []
+  const actual = validateActualBrewParams(b['actual'], actualErrors)
+  if (actualErrors.length) return c.json({ error: 'validation failed', details: actualErrors }, 400)
+
   const db = getDb()
   try {
     const row = await insertAgentFeedback(db, {
@@ -185,7 +189,7 @@ agentRouter.post('/feedback', async (c) => {
       source,
       beanId: b['beanId'] as string | undefined,
       ratings: b['ratings'],
-      actual: b['actual'],
+      actual,
       comment: b['comment'] as string | undefined,
       rawComment: b['rawComment'] as string | undefined,
       quickTags: b['quickTags'] as string[] | undefined,
@@ -195,6 +199,23 @@ agentRouter.post('/feedback', async (c) => {
     return c.json(row, 201)
   } catch (err: unknown) {
     if (err instanceof RecipeNotFoundError) return c.json({ error: 'recipe not found' }, 404)
+    throw err
+  }
+})
+
+agentRouter.patch('/feedback/:id', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const validation = validateUpdateFeedbackInput({ ...(body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {}), id: c.req.param('id') })
+  if (!validation.ok) return c.json({ error: 'validation failed', details: validation.errors }, 400)
+  const { id, expectedUpdatedAt, dryRun, ...patch } = validation.value
+  try {
+    const result = await updateFeedback(getDb(), id, patch, { expectedUpdatedAt, dryRun })
+    if (result.kind === 'dryRun') return c.json({ dryRun: true, before: result.before, after: result.after, changed: result.changed })
+    return c.json(result.row)
+  } catch (err: unknown) {
+    const code = err instanceof Error ? (err as Error & { code?: string }).code : undefined
+    if (code === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
+    if (code === 'VERSION_CONFLICT' && 'currentUpdatedAt' in (err as object)) return c.json({ error: 'version_conflict', currentUpdatedAt: (err as Error & { currentUpdatedAt: string }).currentUpdatedAt }, 409)
     throw err
   }
 })
