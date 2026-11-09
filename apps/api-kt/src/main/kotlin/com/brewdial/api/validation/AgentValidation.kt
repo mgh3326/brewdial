@@ -362,7 +362,7 @@ private fun validateRecipeParams(input: ObjectNode, errors: MutableList<String>)
         else {
             val outBypass = objectNode()
             val water = bypass.get("waterG")
-            if (!isFiniteNumber(water) || water!!.asDouble() < 5 || water.asDouble() > 100) errors += "params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml"
+            if (!isFiniteNumber(water) || water!!.asDouble() < 5 || water.asDouble() > 100) errors += "params.bypass.waterG must be a finite number in 5-100 ml; BrewDial rejects out-of-range values, while the xBloom machine itself clamps values above 100 ml to 100 ml"
             else outBypass.set("waterG", water)
             if (bypass.has("tempC")) {
                 val temp = bypass.get("tempC")

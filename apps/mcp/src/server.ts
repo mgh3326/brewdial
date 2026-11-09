@@ -56,10 +56,10 @@ const PARAMS_SCHEMA = {
     tempC: { type: 'number' },
     bypass: {
       type: 'object',
-      description: 'xBloom 바이패스 물은 5-100ml입니다. 기기는 100ml 초과 값을 100ml로 제한합니다. 업데이트 시 params 키 하나로 통째로 교체하며 null이면 제거합니다.',
+      description: 'xBloom 바이패스 물은 5-100ml입니다. BrewDial은 범위 밖 값을 거부합니다. 기기 자체는 100ml 초과 값을 100ml로 제한하지만, 이 API에서는 허용되지 않습니다. 업데이트 시 params 키 하나로 통째로 교체하며 null이면 제거합니다.',
       required: ['waterG'],
       properties: {
-        waterG: { type: 'number', minimum: 5, maximum: 100, description: 'xBloom 기기 범위는 5-100ml이며, 초과 값은 100ml로 제한됩니다.' },
+        waterG: { type: 'number', minimum: 5, maximum: 100, description: 'xBloom 바이패스 범위는 5-100ml입니다. 범위 밖 값은 BrewDial에서 거부합니다.' },
         tempC: { type: 'number', minimum: 0, maximum: 100 }
       }
     },
@@ -192,7 +192,7 @@ const TOOLS: Tool[] = [
 
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     description:
-      '새 커피 레시피를 BrewDial에 저장합니다. 기존 원두에 연결하려면 find_bean으로 찾아 beanSnapshot에 정확한 원두명과 로스터를 넣거나 beanId를 전달하세요. 비슷한 레시피가 있어도 생성은 막히지 않으며, 응답의 possibleDuplicateOf에 경고로 표시됩니다. 의도된 변형은 supersede_recipe로 계보를 연결할 수 있습니다. 각 단계에는 atSec, waterG, note와 선택적 endSec, pourRateGPerSec를 지정합니다. xBloom 레시피는 pattern, rpm, vibrationBefore, vibrationAfter, pauseSec, tempC와 params.bypass를 구조화 필드로 전달하세요. 기기는 레시피당 최대 9회 붓기를 지원하고, rpm은 첫 붓기의 값을 전체 추출에 적용합니다. pauseSec는 0-127초이며 바이패스 물은 5-100ml입니다(100ml 초과 값은 100ml로 제한됩니다). 이 필드들은 note 태그를 대체합니다. params.grind는 문자열 또는 구조화 객체 { target: { brewMethodPosition, targetDrawdownSec, microns }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }입니다. target에는 brewMethodPosition 또는 targetDrawdownSec가 필요하며 microns는 참고값입니다. perGrinder의 그라인더명은 list_grinders 결과와 정확히 일치해야 앱이 다른 그라인더의 클릭 수로 변환할 수 있습니다. 드리퍼 간 이식성은 dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } }로 지정하고 origin.dripper는 list_drippers 결과와 정확히 일치시킵니다. 앱은 드리퍼 크기 적합성, 분쇄도/푸어 방향, 40g 이상 도징의 베드 넘침 경고를 조회 시 계산하므로 params.doseG도 지정하세요.',
+      '새 커피 레시피를 BrewDial에 저장합니다. 기존 원두에 연결하려면 find_bean으로 찾아 beanSnapshot에 정확한 원두명과 로스터를 넣거나 beanId를 전달하세요. 비슷한 레시피가 있어도 생성은 막히지 않으며, 응답의 possibleDuplicateOf에 경고로 표시됩니다. 의도된 변형은 supersede_recipe로 계보를 연결할 수 있습니다. 각 단계에는 atSec, waterG, note와 선택적 endSec, pourRateGPerSec를 지정합니다. xBloom 레시피는 pattern, rpm, vibrationBefore, vibrationAfter, pauseSec, tempC와 params.bypass를 구조화 필드로 전달하세요. 기기는 레시피당 최대 9회 붓기를 지원하고, rpm은 첫 붓기의 값을 전체 추출에 적용합니다. pauseSec는 0-127초이며 바이패스 물은 5-100ml입니다. 범위 밖 값은 BrewDial이 거부하며, 기기 자체는 100ml 초과 값을 100ml로 제한합니다. 이 필드들은 note 태그를 대체합니다. params.grind는 문자열 또는 구조화 객체 { target: { brewMethodPosition, targetDrawdownSec, microns }, perGrinder: [{ grinder, clicks, source: "measured" }], legacyText }입니다. target에는 brewMethodPosition 또는 targetDrawdownSec가 필요하며 microns는 참고값입니다. perGrinder의 그라인더명은 list_grinders 결과와 정확히 일치해야 앱이 다른 그라인더의 클릭 수로 변환할 수 있습니다. 드리퍼 간 이식성은 dripperPortability = { origin: { dripper, sizeModel? }, anchors: { ratio, tempC, targetDrawdownSec } }로 지정하고 origin.dripper는 list_drippers 결과와 정확히 일치시킵니다. 앱은 드리퍼 크기 적합성, 분쇄도/푸어 방향, 40g 이상 도징의 베드 넘침 경고를 조회 시 계산하므로 params.doseG도 지정하세요.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -217,7 +217,7 @@ const TOOLS: Tool[] = [
 
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     description:
-      '기존 레시피를 수정합니다. params는 최상위 키별로 병합되며 전달한 값은 교체되고 null은 제거됩니다. params.bypass는 하나의 키로 통째로 교체됩니다. xBloom 단계의 구조화 필드(pattern, rpm, vibrationBefore, vibrationAfter, pauseSec, tempC)는 note 태그를 대체합니다. 기기는 레시피당 최대 9회 붓기를 지원하고, rpm은 첫 붓기의 값을 전체 추출에 적용합니다. pauseSec는 0-127초이며 바이패스 물은 5-100ml입니다(100ml 초과 값은 100ml로 제한됩니다). steps, intent, notes 및 기타 필드는 전체 교체됩니다. expectedVersion으로 동시 변경을 확인하고 dryRun: true로 쓰기 전에 미리 볼 수 있습니다.',
+      '기존 레시피를 수정합니다. params는 최상위 키별로 병합되며 전달한 값은 교체되고 null은 제거됩니다. params.bypass는 하나의 키로 통째로 교체됩니다. xBloom 단계의 구조화 필드(pattern, rpm, vibrationBefore, vibrationAfter, pauseSec, tempC)는 note 태그를 대체합니다. 기기는 레시피당 최대 9회 붓기를 지원하고, rpm은 첫 붓기의 값을 전체 추출에 적용합니다. pauseSec는 0-127초이며 바이패스 물은 5-100ml입니다. 범위 밖 값은 BrewDial이 거부하며, 기기 자체는 100ml 초과 값을 100ml로 제한합니다. steps, intent, notes 및 기타 필드는 전체 교체됩니다. expectedVersion으로 동시 변경을 확인하고 dryRun: true로 쓰기 전에 미리 볼 수 있습니다.',
     inputSchema: {
       type: 'object',
       properties: {

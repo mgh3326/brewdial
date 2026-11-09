@@ -128,10 +128,10 @@ describe('createBrewdialMcpServer', () => {
     });
     expect(schema.properties.steps.items?.properties?.pauseSec).toMatchObject({ maximum: 127 });
     expect(schema.properties.params.properties?.bypass).toMatchObject({
-      description: expect.stringContaining('100ml 초과 값을 100ml로 제한'),
+      description: expect.stringContaining('범위 밖 값을 거부'),
       properties: { waterG: { minimum: 5, maximum: 100 } }
     });
-    expect(create.description).toContain('100ml 초과 값은 100ml로 제한됩니다');
+    expect(create.description).toContain('범위 밖 값은 BrewDial이 거부하며');
     expect(create.description).toContain('note 태그를 대체');
     const update = tools.find((tool) => tool.name === 'update_recipe')!;
     expect(update.description).toContain('첫 붓기의 값을 전체 추출에 적용');
