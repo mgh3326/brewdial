@@ -69,7 +69,9 @@
    sudo systemctl enable --now shiftgate-haproxy
    sudo shiftgate status
    ```
-5. **`brewdial-api` 환경 파일 (Node API, PostgreSQL).** 값을 출력하지 않고
+5. **`brewdial-api` 환경 파일 (Node API, PostgreSQL) — 과거 절차, 현재 실행 금지.**
+   이 항목은 PostgreSQL 전환 당시의 기록이다. 프로덕션 호스트에 이 PostgreSQL
+   환경 파일을 다시 만들지 않는다. 당시에는 값을 출력하지 않고
    `/etc/brewdial/api.env`에서 키를 복사한다:
    ```sh
    sudo install -m 0600 -o root -g root /dev/null /etc/shiftgate/brewdial-api.env
@@ -255,8 +257,28 @@ sudo sed -i -e 's#http://127.0.0.1:8021#http://127.0.0.1:8020#g' -e 's#http://lo
 
 ### 4.6 HeatWave 백업 타이머
 
-트래픽 전환 후 HeatWave 전용 백업 및 복구 검증 스크립트를 설정한다. 기존 타이머 일정은 유지한다. 읽기 전용 DB 사용자의 URL은 `/etc/brewdial/heatwave.env`에 저장하고 권한을 `0600`으로 설정한다. 백업과 검증을 각각 한 번 실행하고 성공 로그와 새 백업 파일을 확인한다. Mac 백업 가져오기 작업도 `.sql.gz` 형식을 지원하는 버전으로 갱신한다.
+2026-11-09 전환 완료 기록:
+
+- `brewdial-backup.service`가 06:49Z에 `backup-heatwave.sh`를 실행했다. 로그에 `dump OK (160K)`와 `backup complete`가 기록되었다. 백업 파일은 `/var/backups/brewdial/daily/brewdial-<YYYYMMDD-HHMM>.sql.gz`에 생성된다 (`BACKUP_DIR=/var/backups/brewdial`). Mac pull은 파일을 가져온 뒤 `gzip -t`와 완료 마커 행을 확인했고 `dump complete`를 기록했다.
+- `brewdial-verify.service`가 06:50Z에 `verify-restore-heatwave.sh`를 실행했다. 모든 테이블 비교가 통과했고 `triggers=15`, `views=1`, `recipe_code_seq=143 >= highest code 143`을 확인했다. 로그 결과는 `GATE PASS: the restored copy matches live HeatWave`였다.
+
+이 검증은 PostgreSQL을 중지하기 전에 수행했다. 비상 복구 시에는 API 쓰기를 중단하고, Mac에 보관된 검증 완료 `.sql.gz` 백업을 별도의 빈 HeatWave 데이터베이스에 MySQL 8.4 클라이언트로 복원한다. 이 dump에는 `CREATE DATABASE`와 `USE`가 없으므로 복원 대상 데이터베이스를 먼저 만들고 해당 대상으로 선택해야 한다. 원본 장애 데이터베이스는 보존한다. 복원 후 `verify-restore-heatwave.sh <dump.sql.gz>`로 테이블, 트리거, 뷰 및 시퀀스를 검증하고 `/api/db/health`를 확인한 다음, 운영자가 승인한 전환 절차로 API 연결을 복원된 데이터베이스로 변경한다. 이 비상 복구 절차 자체는 실행하지 않았다.
 
 ### 4.7 PostgreSQL 정리
 
-마지막 PostgreSQL 덤프를 보관한 뒤 PostgreSQL 서비스를 중지하고 비활성화했다. 데이터 디렉터리는 보존 중이며, 실제 제거는 운영자 결정이 남아 있다. `brewdial-api` 서비스 정의도 shiftgate 설정에서 제거했다. 운영자는 마지막 덤프를 확인한 뒤 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거하고 `/etc/shiftgate/brewdial-api.env`를 보관하거나 삭제해야 한다. 현재 호스트에 남은 컨테이너나 환경 파일의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
+2026-11-09 07:05Z에 마지막 PostgreSQL dump를 생성했다. 데이터베이스 archive는 `/var/backups/brewdial/final/brewdial-pg-final-20261109-0705.dump` (`pg_dump -Fc`, `brewdial`, 16개 `TABLE DATA` 항목)이며, 전역 객체 dump는 `/var/backups/brewdial/final/globals-pg-final-20261109-0705.sql`이다. Mac pull이 두 파일을 가져왔고 양쪽 사본의 SHA-256 값이 일치했다. digest 값은 이 문서에 기록하지 않는다. 그 뒤 PostgreSQL 서비스는 중지 및 비활성화했고 데이터 디렉터리는 보존했다. 실제 데이터 디렉터리 제거는 운영자 결정이 남아 있다. 덤프와 Mac 사본을 확인했으므로 `/etc/shiftgate/brewdial-api.env`의 PostgreSQL 자격 증명 파일은 삭제한다.
+
+다음은 실행하지 않은 PostgreSQL 복구 절차다. 보존된 PostgreSQL 17 데이터 디렉터리를 사용할 수 있으면 서비스를 다시 시작한다:
+
+```sh
+sudo systemctl enable --now postgresql-17
+```
+
+데이터 디렉터리를 사용할 수 없으면 새 PostgreSQL 17 인스턴스를 준비하고 전역 객체와 데이터베이스를 archive에서 복원한다:
+
+```sh
+psql -d postgres -f /var/backups/brewdial/final/globals-pg-final-20261109-0705.sql
+pg_restore --create -d postgres /var/backups/brewdial/final/brewdial-pg-final-20261109-0705.dump
+```
+
+이 절차는 PostgreSQL 복구 자료를 되살리며 프로덕션 롤백 절차가 아니다. `brewdial-api` 서비스 정의도 shiftgate 설정에서 제거했다. 운영자는 남아 있는 PostgreSQL 서비스 색상 컨테이너를 중지 및 제거해야 한다. 현재 호스트에 남은 컨테이너의 존재 여부는 이 기록에서 확인되지 않았다. PostgreSQL 지원 코드와 복사 도구는 이 문서 변경에서 제거하지 않는다.
