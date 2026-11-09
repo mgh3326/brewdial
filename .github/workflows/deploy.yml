@@ -200,8 +200,6 @@ jobs:
           [ "$hono_user" = node ] || { echo "Hono image must run as node"; exit 1; }
 
       - name: Start the Node image and hit its health paths
-        env:
-          DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
         run: |
           set -euo pipefail
           cleanup() {
