@@ -155,7 +155,7 @@ function validateRecipeParams(
     } else {
       const bypass: NonNullable<RecipeParams['bypass']> = { waterG: 0 };
       if (typeof raw.bypass.waterG !== 'number' || !Number.isFinite(raw.bypass.waterG) || raw.bypass.waterG < 5 || raw.bypass.waterG > 100) {
-        errors.push('params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml');
+        errors.push('params.bypass.waterG must be a finite number in 5-100 ml; BrewDial rejects out-of-range values, while the xBloom machine itself clamps values above 100 ml to 100 ml');
       } else bypass.waterG = raw.bypass.waterG;
       if (raw.bypass.tempC !== undefined) {
         if (typeof raw.bypass.tempC !== 'number' || !Number.isFinite(raw.bypass.tempC) || raw.bypass.tempC < 0 || raw.bypass.tempC > 100) {
