@@ -10,7 +10,7 @@ name: Deploy OCI (shiftgate)
 #
 # Deploys are pull-based (operator 2026-11-01): CI never reaches the host and
 # needs no host credentials. On the OCI host, Dagu runs
-# `shiftgate follow brewdial-api --tag production` every few minutes; it
+# `shiftgate follow brewdial-api-mysql --tag production` every few minutes; it
 # resolves the tag through the registry API and runs a normal blue-green deploy
 # when the digest changed. A digest that was rolled back on the host is held
 # until a newer one is tagged.
@@ -22,7 +22,7 @@ name: Deploy OCI (shiftgate)
 #   push to `production`              → release
 # A release fails unless the commit is on main's history, whatever the ref.
 #
-# Rollback is a host command, not a rebuild: `shiftgate rollback brewdial-api`
+# Rollback is a host command, not a rebuild: `shiftgate rollback brewdial-api-mysql`
 # (see docs/runbooks/oci-heatwave-cutover.md).
 
 on:
@@ -50,15 +50,14 @@ permissions:
   contents: read
 
 concurrency:
-  # Shared with deploy-oci-k3s.yml: one production deploy at a time. PR dry runs
-  # get their own group so they never queue behind a release.
+  # PR dry runs get their own group so they never queue behind a release.
   group: ${{ github.event_name == 'pull_request' && format('deploy-oci-dry-run-{0}', github.ref) || 'deploy-oci-production' }}
   cancel-in-progress: false
 
 env:
-  # Must equal `image` of brewdial-api in deploy/oci/shiftgate/services.yaml.
+  # Must equal `image` of brewdial-api-mysql in deploy/oci/shiftgate/services.yaml.
   IMAGE: ghcr.io/mgh3326/brewdial
-  SERVICE: brewdial-api
+  SERVICE: brewdial-api-mysql
 
 jobs:
   build:

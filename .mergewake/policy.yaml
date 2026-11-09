@@ -2,7 +2,7 @@ version: 1
 enabled: true
 required_checks:
   - 'Typecheck, Lint & Test'
-  - 'API tests (PostgreSQL + MySQL)'
+  - 'API tests (MySQL 8.4, Node)'
   - 'GitGuardian Security Checks'
 # Main is watched through the ci-ok status, which runs on push and on any-ref dispatch.
 watch_checks: ['ci-ok']
@@ -13,7 +13,7 @@ any_ref_checks: ['ci-ok']
 blocking:
   - paths: ['.mergewake/**']
     reason: Policy changes can authorize irreversible automation before a revert.
-  - paths: ['packages/db/migrations/**', 'supabase/**']
+  - paths: ['packages/db/migrations/**', 'packages/db/migrations-mysql/**', 'supabase/**']
     reason: Schema and data migrations alter persistent data before a revert.
   - paths: ['deploy/**', '.github/workflows/deploy-oci.yml']
     reason: Deploy and host configuration change the running service before a revert.

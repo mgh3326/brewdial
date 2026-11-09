@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   scripts:
-    name: Deploy scripts (shellcheck, phase-4 script)
+    name: Deploy scripts (shellcheck)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,12 +34,8 @@ jobs:
       - name: Shellcheck the HeatWave scripts
         run: >-
           shellcheck -x -e SC1091 -s bash
-          deploy/oci/heatwave-phase4.sh deploy/oci/test/heatwave-phase4-test.sh
           deploy/oci/heatwave-client.sh deploy/oci/test/heatwave-client-test.sh deploy/oci/backup-heatwave.sh
           deploy/oci/verify-restore-heatwave.sh deploy/mac/pull-backups.sh
 
       - name: Credentials reach the MySQL option file unchanged
         run: bash deploy/oci/test/heatwave-client-test.sh
-
-      - name: Phase-4 script stops at the first failed step and prints no secret
-        run: bash deploy/oci/test/heatwave-phase4-test.sh

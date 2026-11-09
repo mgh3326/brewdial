@@ -1,5 +1,7 @@
 # OCI: k3s → shiftgate, 이후 PostgreSQL → HeatWave MySQL (ROB-1435)
 
+> 이 PR에서 4단계 데이터 복사 및 롤백 도구를 제거했다. 당시 구현은 git history의 `f1ad6fc`에서 볼 수 있다.
+
 현재 프로덕션은 shiftgate 뒤에서 실행되는 HeatWave MySQL 연결 Node API `brewdial-api-mysql` (`:8021`)이다. Dagu는 `production` 태그를 따라 배포한다. 이 문서는 k3s에서 shiftgate로, PostgreSQL에서 HeatWave MySQL로 전환한 이력을 기록한다. PostgreSQL은 중지 및 비활성화되어 더 이상 롤백 대상으로 사용할 수 없다. Node API와 `packages/db`는 계속 사용한다.
 
 | 단계 | 변경 내용 | 롤백 |
@@ -157,7 +159,7 @@ HAProxy를 전환하는 절차다. k3s와 PostgreSQL이 은퇴한 현재는 이 
 
 ## 4. Node API → HeatWave MySQL
 
-이 단계에서는 현재 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작한다. 복사 도구만 `ghcr.io/mgh3326/brewdial-api-kt` 이미지에서 가져온다. 이 도구는 롤백 기간이 끝날 때까지 유지한다. 서비스 이미지와 복사 도구 이미지는 서로 다른 digest를 사용한다. 실제 전환은 운영자가 참석한 유지보수 시간에 수행한다.
+당시에는 PostgreSQL을 사용하는 Node API를 잠시 멈추고 데이터를 HeatWave MySQL로 복사한 뒤, 같은 Node API를 MySQL 연결로 시작했다. 복사 및 롤백 도구는 롤백 기간 종료 후 이 PR에서 제거했다.
 
 ### 4.0 2026-11-09 — 4단계 완료 기록
 

@@ -158,10 +158,9 @@ export async function migrateMysql(
           continue
         }
 
-        // The Kotlin copy tool starts Spring Boot against the MySQL target, so
-        // Flyway applies V1/V2/V3 before copying. Adopt matching successful Flyway
-        // records; replaying either migration would fail on already-present
-        // tables or columns and prevent the Node service from booting.
+        // Earlier versions of the service used Flyway before the Node service
+        // took over. Adopt matching successful Flyway records; replaying either
+        // migration would fail on already-present tables or columns.
         const flywayMigrations: Record<string, { version: string; script: string }> = {
           '001_baseline': { version: '1', script: 'V1__baseline.sql' },
           '002_feedback_recipe_snapshot': { version: '2', script: 'V2__feedback_recipe_snapshot.sql' },

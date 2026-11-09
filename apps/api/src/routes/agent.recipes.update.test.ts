@@ -5,7 +5,7 @@ import { getDb, closeDb, getRecipeAnyStatus, insertAgentRecipe } from '@brewdial
 
 // PATCH /api/agent/recipes/:code — params merge, expectedVersion and dryRun.
 // The in-process run covers these on PostgreSQL and MySQL 8.4 in CI. Blackbox runs
-// (API_TEST_BASE_URL) skip them: the Kotlin port does not implement merge yet (hk 3583 deletes it).
+// (API_TEST_BASE_URL) skip them; the external server contract does not cover merge.
 const test = baseTest.skipIf(!!process.env.API_TEST_BASE_URL)
 
 const SEED = randomUUID().replace(/-/g, '').slice(0, 8)

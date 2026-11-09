@@ -15,8 +15,7 @@
     "check": "tsc --noEmit",
     "build": "tsc",
     "test": "vitest run",
-    "lint": "echo '@brewdial/shared: no lint in PR1 (intentional no-op)' && exit 0",
-    "parity:update": "tsc && node scripts/update-parity-golden.mjs"
+    "lint": "echo '@brewdial/shared: no lint in PR1 (intentional no-op)' && exit 0"
   },
   "dependencies": {
     "yaml": "2.9.0"

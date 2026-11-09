@@ -41,8 +41,8 @@ flowchart LR
   end
 
   subgraph origin [Origin API host]
-    API["apps/api-kt — Spring Boot<br/>/api/* and /* dual mount"]
-    PG[(PostgreSQL 17 or MySQL HeatWave)]
+    API["apps/api — Node / Hono<br/>/api/* and /* dual mount"]
+    DB[(HeatWave MySQL in production; PostgreSQL also supported)]
   end
 
   subgraph packages [Shared libraries]
@@ -87,17 +87,14 @@ BrewDial did not start here. Each move was a deliberate cut of a trust boundary:
 
 Cutover was staged by consumer (web SPA, then MCP, then mini-app share the same
 API contract) rather than a single big-bang flip, so each client could move when
-its path was verified. The API itself was first written in TypeScript (Hono,
-`apps/api`) and then ported to Kotlin (`apps/api-kt`), which is the only API in
-production since the HeatWave cutover. `apps/api` stays in the repo as the HTTP
-contract test suite that CI runs against both implementations.
+its path was verified. The production API is the Node service in `apps/api`, backed by HeatWave MySQL.
+Its HTTP contract tests run against the Node service in CI.
 
 ### Workspace layout
 
 ```text
 apps/
-  api-kt/     # Kotlin / Spring Boot HTTP API (production; see apps/api-kt/README.md)
-  api/        # @brewdial/api — former Hono API, kept as the HTTP contract test suite
+  api/        # @brewdial/api — Hono Node HTTP API (production)
   mcp/        # @brewdial/mcp — MCP server over stdio (13 tools)
   miniapp/    # @brewdial/miniapp — React + Vite SPA (+ App-in-Toss build)
 packages/
@@ -138,14 +135,8 @@ behave the same way, and CI checks both:
   `packages/shared/src`. Do not edit it: change `packages/shared`, run
   `pnpm domain:sync` and commit the result. `pnpm domain:check` fails CI when the
   copy is stale.
-- **Kotlin port.** `apps/api-kt` re-implements validation and recommendation.
-  `packages/shared/src/__fixtures__/parity/*.json` holds input cases with the
-  output of the TypeScript code. `parity-golden.test.ts` (Vitest) and
-  `ParityGoldenTest` (JUnit) both run them. After an intended behavior change in
-  `packages/shared`, run `pnpm --filter @brewdial/shared parity:update` and make
-  the Kotlin side pass the updated fixtures.
 - **HTTP contract.** The Vitest suites in `apps/api/src/routes` run against the
-  Spring app as well (`apps/api-kt/scripts/contract-test.sh`).
+  Node API on PostgreSQL and MySQL.
 
 ## Requirements
 
@@ -191,8 +182,8 @@ commit real secrets):
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `DATABASE_URL` | api, db migrations/tests | Postgres connection string |
-| `PORT` | api-kt, api | Listen port (default `3021` for api-kt, `3020` for api) |
+| `DATABASE_URL` | api, db migrations/tests | Database connection string (MySQL in production; PostgreSQL also supported) |
+| `PORT` | api | Listen port (default `3020`) |
 | `HOST` | api | Bind address (default `127.0.0.1`) |
 | `AGENT_TOKEN` | api (`/api/agent/*`), mcp | Bearer token for the agent surface |
 | `API_BASE_URL` | mcp | API origin, e.g. `https://api.brewdial.robinco.dev` |
@@ -208,12 +199,9 @@ pnpm db:migrate
 ### Run services
 
 ```bash
-# Production API: Kotlin / Spring Boot (default http://127.0.0.1:3021)
-export DATABASE_URL='postgres://USER@localhost:5432/brewdial_dev'
+# Production API: Node / Hono (default http://127.0.0.1:3020)
+export DATABASE_URL='mysql://USER@localhost:3306/brewdial_dev'
 export AGENT_TOKEN='dev-only-token'
-(cd apps/api-kt && ./gradlew bootRun)
-
-# Former Hono API, for contract-test work (default http://127.0.0.1:3020)
 pnpm api:dev
 
 # Web SPA (Vite) — points at VITE_API_BASE_URL
@@ -226,10 +214,10 @@ pnpm mcp:dev
 Health check against a running local API:
 
 ```bash
-curl -sS http://127.0.0.1:3021/api/health
+curl -sS http://127.0.0.1:3020/api/health
 # {"ok":true,"service":"brewdial-api","ts":"..."}
 
-curl -sS http://127.0.0.1:3021/api/db/health
+curl -sS http://127.0.0.1:3020/api/db/health
 # {"ok":true,"db":"up"}
 ```
 
