@@ -118,11 +118,23 @@ describe('createBrewdialMcpServer', () => {
     const { tools } = await client.listTools();
     const create = tools.find((tool) => tool.name === 'create_recipe')!;
     const schema = create.inputSchema as unknown as {
-      properties: Record<string, { items?: { properties?: Record<string, unknown> }; properties?: Record<string, unknown> }>;
+      properties: Record<string, { description?: string; items?: { properties?: Record<string, unknown> }; properties?: Record<string, unknown> }>;
     };
     expect(schema.properties.steps.items?.properties).toHaveProperty('vibrationBefore');
     expect(schema.properties.params.properties).toHaveProperty('bypass');
+    expect(schema.properties.steps.description).toContain('최대 9회');
+    expect(schema.properties.steps.items?.properties?.rpm).toMatchObject({
+      description: expect.stringContaining('첫 붓기의 값을 전체 추출에 적용')
+    });
+    expect(schema.properties.steps.items?.properties?.pauseSec).toMatchObject({ maximum: 127 });
+    expect(schema.properties.params.properties?.bypass).toMatchObject({
+      description: expect.stringContaining('100ml 초과 값을 100ml로 제한'),
+      properties: { waterG: { minimum: 5, maximum: 100 } }
+    });
+    expect(create.description).toContain('100ml 초과 값은 100ml로 제한됩니다');
     expect(create.description).toContain('note 태그를 대체');
+    const update = tools.find((tool) => tool.name === 'update_recipe')!;
+    expect(update.description).toContain('첫 붓기의 값을 전체 추출에 적용');
   });
 
   it('reports a thrown handler error once through onToolError, then surfaces it as an error', async () => {

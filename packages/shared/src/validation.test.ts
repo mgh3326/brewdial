@@ -404,6 +404,42 @@ describe('xBloom structured fields', () => {
     if (r.ok) expect(r.value.params?.bypass).toEqual({ waterG: 50, tempC: 10 });
   });
 
+  it('accepts pauseSec 127 and rejects 128 at the machine limit', () => {
+    expect(make('other', {}, [{ pauseSec: 127 }]).ok).toBe(true);
+    const tooLong = make('other', {}, [{ pauseSec: 128 }]);
+    expect(tooLong.ok).toBe(false);
+    if (!tooLong.ok) expect(tooLong.errors.join(' ')).toMatch(/pauseSec.*0-127.*machine limit/);
+  });
+
+  it('accepts bypass waterG 5 and 100 and rejects 4.9 and 101', () => {
+    for (const waterG of [5, 100]) expect(make('other', { bypass: { waterG } }).ok).toBe(true);
+    for (const waterG of [4.9, 101]) {
+      const r = make('other', { bypass: { waterG } });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors.join(' ')).toMatch(/bypass\.waterG.*5-100 ml.*clamps.*100 ml/);
+    }
+  });
+
+  it('warns when xBloom steps carry distinct non-zero rpm values', () => {
+    const r = make('other', {}, [{ rpm: 100 }, { rpm: 90 }]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).toMatch(/첫 붓기.*rpm.*전체 추출/);
+    const update = validateUpdateRecipeInput({ steps: [{ note: 'P1', rpm: 100 }, { note: 'P2', rpm: 90 }] });
+    expect(update.ok).toBe(true);
+    if (update.ok) expect(update.warnings.join(' ')).toMatch(/첫 붓기.*rpm.*전체 추출/);
+  });
+
+  it('does not warn when xBloom steps use one non-zero rpm', () => {
+    const r = make('other', {}, [{ rpm: 100 }, { rpm: 100 }, { rpm: 0 }]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.warnings.join(' ')).not.toMatch(/rpm/);
+  });
+
+  it('keeps general recipe validation uncapped at nine steps', () => {
+    const r = make('v60', {}, Array.from({ length: 10 }, (_, atSec) => ({ atSec })));
+    expect(r.ok).toBe(true);
+  });
+
   it('rejects conflicting first-pour temperatures on create and update', () => {
     const expected = 'params.tempC must match steps[0].tempC when both are provided';
     const create = make('other', { tempC: 90 }, [{ tempC: 92 }]);

@@ -19,6 +19,182 @@
       }
     },
     {
+      "name": "recipe: xBloom pauseSec accepts signed-byte maximum",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "pauseSec": 127
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "steps": [
+            {
+              "note": "Pour",
+              "pauseSec": 127
+            }
+          ]
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "recipe: xBloom pauseSec rejects above signed-byte maximum",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour",
+            "pauseSec": 128
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "steps[0].pauseSec must be an integer in 0-127 (xBloom machine limit)"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom bypass accepts 5 ml minimum",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "bypass": {
+            "waterG": 5
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "params": {
+            "bypass": {
+              "waterG": 5
+            }
+          }
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "recipe: xBloom bypass accepts 100 ml maximum",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "bypass": {
+            "waterG": 100
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "params": {
+            "bypass": {
+              "waterG": 100
+            }
+          }
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "recipe: xBloom bypass rejects below 5 ml",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "bypass": {
+            "waterG": 4.9
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml"
+        ]
+      }
+    },
+    {
+      "name": "recipe: xBloom bypass rejects above 100 ml",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "params": {
+          "bypass": {
+            "waterG": 101
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "errors": [
+          "params.bypass.waterG must be a finite number in 5-100 ml; the xBloom machine clamps values above 100 ml to 100 ml"
+        ]
+      }
+    },
+    {
+      "name": "recipe: differing non-zero xBloom rpms warn about first pour",
+      "validator": "CreateRecipe",
+      "input": {
+        "method": "other",
+        "title": "xBloom",
+        "steps": [
+          {
+            "note": "Pour 1",
+            "rpm": 100
+          },
+          {
+            "note": "Pour 2",
+            "rpm": 90
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "method": "other",
+          "title": "xBloom",
+          "steps": [
+            {
+              "note": "Pour 1",
+              "rpm": 100
+            },
+            {
+              "note": "Pour 2",
+              "rpm": 90
+            }
+          ]
+        },
+        "warnings": [
+          "xBloom 기기는 첫 붓기의 rpm을 전체 추출에 적용합니다."
+        ]
+      }
+    },
+    {
       "name": "recipe: title is trimmed",
       "validator": "CreateRecipe",
       "input": {
@@ -848,7 +1024,7 @@
       "expected": {
         "ok": false,
         "errors": [
-          "steps[0].pauseSec must be an integer in 0-255"
+          "steps[0].pauseSec must be an integer in 0-127 (xBloom machine limit)"
         ]
       }
     },

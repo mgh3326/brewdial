@@ -117,6 +117,7 @@ export interface RecipeStep {
   waterG?: number;
   pourRateGPerSec?: number;
   pattern?: 'center' | 'spiral' | 'ring';
+  /** xBloom sends rpm once per recipe; the machine applies the first pour's rpm to the whole brew. */
   rpm?: number;
   vibrationBefore?: boolean;
   vibrationAfter?: boolean;
