@@ -39,3 +39,16 @@ test('PUT parent rejects self, two-node and three-node cycles and missing recipe
   expect((await req(`/api/agent/recipes/${a.code}/parent`, { parentCode: c.code })).status).toBe(400)
   expect((await req('/api/agent/recipes/COF-999999/parent', { parentCode: null })).status).toBe(404)
 })
+
+test('concurrent opposite parent assignments do not return a server error or create a cycle', async () => {
+  const a = await make('Concurrent A')
+  const b = await make('Concurrent B')
+  const [aToB, bToA] = await Promise.all([
+    req(`/api/agent/recipes/${a.code}/parent`, { parentCode: b.code }),
+    req(`/api/agent/recipes/${b.code}/parent`, { parentCode: a.code }),
+  ])
+  expect([aToB.status, bToA.status].sort()).toEqual([200, 400])
+  const storedA = await getRecipeAnyStatus(getDb(), a.code)
+  const storedB = await getRecipeAnyStatus(getDb(), b.code)
+  expect(storedA?.parent_code === b.code && storedB?.parent_code === a.code).toBe(false)
+})

@@ -206,8 +206,17 @@ export function listRecipeChildren(db: Kysely<DB>, parentCode: string): Promise<
     .orderBy('created_at', 'asc').execute() as unknown as Promise<RecipeRow[]>
 }
 
+function isTransactionDeadlock(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const code = 'code' in error ? error.code : undefined
+  const errno = 'errno' in error ? error.errno : undefined
+  return code === 'ER_LOCK_DEADLOCK' || code === '40P01' || errno === 1213
+}
+
 export async function setRecipeParent(db: Kysely<DB>, code: string, parentCode: string | null): Promise<RecipeRow> {
-  return db.transaction().execute(async (trx) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await db.transaction().execute(async (trx) => {
     const recipe = await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).forUpdate().executeTakeFirst() as unknown as RecipeRow | undefined
     if (!recipe) throw Object.assign(new Error('recipe not found'), { code: 'NOT_FOUND' })
     if (parentCode !== null) {
@@ -225,7 +234,11 @@ export async function setRecipeParent(db: Kysely<DB>, code: string, parentCode: 
     }
     await (trx.updateTable('recipes') as any).set({ parent_code: parentCode }).where('code', '=', code).execute()
     return await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).executeTakeFirstOrThrow() as unknown as RecipeRow
-  })
+      })
+    } catch (error) {
+      if (!isTransactionDeadlock(error) || attempt >= 2) throw error
+    }
+  }
 }
 
 export interface InsertManualRecipePayload {
