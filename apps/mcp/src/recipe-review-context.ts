@@ -5,8 +5,28 @@ import { getBrew, listBrews, listXBloomRecipeLinks } from './repositories/brews.
 import { getRecipeByCode, listRecipeChildren } from './repositories/recipes.js';
 import { buildRecipeReview, RECIPE_REVIEW_LIMITS, type RecipeReviewNodeInput } from './recipe-review.js';
 
+export function limitFetchConcurrency(baseFetch: typeof fetch, limit: number): typeof fetch {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active += 1;
+    try {
+      return await baseFetch(input, init);
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
+}
+
 export async function fetchRecipeReview(config: ApiConfig, code: RecipeCode, fetchImpl?: typeof fetch) {
-  const root = await getRecipeByCode(config, code, fetchImpl);
+  const boundedConfig: ApiConfig = {
+    ...config,
+    fetchImpl: limitFetchConcurrency(fetchImpl ?? config.fetchImpl ?? fetch, RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests),
+  };
+  const root = await getRecipeByCode(boundedConfig, code);
   if (!root) return null;
 
   const recipes = new Map<RecipeCode, RecipeDoc>([[root.code, root]]);
@@ -14,7 +34,7 @@ export async function fetchRecipeReview(config: ApiConfig, code: RecipeCode, fet
   let parentCode = root.parentCode;
   while (parentCode && recipes.size <= RECIPE_REVIEW_LIMITS.ancestors) {
     if (recipes.has(parentCode)) break;
-    const parent = await getRecipeByCode(config, parentCode, fetchImpl);
+    const parent = await getRecipeByCode(boundedConfig, parentCode);
     if (!parent) break;
     recipes.set(parent.code, parent);
     parentCode = parent.parentCode;
@@ -27,7 +47,7 @@ export async function fetchRecipeReview(config: ApiConfig, code: RecipeCode, fet
   let descendantsTruncated = false;
   while (queue.length) {
     const current = queue.shift()!;
-    const children = await listRecipeChildren(config, current, fetchImpl);
+    const children = await listRecipeChildren(boundedConfig, current);
     for (const child of children) {
       if (visited.has(child.code)) continue;
       if (descendantCount >= RECIPE_REVIEW_LIMITS.descendants) {
@@ -41,13 +61,13 @@ export async function fetchRecipeReview(config: ApiConfig, code: RecipeCode, fet
     }
   }
 
-  const xbloomLinks = await listXBloomRecipeLinks(config, fetchImpl);
+  const xbloomLinks = await listXBloomRecipeLinks(boundedConfig);
   const nodes: RecipeReviewNodeInput[] = await Promise.all([...recipes.values()].map(async (recipe) => {
     const [feedback, brews] = await Promise.all([
-      listFeedbackForRecipe(config, recipe.code, fetchImpl),
-      listBrews(config, { recipeCode: recipe.code, limit: RECIPE_REVIEW_LIMITS.listBrews }, fetchImpl),
+      listFeedbackForRecipe(boundedConfig, recipe.code),
+      listBrews(boundedConfig, { recipeCode: recipe.code, limit: RECIPE_REVIEW_LIMITS.listBrews }),
     ]);
-    const brewDetails = await Promise.all(brews.map((brew) => getBrew(config, brew.xbloomBrewId, fetchImpl)));
+    const brewDetails = await Promise.all(brews.map((brew) => getBrew(boundedConfig, brew.xbloomBrewId)));
     return { recipe, feedback, brews, brewDetails: brewDetails.filter((brew) => brew !== null) };
   }));
 
