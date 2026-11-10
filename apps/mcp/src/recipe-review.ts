@@ -9,6 +9,7 @@ export const RECIPE_REVIEW_LIMITS = {
   actualTimeGapSec: 5,
   anomalyBrews: 10,
   listBrews: 100,
+  maxConcurrentApiRequests: 8,
 } as const;
 
 export interface RecipeReviewNodeInput {
@@ -219,7 +220,7 @@ export function buildRecipeReview(input: RecipeReviewInput) {
   const newestSelfBrews = [...(self.brews ?? [])].sort((a, b) => b.brewedAt.localeCompare(a.brewedAt)).slice(0, RECIPE_REVIEW_LIMITS.anomalyBrews);
   const anomalous = newestSelfBrews.map((brew) => self.brewDetails.find((detail) => detail.xbloomBrewId === brew.xbloomBrewId) ?? brew)
     .filter((brew) => typeof brew.anomalyHint === 'object' && brew.anomalyHint !== null && 'status' in brew.anomalyHint && brew.anomalyHint.status !== 'normal');
-  if (anomalous.length) addCheck('anomaly_flagged', 'warn', `기준 레시피의 최신 추출 기록 ${RECIPE_REVIEW_LIMITS.anomalyBrews}개 중 이상 징후가 표시된 기록이 ${anomalous.length}개 있습니다.`, { recipeCodes: [input.code], brewIds: anomalous.map((brew) => brew.xbloomBrewId) });
+  if (anomalous.length) addCheck('anomaly_flagged', 'warn', `기준 레시피의 최신 추출 기록 ${RECIPE_REVIEW_LIMITS.anomalyBrews}개 중 anomalyHint.status가 normal이 아닌 기록이 ${anomalous.length}개 있습니다.`, { recipeCodes: [input.code], brewIds: anomalous.map((brew) => brew.xbloomBrewId) });
 
   return {
     lineage: {
