@@ -5,12 +5,12 @@ import { getBrew, listBrews, listXBloomRecipeLinks } from './repositories/brews.
 import { getRecipeByCode, listRecipeChildren } from './repositories/recipes.js';
 import { buildRecipeReview, RECIPE_REVIEW_LIMITS, type RecipeReviewNodeInput } from './recipe-review.js';
 
-function limitFetchConcurrency(baseFetch: typeof fetch, limit: number): typeof fetch {
+export function limitFetchConcurrency(baseFetch: typeof fetch, limit: number): typeof fetch {
   let active = 0;
   const waiting: Array<() => void> = [];
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
-    active += 1;
+    else active += 1;
     try {
       return await baseFetch(input, init);
     } finally {

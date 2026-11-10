@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiConfig } from './config.js';
-import { fetchRecipeReview } from './recipe-review-context.js';
+import { fetchRecipeReview, limitFetchConcurrency } from './recipe-review-context.js';
 import { RECIPE_REVIEW_LIMITS } from './recipe-review.js';
 
 describe('fetchRecipeReview', () => {
@@ -45,5 +45,24 @@ describe('fetchRecipeReview', () => {
     expect(review?.recipes[0]?.brews.count).toBe(24);
     expect(maxActive).toBeGreaterThan(1);
     expect(maxActive).toBeLessThanOrEqual(RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests);
+  });
+
+  it('allows a later request after a burst larger than the concurrency limit', async () => {
+    const fetchImpl = limitFetchConcurrency((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      return new Response('ok', { status: 200 });
+    }) as typeof fetch, RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests);
+    await Promise.all(Array.from({ length: RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests * 2 }, () => fetchImpl('https://fixture.example/burst')));
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const laterRequest = Promise.race([
+      fetchImpl('https://fixture.example/after-burst'),
+      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('later request was blocked')), 100); }),
+    ]);
+    try {
+      await expect(laterRequest).resolves.toMatchObject({ status: 200 });
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   });
 });
