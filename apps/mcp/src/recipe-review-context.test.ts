@@ -17,7 +17,7 @@ describe('fetchRecipeReview', () => {
     const fetchImpl = (async (input: string | URL | Request) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await Promise.resolve();
       const url = String(input);
       let body: unknown;
       if (url.endsWith('/api/agent/recipes/COF-4101')) body = recipeRow;
@@ -48,11 +48,36 @@ describe('fetchRecipeReview', () => {
   });
 
   it('allows a later request after a burst larger than the concurrency limit', async () => {
+    const limit = RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests;
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    let secondWaveResolve!: () => void;
+    const secondWaveStarted = new Promise<void>((resolve) => { secondWaveResolve = resolve; });
+    const releases: Array<() => void> = [];
     const fetchImpl = limitFetchConcurrency((async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      return new Response('ok', { status: 200 });
-    }) as typeof fetch, RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests);
-    await Promise.all(Array.from({ length: RECIPE_REVIEW_LIMITS.maxConcurrentApiRequests * 2 }, () => fetchImpl('https://fixture.example/burst')));
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      started += 1;
+      if (started === limit * 2) secondWaveResolve();
+      if (started > limit * 2) {
+        active -= 1;
+        return new Response('ok', { status: 200 });
+      }
+      try {
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return new Response('ok', { status: 200 });
+      } finally {
+        active -= 1;
+      }
+    }) as typeof fetch, limit);
+    const burst = Promise.all(Array.from({ length: limit * 2 }, () => fetchImpl('https://fixture.example/burst')));
+    expect(started).toBe(limit);
+    releases.splice(0, limit).forEach((release) => release());
+    await secondWaveStarted;
+    releases.splice(0, limit).forEach((release) => release());
+    await burst;
+    expect(maxActive).toBeLessThanOrEqual(limit);
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const laterRequest = Promise.race([
