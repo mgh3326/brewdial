@@ -18,6 +18,7 @@ const EXPECTED_ANNOTATIONS: Record<string, { readOnlyHint?: boolean; destructive
   list_drippers: { readOnlyHint: true, openWorldHint: false },
   get_recent_context: { readOnlyHint: true, openWorldHint: false },
   get_recipe_context: { readOnlyHint: true, openWorldHint: false },
+  review_recipe: { readOnlyHint: true, openWorldHint: false },
   list_brews: { readOnlyHint: true, openWorldHint: false },
   get_brew: { readOnlyHint: true, openWorldHint: false },
   link_xbloom_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -48,15 +49,16 @@ async function connect(api: ApiConfig, opts?: Parameters<typeof createBrewdialMc
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   vi.mocked(handleListGrinders).mockClear();
 });
 
 describe('createBrewdialMcpServer', () => {
-  it('lists exactly the 18 snake_case tools', async () => {
+  it('lists exactly the 19 snake_case tools', async () => {
     const { client } = await connect(baseConfig);
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(19);
     expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(EXPECTED_ANNOTATIONS).sort());
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
@@ -95,6 +97,71 @@ describe('createBrewdialMcpServer', () => {
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(`Bearer ${baseConfig.agentToken}`);
     expect(globalSpy).not.toHaveBeenCalled();
+  });
+
+  it('review_recipe uses only GET requests and is annotated read-only', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const recipeRow = {
+      id: 'recipe:COF-4101', code: 'COF-4101', method: 'v60', title: 'Synthetic review fixture', version: 1,
+      params: {}, steps: [], bean_id: null, bean_snapshot: null, intent: null, notes: null,
+      adjustment_from_previous: null, created_by: 'agent', status: 'active', supersedes: null,
+      superseded_by: null, parent_code: null, created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-01T00:00:00.000Z'
+    };
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      const method = init?.method ?? 'GET';
+      calls.push({ url: requestUrl, method });
+      if (requestUrl.endsWith('/api/agent/recipes/COF-4101')) return new Response(JSON.stringify(recipeRow), { status: 200 });
+      if (requestUrl.includes('/api/agent/recipes?parentCode=COF-4101')) return new Response('[]', { status: 200 });
+      if (requestUrl.endsWith('/api/agent/xbloom-recipe-links')) return new Response('[]', { status: 200 });
+      if (requestUrl.endsWith('/api/recipes/COF-4101/feedback')) return new Response('[]', { status: 200 });
+      if (requestUrl.includes('/api/agent/brews?')) return new Response('[]', { status: 200 });
+      throw new Error(`Unexpected fixture request: ${requestUrl}`);
+    }) as typeof fetch;
+    const { client } = await connect({ ...baseConfig, fetchImpl });
+    const result = await client.callTool({ name: 'review_recipe', arguments: { code: 'COF-4101' } });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result as unknown as { content: Array<{ text: string }> }).content[0]!.text).lineage.nodes).toHaveLength(1);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.method === 'GET')).toBe(true);
+    const { tools } = await client.listTools();
+    expect(tools.find((tool) => tool.name === 'review_recipe')?.annotations).toEqual({ readOnlyHint: true, openWorldHint: false });
+  });
+
+  it('keeps get_recipe_context output unchanged for a fixed fixture', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-10T00:00:00.000Z'));
+    const recipeRow = {
+      id: 'recipe:COF-4102', code: 'COF-4102', method: 'v60', title: 'Synthetic context fixture', version: 1,
+      params: {}, steps: [], bean_id: null, bean_snapshot: null, intent: null, notes: null,
+      adjustment_from_previous: null, created_by: 'agent', status: 'active', supersedes: null,
+      superseded_by: null, parent_code: null, created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-01T00:00:00.000Z'
+    };
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/api/agent/recipes/COF-4102')) return new Response(JSON.stringify(recipeRow), { status: 200 });
+      if (requestUrl.endsWith('/api/agent/preferences/global')) return new Response('null', { status: 200 });
+      if (requestUrl.endsWith('/api/recipes/COF-4102/feedback')) return new Response('[]', { status: 200 });
+      if (requestUrl.includes('/api/agent/brews?')) return new Response('[]', { status: 200 });
+      throw new Error(`Unexpected fixture request: ${requestUrl}`);
+    }) as typeof fetch;
+    const { client } = await connect({ ...baseConfig, fetchImpl });
+    const result = await client.callTool({ name: 'get_recipe_context', arguments: { code: 'COF-4102' } });
+    expect(JSON.parse((result as unknown as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
+      generatedAt: '2026-11-10T00:00:00.000Z',
+      preferences: null,
+      recipe: {
+        _id: 'recipe:COF-4102', type: 'recipe', code: 'COF-4102', method: 'v60', title: 'Synthetic context fixture',
+        version: 1, params: {}, steps: [], createdBy: 'agent', status: 'active',
+        createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', isOfficial: false
+      },
+      feedback: [],
+      feedbackSummary: {
+        count: 0, latestAt: null, averageOverall: null, commonDesiredDirections: [], latestComment: null,
+        latestRawComment: null, latestQuickTags: [], latestSource: null
+      },
+      guidance: ['Recipe COF-4102 has no feedback yet; collect tasting notes before changing parameters.']
+    });
   });
 
   it('documents and forwards structured xBloom recipe fields', async () => {

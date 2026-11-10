@@ -11,6 +11,7 @@ import {
 import type { ApiConfig } from './config.js';
 import { ApiError } from './api.js';
 import { buildRecentContext, buildRecipeContext, parseContextLimit } from './context.js';
+import { fetchRecipeReview } from './recipe-review-context.js';
 import { createFeedback, editFeedback } from './repositories/feedback.js';
 import {
   createRecipe,
@@ -362,6 +363,17 @@ export async function handleGetRecipeContext(
     return jsonResult(context);
   } catch (error) {
     return errorResult(`Error fetching recipe context: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleReviewRecipe(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const code = args?.code;
+  if (typeof code !== 'string' || !isRecipeCode(code)) return errorResult('유효한 레시피 코드가 필요합니다. 형식: COF-NNNN');
+  try {
+    const review = await fetchRecipeReview(config, code as RecipeCode);
+    return review ? jsonResult(review) : jsonResult({ found: false, code });
+  } catch (error) {
+    return errorResult(`레시피 검토 자료를 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

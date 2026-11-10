@@ -25,6 +25,7 @@ const EXPECTED_TOOL_NAMES = [
   'list_brews',
   'list_drippers',
   'list_grinders',
+  'review_recipe',
   'set_recipe_parent',
   'supersede_recipe',
   'update_bean_attributes',
@@ -104,7 +105,7 @@ function postMcp(body: unknown, extra: Record<string, string> = {}) {
 }
 
 describe('/mcp initialize and tools/list through a proxied public Host', () => {
-  test('initialize → 200 and tools/list → exactly the 18 registered tool names', async () => {
+  test('initialize → 200 and tools/list → exactly the 19 registered tool names', async () => {
     const proxied = { Host: 'mcp.public.example.test' }
 
     const init = await postMcp(INITIALIZE, proxied)
@@ -117,7 +118,7 @@ describe('/mcp initialize and tools/list through a proxied public Host', () => {
     const listBody = await list.json()
     const names = listBody.result.tools.map((t: { name: string }) => t.name).sort()
     expect(names).toEqual(EXPECTED_TOOL_NAMES)
-    expect(names).toHaveLength(18)
+    expect(names).toHaveLength(19)
   })
 })
 
