@@ -11,6 +11,7 @@ const createdCodes: string[] = []
 const SEED_SUFFIX = randomUUID().replace(/-/g, '').slice(0, 8)
 const testStatusCode = `T-AGTST-${SEED_SUFFIX}`
 const refStatusCode = `T-AGREF-${SEED_SUFFIX}`
+const validTestParentCode = `COF-${BigInt(`0x${SEED_SUFFIX}`).toString().padStart(8, '0')}`
 
 beforeAll(async () => {
   // Set AGENT_TOKEN for all tests (vitest runs in the same process).
@@ -33,6 +34,7 @@ beforeAll(async () => {
     status: 'reference',
     owner_id: null,
   }).execute()
+  await db.insertInto('recipes').values({ code: validTestParentCode, method: 'v60', title: 'Agent Any Status Parent', status: 'test', owner_id: null }).execute()
 })
 
 afterAll(async () => {
@@ -40,6 +42,7 @@ afterAll(async () => {
   // Clean up the seeded test-status recipe.
   await db.deleteFrom('recipes').where('code', '=', testStatusCode).execute()
   await db.deleteFrom('recipes').where('code', '=', refStatusCode).execute()
+  await db.deleteFrom('recipes').where('code', '=', validTestParentCode).execute()
   // Clean up any rows created during tests.
   if (createdCodes.length > 0) {
     await db.deleteFrom('recipes').where('code', 'in', createdCodes).execute()
@@ -78,12 +81,12 @@ test('POST /api/agent/recipes {method,title} → 201, created_by=agent, server-c
 })
 
 test('POST /api/agent/recipes accepts existing parent and rejects missing parent', async () => {
-  const parent = await request(agentReq(`/api/agent/recipes/${testStatusCode}`))
+  const parent = await request(agentReq(`/api/agent/recipes/${validTestParentCode}`))
   expect(parent.status).toBe(200)
-  const created = await request(agentReq('/api/agent/recipes', { method: 'POST', body: JSON.stringify({ method: 'v60', title: 'Child Recipe', parentCode: testStatusCode }) }))
+  const created = await request(agentReq('/api/agent/recipes', { method: 'POST', body: JSON.stringify({ method: 'v60', title: 'Child Recipe', parentCode: validTestParentCode }) }))
   expect(created.status).toBe(201)
   const row = await created.json()
-  expect(row.parent_code).toBe(testStatusCode)
+  expect(row.parent_code).toBe(validTestParentCode)
   createdCodes.push(row.code)
   const missing = await request(agentReq('/api/agent/recipes', { method: 'POST', body: JSON.stringify({ method: 'v60', title: 'Missing Parent', parentCode: 'COF-999999' }) }))
   expect(missing.status).toBe(400)
@@ -92,9 +95,10 @@ test('POST /api/agent/recipes accepts existing parent and rejects missing parent
 
 test('GET /api/agent/recipes?parentCode lists direct children oldest first across statuses', async () => {
   const db = getDb()
-  const parent = `COF-${SEED_SUFFIX}01`
-  const first = `COF-${SEED_SUFFIX}02`
-  const second = `COF-${SEED_SUFFIX}03`
+  const decimalSeed = BigInt(`0x${SEED_SUFFIX}`).toString().padStart(8, '0')
+  const parent = `COF-${decimalSeed}01`
+  const first = `COF-${decimalSeed}02`
+  const second = `COF-${decimalSeed}03`
   await db.insertInto('recipes').values({ code: parent, method: 'v60', title: 'Lineage Parent', status: 'archived', owner_id: null }).execute()
   await db.insertInto('recipes').values({ code: first, method: 'v60', title: 'First Child', status: 'test', owner_id: null, parent_code: parent, created_at: new Date('2024-01-01T00:00:00Z') }).execute()
   await db.insertInto('recipes').values({ code: second, method: 'v60', title: 'Second Child', status: 'active', owner_id: null, parent_code: parent, created_at: new Date('2024-01-02T00:00:00Z') }).execute()
