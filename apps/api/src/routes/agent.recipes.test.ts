@@ -77,6 +77,35 @@ test('POST /api/agent/recipes {method,title} → 201, created_by=agent, server-c
   createdCodes.push(row['code'] as string)
 })
 
+test('POST /api/agent/recipes accepts existing parent and rejects missing parent', async () => {
+  const parent = await request(agentReq(`/api/agent/recipes/${testStatusCode}`))
+  expect(parent.status).toBe(200)
+  const created = await request(agentReq('/api/agent/recipes', { method: 'POST', body: JSON.stringify({ method: 'v60', title: 'Child Recipe', parentCode: testStatusCode }) }))
+  expect(created.status).toBe(201)
+  const row = await created.json()
+  expect(row.parent_code).toBe(testStatusCode)
+  createdCodes.push(row.code)
+  const missing = await request(agentReq('/api/agent/recipes', { method: 'POST', body: JSON.stringify({ method: 'v60', title: 'Missing Parent', parentCode: 'COF-999999' }) }))
+  expect(missing.status).toBe(400)
+  expect(await missing.json()).toEqual({ error: 'parent not found' })
+})
+
+test('GET /api/agent/recipes?parentCode lists direct children oldest first across statuses', async () => {
+  const db = getDb()
+  const parent = `COF-${SEED_SUFFIX}01`
+  const first = `COF-${SEED_SUFFIX}02`
+  const second = `COF-${SEED_SUFFIX}03`
+  await db.insertInto('recipes').values({ code: parent, method: 'v60', title: 'Lineage Parent', status: 'archived', owner_id: null }).execute()
+  await db.insertInto('recipes').values({ code: first, method: 'v60', title: 'First Child', status: 'test', owner_id: null, parent_code: parent, created_at: new Date('2024-01-01T00:00:00Z') }).execute()
+  await db.insertInto('recipes').values({ code: second, method: 'v60', title: 'Second Child', status: 'active', owner_id: null, parent_code: parent, created_at: new Date('2024-01-02T00:00:00Z') }).execute()
+  createdCodes.push(parent, first, second)
+  const response = await request(agentReq(`/api/agent/recipes?parentCode=${parent}`))
+  expect(response.status).toBe(200)
+  expect((await response.json()).map((r: { code: string }) => r.code)).toEqual([first, second])
+  expect((await request(agentReq('/api/agent/recipes'))).status).toBe(400)
+  expect((await request(agentReq('/api/agent/recipes?limit=5'))).status).toBe(400)
+})
+
 test('POST /api/agent/recipes with beanSnapshot (no beanId) → bean_id non-null (trigger linked)', async () => {
   const res = await request(agentReq('/api/agent/recipes', {
     method: 'POST',

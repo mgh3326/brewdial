@@ -17,6 +17,7 @@ import {
   findSimilarRecipes,
   setRecipeStatus,
   supersedeRecipe,
+  setRecipeParent,
   updateRecipe,
   RecipeVersionConflictError,
   type RecipeUpdate,
@@ -174,6 +175,20 @@ export async function handleSupersedeRecipe(
     });
   } catch (error) {
     return errorResult(`Error superseding recipe: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function handleSetRecipeParent(config: ApiConfig, args: Record<string, unknown> | undefined): Promise<ToolResult> {
+  const code = args?.code;
+  const parentCode = args?.parentCode;
+  if (typeof code !== 'string' || !isRecipeCode(code)) return errorResult('Invalid recipe code: expected format COF-NNNN');
+  if (parentCode !== null && (typeof parentCode !== 'string' || !isRecipeCode(parentCode))) return errorResult('Invalid parentCode: expected format COF-NNNN or null');
+  try {
+    const recipe = await setRecipeParent(config, code as RecipeCode, parentCode as RecipeCode | null);
+    if (!recipe) return jsonResult({ ok: false, error: `Recipe ${code} not found` });
+    return jsonResult({ ok: true, recipe });
+  } catch (error) {
+    return errorResult(`Error setting recipe parent: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

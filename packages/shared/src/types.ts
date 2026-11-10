@@ -86,6 +86,13 @@ export interface RecipeParams {
   brewer?: string;
   targetTimeSec?: number;
   bypass?: { waterG: number; tempC?: number };
+  components?: RecipeComponent[];
+}
+
+export interface RecipeComponent {
+  name: string;
+  beanId?: string;
+  grams: number;
 }
 
 // Update-path params (PATCH /agent/recipes/:code, MCP update_recipe): keys merge by

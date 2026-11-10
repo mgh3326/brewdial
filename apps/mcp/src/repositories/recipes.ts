@@ -10,7 +10,7 @@ import type {
   RecipeStep,
 } from '@brewdial/shared';
 import type { ApiConfig } from '../config.js';
-import { ApiError, getJson, postJson, patchJson } from '../api.js';
+import { ApiError, getJson, postJson, patchJson, putJson } from '../api.js';
 import { rowToRecipe, type RecipeRow } from '../mappers.js';
 
 const DEFAULT_LIMIT = 20;
@@ -34,8 +34,19 @@ export async function createRecipe(
   if (input.notes !== undefined) body.notes = input.notes;
   if (input.adjustmentFromPrevious !== undefined) body.adjustmentFromPrevious = input.adjustmentFromPrevious;
   if (input.dripperPortability !== undefined) body.dripperPortability = input.dripperPortability;
+  if (input.parentCode !== undefined) body.parentCode = input.parentCode;
   const row = await postJson<RecipeRow>(config, '/api/agent/recipes', body, fetchImpl);
   return rowToRecipe(row);
+}
+
+export async function setRecipeParent(config: ApiConfig, code: RecipeCode, parentCode: RecipeCode | null, fetchImpl: typeof fetch = fetch): Promise<RecipeDoc | null> {
+  try {
+    const row = await putJson<RecipeRow>(config, `/api/agent/recipes/${encodeURIComponent(code)}/parent`, { parentCode }, fetchImpl);
+    return rowToRecipe(row);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) return null;
+    throw err;
+  }
 }
 
 export async function getRecipeByCode(

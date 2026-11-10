@@ -129,6 +129,7 @@ export interface InsertAgentRecipePayload {
   notes?: string
   adjustmentFromPrevious?: string
   dripperPortability?: unknown
+  parentCode?: string
 }
 
 /**
@@ -163,6 +164,7 @@ export async function insertAgentRecipe(
       values.adjustment_from_previous = payload.adjustmentFromPrevious
     if (payload.dripperPortability !== undefined)
       values.dripper_portability = asJsonb(payload.dripperPortability)
+    if (payload.parentCode !== undefined) values.parent_code = payload.parentCode
 
     await trx
       .insertInto('recipes')
@@ -197,6 +199,33 @@ export function listRecentRecipesAnyStatus(db: Kysely<DB>, limit = 20): Promise<
     .orderBy('created_at', 'desc')
     .limit(n)
     .execute() as unknown as Promise<RecipeRow[]>
+}
+
+export function listRecipeChildren(db: Kysely<DB>, parentCode: string): Promise<RecipeRow[]> {
+  return db.selectFrom('recipes').select(RECIPE_COLS).where('parent_code', '=', parentCode)
+    .orderBy('created_at', 'asc').execute() as unknown as Promise<RecipeRow[]>
+}
+
+export async function setRecipeParent(db: Kysely<DB>, code: string, parentCode: string | null): Promise<RecipeRow> {
+  return db.transaction().execute(async (trx) => {
+    const recipe = await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).forUpdate().executeTakeFirst() as unknown as RecipeRow | undefined
+    if (!recipe) throw Object.assign(new Error('recipe not found'), { code: 'NOT_FOUND' })
+    if (parentCode !== null) {
+      if (parentCode === code) throw Object.assign(new Error('parent cannot equal recipe'), { code: 'INVALID_PARENT' })
+      let cursor: string | null = parentCode
+      const visited = new Set<string>()
+      for (let step = 0; cursor !== null; step += 1) {
+        if (step >= 50) throw Object.assign(new Error('parent chain exceeds 50 steps'), { code: 'INVALID_PARENT' })
+        if (cursor === code || visited.has(cursor)) throw Object.assign(new Error('parent would create a cycle'), { code: 'INVALID_PARENT' })
+        visited.add(cursor)
+        const ancestor = await trx.selectFrom('recipes').select(['code', 'parent_code']).where('code', '=', cursor).forUpdate().executeTakeFirst()
+        if (!ancestor) throw Object.assign(new Error('parent not found'), { code: 'PARENT_NOT_FOUND' })
+        cursor = ancestor.parent_code
+      }
+    }
+    await (trx.updateTable('recipes') as any).set({ parent_code: parentCode }).where('code', '=', code).execute()
+    return await trx.selectFrom('recipes').select(RECIPE_COLS).where('code', '=', code).executeTakeFirstOrThrow() as unknown as RecipeRow
+  })
 }
 
 export interface InsertManualRecipePayload {
@@ -335,6 +364,13 @@ export async function updateRecipe(
     }
 
     const after = applyPatch(current, patch)
+    if (isRecord(after.params) && Array.isArray(after.params.components) && typeof after.params.doseG === 'number') {
+      const totalGrams = after.params.components.reduce((sum: number, component: unknown) =>
+        isRecord(component) && typeof component.grams === 'number' ? sum + component.grams : sum, 0)
+      if (Math.abs(totalGrams - after.params.doseG) - 0.05 > Number.EPSILON * Math.max(1, totalGrams, after.params.doseG)) {
+        throw Object.assign(new Error(`params.components grams sum (${totalGrams} g) must match params.doseG (${after.params.doseG} g) within 0.05 g`), { code: 'INVALID_PARAMS' })
+      }
+    }
     if (options.dryRun) {
       return { kind: 'dryRun', before: current, after, changed: changedFields(current, after, patch) }
     }
