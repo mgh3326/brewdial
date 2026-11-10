@@ -21,6 +21,7 @@ import {
   handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
+  handleSetRecipeParent,
   handleUpdatePreferences,
   handleUpdateBeanAttributes,
   handleUpdateRecipe,
@@ -55,6 +56,7 @@ const PARAMS_SCHEMA = {
   description: 'Brew parameters',
   properties: {
     doseG: { type: 'number' },
+    components: { type: 'array', minItems: 1, maxItems: 4, description: '블렌드 구성. doseG가 있으면 각 grams의 합이 0.05g 이내로 일치해야 합니다. 업데이트에서 null을 전달하면 제거합니다.', items: { type: 'object', required: ['name', 'grams'], properties: { name: { type: 'string', minLength: 1, maxLength: 80 }, beanId: { type: 'string' }, grams: { type: 'number', exclusiveMinimum: 0 } } } },
     waterG: { type: 'number' },
     ratio: { type: 'string' },
     tempC: { type: 'number' },
@@ -203,6 +205,7 @@ const TOOLS: Tool[] = [
         method: { type: 'string', enum: ['v60', 'espresso', 'aeropress', 'kalita', 'other'], description: 'Brew method' },
         title: { type: 'string', description: 'Human-readable recipe title' },
         beanId: { type: 'string', description: 'Optional stable bean identifier' },
+        parentCode: { type: 'string', description: '선택적 부모 레시피 코드 (COF-NNNN)' },
         beanSnapshot: BEAN_SNAPSHOT_SCHEMA,
         params: PARAMS_SCHEMA,
         steps: STEPS_SCHEMA,
@@ -256,6 +259,13 @@ const TOOLS: Tool[] = [
       },
       required: ['code']
     }
+  },
+  {
+    name: 'set_recipe_parent',
+    title: 'Set Recipe Parent',
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    description: '기존 레시피의 계보상 부모를 지정하거나 null로 연결을 해제합니다. 콘텐츠 버전은 변경하지 않습니다.',
+    inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'Recipe code, format COF-NNNN' }, parentCode: { type: ['string', 'null'], description: 'Parent recipe code or null to clear' } }, required: ['code', 'parentCode'] }
   },
   {
     name: 'supersede_recipe',
@@ -538,6 +548,7 @@ export function createBrewdialMcpServer(
         case 'update_recipe': result = await handleUpdateRecipe(api, a); break;
         case 'archive_recipe': result = await handleArchiveRecipe(api, a); break;
         case 'supersede_recipe': result = await handleSupersedeRecipe(api, a); break;
+        case 'set_recipe_parent': result = await handleSetRecipeParent(api, a); break;
         case 'find_bean': result = await handleFindBean(api, a); break;
         case 'list_beans': result = await handleListBeans(api, a); break;
         case 'update_bean_attributes': result = await handleUpdateBeanAttributes(api, a); break;

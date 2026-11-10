@@ -62,6 +62,15 @@ test('PATCH params with null removes that key only', async () => {
   expect(updated.params).not.toHaveProperty('grinder')
 })
 
+test('PATCH rejects component grams that do not match the stored dose and writes nothing', async () => {
+  const row = await seed('Component mismatch', { doseG: 15 })
+  const res = await patchRecipe(row.code, { params: { components: [{ name: 'Blend', grams: 14 }] } })
+  expect(res.status).toBe(400)
+  const stored = await getRecipeAnyStatus(getDb(), row.code)
+  expect(stored?.version).toBe(row.version)
+  expect(stored?.params).toEqual({ doseG: 15 })
+})
+
 test('PATCH params keeps a legacy key the validator does not know', async () => {
   const row = await seed('Merge Legacy', { doseG: 15, legacyNote: 'from an old import' })
   const res = await patchRecipe(row.code, { params: { tempC: 90 } })

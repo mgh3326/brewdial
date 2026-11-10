@@ -32,6 +32,7 @@ export interface CreateRecipeInput {
   adjustmentFromPrevious?: string;
   createdBy?: 'agent' | 'manual';
   dripperPortability?: DripperPortability; // ROB-612 dripper-portable layer
+  parentCode?: `COF-${string}`;
 }
 
 export interface CreateRecipeResponse {

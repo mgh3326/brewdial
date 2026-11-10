@@ -11,6 +11,7 @@ import {
   handleListDrippers,
   handleListGrinders,
   handleSupersedeRecipe,
+  handleSetRecipeParent,
   handleUpdatePreferences,
   handleUpdateRecipe,
   handleListBrews,
@@ -73,6 +74,12 @@ describe('handleCreateRecipe', () => {
 });
 
 describe('handleUpdateRecipe', () => {
+  it('preserves components in the update payload', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'r1', code: 'COF-0001', method: 'v60', title: 'Blend', version: 2, params: { components: [{ name: 'A', grams: 15 }] }, steps: [], created_at: '2026-01-01', updated_at: '2026-01-01' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await handleUpdateRecipe(mockConfig, { code: 'COF-0001', params: { components: [{ name: 'A', grams: 15 }] } });
+    expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ params: { components: [{ name: 'A', grams: 15 }] } });
+  });
   it('rejects invalid recipe code', async () => {
     const r = await handleUpdateRecipe(mockConfig, { code: 'INVALID', title: 'x' });
     expect(r.isError).toBe(true);
@@ -173,6 +180,17 @@ describe('handleUpdateRecipe', () => {
       expect(r.content[0].text).toContain('No updatable fields');
       expect(fetchMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('handleSetRecipeParent', () => {
+  it('calls the parent route with a nullable parentCode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'r1', code: 'COF-0001', method: 'v60', title: 'x', version: 1, params: {}, steps: [], parent_code: null, created_at: '2026-01-01', updated_at: '2026-01-01' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await handleSetRecipeParent(mockConfig, { code: 'COF-0001', parentCode: null });
+    expect(result.isError).not.toBe(true);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain('/api/agent/recipes/COF-0001/parent');
+    expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ parentCode: null });
   });
 });
 

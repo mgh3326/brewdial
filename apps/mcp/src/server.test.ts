@@ -27,6 +27,7 @@ const EXPECTED_ANNOTATIONS: Record<string, { readOnlyHint?: boolean; destructive
   update_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   archive_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   supersede_recipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  set_recipe_parent: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   update_bean_attributes: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   update_preferences: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
 };
@@ -51,11 +52,11 @@ afterEach(() => {
 });
 
 describe('createBrewdialMcpServer', () => {
-  it('lists exactly the 17 snake_case tools', async () => {
+  it('lists exactly the 18 snake_case tools', async () => {
     const { client } = await connect(baseConfig);
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(18);
     expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(EXPECTED_ANNOTATIONS).sort());
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
@@ -111,13 +112,14 @@ describe('createBrewdialMcpServer', () => {
     }) as unknown as typeof fetch;
     const { client } = await connect({ ...baseConfig, fetchImpl });
     const args = {
-      method: 'other', title: 'xBloom', params: { bypass: { waterG: 40, tempC: 30 } },
+      method: 'other', title: 'xBloom', params: { bypass: { waterG: 40, tempC: 30 }, doseG: 15, components: [{ name: 'Kirkland decaf', grams: 10 }, { name: 'Momos', grams: 5 }] }, parentCode: 'COF-4321',
       steps: [{ note: 'Pour', pattern: 'spiral', rpm: 100, vibrationBefore: true, vibrationAfter: false, pauseSec: 10, tempC: 92 }]
     };
     const result = await client.callTool({ name: 'create_recipe', arguments: args });
     expect(result.isError).not.toBe(true);
     const body = JSON.parse(String(calls.find((c) => c.init.method === 'POST')!.init.body));
     expect(body.params).toEqual(args.params);
+    expect(body.parentCode).toBe(args.parentCode);
     expect(body.steps).toEqual(args.steps);
     const { tools } = await client.listTools();
     const create = tools.find((tool) => tool.name === 'create_recipe')!;
@@ -126,6 +128,8 @@ describe('createBrewdialMcpServer', () => {
     };
     expect(schema.properties.steps.items?.properties).toHaveProperty('vibrationBefore');
     expect(schema.properties.params.properties).toHaveProperty('bypass');
+    expect(schema.properties.params.properties).toHaveProperty('components');
+    expect(create.inputSchema.properties).toHaveProperty('parentCode');
     expect(schema.properties.steps.description).toContain('최대 9회');
     expect(schema.properties.steps.items?.properties?.rpm).toMatchObject({
       description: expect.stringContaining('첫 붓기의 값을 전체 추출에 적용')

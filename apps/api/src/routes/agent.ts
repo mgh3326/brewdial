@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink, insertXBloomBrews, upsertXBloomRecipeLink, listXBloomRecipeLinks, listXBloomBrews, getXBloomBrew, listPriorXBloomBrewMetrics, recipeExists } from '@brewdial/db'
+import { getDb, insertAgentRecipe, getRecipeAnyStatus, updateRecipe, setRecipeStatus, supersedeRecipe, insertAgentFeedback, updateFeedback, RecipeNotFoundError, getGlobalPreference, setGlobalPreference, updateBeanAttributes, resyncBeanIdentity, insertBeanPurchaseLink, insertXBloomBrews, upsertXBloomRecipeLink, listXBloomRecipeLinks, listXBloomBrews, getXBloomBrew, listPriorXBloomBrewMetrics, recipeExists, listRecipeChildren, setRecipeParent } from '@brewdial/db'
 import { validateCreateRecipeInput, validateUpdateBeanAttributesInput, validateCreateBeanPurchaseLinkInput, validateUpdatePreferencesInput, validateUpdateRecipeControls, validateUpdateFeedbackInput, validateActualBrewParams, validateXBloomBrew, parseXBloomBrewRecord, hintXBloomBrewAnomaly, isRecipeCode } from '@brewdial/shared'
 import type { XBloomBrew } from '@brewdial/shared'
 
@@ -97,6 +97,7 @@ agentRouter.post('/recipes', async (c) => {
     return c.json({ error: 'validation failed', details: result.errors }, 400)
   }
   const input = result.value
+  if (input.parentCode && !await recipeExists(getDb(), input.parentCode)) return c.json({ error: 'parent not found' }, 400)
   // Strip owner_id / is_official / created_by — server always controls these.
   const row = await insertAgentRecipe(getDb(), {
     method: input.method,
@@ -109,8 +110,31 @@ agentRouter.post('/recipes', async (c) => {
     notes: input.notes,
     adjustmentFromPrevious: input.adjustmentFromPrevious,
     dripperPortability: input.dripperPortability,
+    parentCode: input.parentCode,
   })
   return c.json(row, 201)
+})
+
+agentRouter.get('/recipes', async (c) => {
+  const query = new URL(c.req.url).searchParams
+  if (query.size !== 1 || !query.has('parentCode') || !isRecipeCode(query.get('parentCode') ?? '')) return c.json({ error: 'parentCode is required' }, 400)
+  return c.json(await listRecipeChildren(getDb(), query.get('parentCode')!))
+})
+
+agentRouter.put('/recipes/:code/parent', async (c) => {
+  const code = c.req.param('code')
+  const body = await c.req.json().catch(() => null)
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'parentCode') || (body as Record<string, unknown>).parentCode !== null && (typeof (body as Record<string, unknown>).parentCode !== 'string' || !isRecipeCode((body as { parentCode: string }).parentCode))) return c.json({ error: 'body must contain only parentCode (COF-NNNN or null)' }, 400)
+  try {
+    const row = await setRecipeParent(getDb(), code, (body as { parentCode: string | null }).parentCode)
+    return c.json(row)
+  } catch (err: unknown) {
+    const ecode = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined
+    if (ecode === 'NOT_FOUND') return c.json({ error: 'not found' }, 404)
+    if (ecode === 'PARENT_NOT_FOUND') return c.json({ error: 'parent not found' }, 400)
+    if (ecode === 'INVALID_PARENT') return c.json({ error: err instanceof Error ? err.message : 'invalid parent' }, 400)
+    throw err
+  }
 })
 
 // GET /agent/recipes/:code — returns a recipe of ANY status (test, superseded, active, etc.)
@@ -149,6 +173,7 @@ agentRouter.patch('/recipes/:code', async (c) => {
     if (err instanceof Error && 'code' in err && err.code === 'VERSION_CONFLICT' && 'currentVersion' in err) {
       return c.json({ error: 'version_conflict', currentVersion: err.currentVersion }, 409)
     }
+    if (err instanceof Error && 'code' in err && err.code === 'INVALID_PARAMS') return c.json({ error: 'validation failed', details: [err.message] }, 400)
     throw err
   }
 })

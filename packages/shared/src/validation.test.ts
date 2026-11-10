@@ -10,6 +10,26 @@ import {
 } from './validation.js';
 
 describe('validateCreateRecipeInput', () => {
+  it('accepts typed blend components when their grams match doseG', () => {
+    const result = validateCreateRecipeInput({ method: 'v60', title: 'Blend', params: { doseG: 15, components: [{ name: ' Kirkland decaf ', grams: 10 }, { name: 'Momos', beanId: 'bean-2', grams: 5 }] } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.params?.components).toEqual([{ name: 'Kirkland decaf', grams: 10 }, { name: 'Momos', beanId: 'bean-2', grams: 5 }]);
+  });
+
+  it('accepts component totals within 0.05 g of doseG', () => {
+    expect(validateCreateRecipeInput({ method: 'v60', title: 'Blend', params: { doseG: 15, components: [{ name: 'Blend', grams: 14.95 }] } }).ok).toBe(true);
+  });
+
+  it('rejects blend sums that differ from doseG and invalid component shapes', () => {
+    for (const components of [
+      [{ name: 'A', grams: 14 }],
+      Array.from({ length: 5 }, (_, i) => ({ name: `B${i}`, grams: 1 })),
+      [{ name: ' ', grams: 15 }],
+      [{ name: 'A', grams: 0 }]
+    ]) {
+      expect(validateCreateRecipeInput({ method: 'v60', title: 'Blend', params: { doseG: 15, components } }).ok).toBe(false);
+    }
+  });
   it('accepts a minimal valid input and strips unknown fields', () => {
     const result = validateCreateRecipeInput({
       method: 'v60',
@@ -740,6 +760,15 @@ describe('validator defensive branches (ROB-611/612 caps + enums)', () => {
 });
 
 describe('validateUpdateRecipeInput (partial-patch trust boundary)', () => {
+  it('allows removing params.components with null', () => {
+    const result = validateUpdateRecipeInput({ params: { components: null } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.params).toEqual({ components: null });
+  });
+
+  it('rejects mismatched component grams in a patch', () => {
+    expect(validateUpdateRecipeInput({ params: { doseG: 15, components: [{ name: 'A', grams: 10 }] } }).ok).toBe(false);
+  });
   it('accepts a valid partial patch (notes + dripperPortability)', () => {
     const r = validateUpdateRecipeInput({
       notes: 'tweaked',

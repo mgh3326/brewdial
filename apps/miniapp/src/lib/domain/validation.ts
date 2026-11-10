@@ -47,7 +47,7 @@ const CREATED_BY_VALUES = ['agent', 'manual'] as const;
 const RECIPE_PARAM_NUMBER_KEYS = ['doseG', 'waterG', 'tempC', 'targetTimeSec'] as const;
 const RECIPE_PARAM_STRING_KEYS = ['ratio', 'grinder', 'brewer'] as const;
 // Update path only: a null for one of these keys removes it from the stored params.
-const RECIPE_PARAM_NULLABLE_KEYS = new Set<string>([...RECIPE_PARAM_NUMBER_KEYS, ...RECIPE_PARAM_STRING_KEYS, 'grind', 'bypass']);
+const RECIPE_PARAM_NULLABLE_KEYS = new Set<string>([...RECIPE_PARAM_NUMBER_KEYS, ...RECIPE_PARAM_STRING_KEYS, 'grind', 'bypass', 'components']);
 
 const SENSORY_RATING_KEYS = [
   'burnt',
@@ -163,6 +163,28 @@ function validateRecipeParams(
         } else bypass.tempC = raw.bypass.tempC;
       }
       if (bypass.waterG >= 5 && bypass.waterG <= 100) out.bypass = bypass;
+    }
+  }
+  if (raw.components !== undefined) {
+    if (!Array.isArray(raw.components) || raw.components.length < 1 || raw.components.length > 4) {
+      errors.push('params.components must contain 1 to 4 items');
+    } else {
+      const components: NonNullable<RecipeParams['components']> = [];
+      raw.components.forEach((item: unknown, index: number) => {
+        if (!isPlainObject(item)) { errors.push(`params.components[${index}] must be an object`); return; }
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        if (name.length < 1 || name.length > 80) errors.push(`params.components[${index}].name must be 1 to 80 characters`);
+        let beanId: string | undefined;
+        if (item.beanId !== undefined) {
+          if (typeof item.beanId !== 'string' || !item.beanId.trim()) errors.push(`params.components[${index}].beanId must be a non-empty string`);
+          else beanId = item.beanId;
+        }
+        if (typeof item.grams !== 'number' || !Number.isFinite(item.grams) || item.grams <= 0) errors.push(`params.components[${index}].grams must be a positive number`);
+        if (name.length >= 1 && name.length <= 80 && typeof item.grams === 'number' && Number.isFinite(item.grams) && item.grams > 0) {
+          components.push({ name, ...(beanId !== undefined ? { beanId } : {}), grams: item.grams });
+        }
+      });
+      if (components.length === raw.components.length) out.components = components;
     }
   }
   // ROB-611: grind is string (legacy free text) | GrindSpec (structured).
@@ -630,6 +652,11 @@ export function validateCreateRecipeInput(
   const beanId = pickString(input, 'beanId', errors, 'input');
   const beanSnapshot = validateBeanSnapshot(input.beanSnapshot, errors);
   const params = validateRecipeParams(input.params, errors);
+  let parentCode: `COF-${string}` | undefined;
+  if (input.parentCode !== undefined) {
+    if (typeof input.parentCode !== 'string' || !isRecipeCode(input.parentCode)) errors.push('parentCode must be a recipe code (COF-NNNN)');
+    else parentCode = input.parentCode;
+  }
   const steps = validateRecipeSteps(input.steps, errors);
   validateFirstPourTempC(params, steps, errors);
 
@@ -684,9 +711,14 @@ export function validateCreateRecipeInput(
   if (adjustmentFromPrevious !== undefined) value.adjustmentFromPrevious = adjustmentFromPrevious;
   if (createdBy !== undefined) value.createdBy = createdBy;
   if (dripperPortability !== undefined) value.dripperPortability = dripperPortability;
+  if (parentCode !== undefined) value.parentCode = parentCode;
 
   const warnings: string[] = [];
   validateRecipeCrossFields(value, errors, warnings);
+  if (params?.components && params.doseG !== undefined) {
+    const grams = params.components.reduce((sum, component) => sum + component.grams, 0);
+    if (Math.abs(grams - params.doseG) - 0.05 > Number.EPSILON * Math.max(1, grams, params.doseG)) errors.push(`params.components grams sum (${grams} g) must match params.doseG (${params.doseG} g) within 0.05 g`);
+  }
   if (errors.length > 0) return { ok: false, errors };
 
   return { ok: true, value, warnings };
@@ -755,6 +787,10 @@ export function validateUpdateRecipeInput(
     if (s !== undefined) value.steps = s;
   }
   validateFirstPourTempC(value.params, value.steps, errors);
+  if (value.params?.components && typeof value.params.doseG === 'number') {
+    const grams = value.params.components.reduce((sum, component) => sum + component.grams, 0);
+    if (Math.abs(grams - value.params.doseG) - 0.05 > Number.EPSILON * Math.max(1, grams, value.params.doseG)) errors.push(`params.components grams sum (${grams} g) must match params.doseG (${value.params.doseG} g) within 0.05 g`);
+  }
   if (input.notes !== undefined) {
     const n = pickString(input, 'notes', errors, 'input', { trim: false });
     if (n !== undefined) value.notes = n;
