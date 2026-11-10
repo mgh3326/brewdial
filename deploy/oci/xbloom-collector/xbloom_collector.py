@@ -162,7 +162,7 @@ def fetch_records(client: XBloomCloud) -> List[Dict[str, Any]]:
     """Make the single permitted read call and flatten its grouped response."""
     client._require_auth()
     form = client._base_form()
-    response = client._post("tuBrewRecordList.thtml", encrypt_form(form), encrypted=True)
+    response = client._post("tuBrewRecordList.tuhtml", encrypt_form(form), encrypted=True)
     if str(response.get("resultCode")) in {str(code) for code in AUTH_ERROR_CODES}:
         raise XBloomAuthenticationError()
     client._check(response, "list_brew_records")

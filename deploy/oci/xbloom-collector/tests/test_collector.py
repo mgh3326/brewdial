@@ -53,7 +53,7 @@ def test_invariant_1_reads_only_tu_brew_record_list_once(monkeypatch):
 
     assert result == [record]
     assert len(calls) == 1
-    assert calls[0][0] == "tuBrewRecordList.thtml"
+    assert calls[0][0] == "tuBrewRecordList.tuhtml"
     assert calls[0][2] is True
 
 
