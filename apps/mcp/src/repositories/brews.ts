@@ -19,6 +19,11 @@ export interface McpBrewRow {
 }
 
 export interface ListBrewsFilters { limit?: number; recipeCode?: string; xbloomRecipeId?: string; since?: string }
+export interface XBloomRecipeLink { xbloomRecipeId: string; recipeCode: string }
+
+export function listXBloomRecipeLinks(config: ApiConfig, fetchImpl?: typeof fetch): Promise<XBloomRecipeLink[]> {
+  return getJson(config, '/api/agent/xbloom-recipe-links', '', fetchImpl)
+}
 
 function queryString(filters: ListBrewsFilters): string {
   const params = new URLSearchParams()

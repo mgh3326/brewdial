@@ -17,6 +17,7 @@ import {
   handleFindBean,
   handleGetRecentContext,
   handleGetRecipeContext,
+  handleReviewRecipe,
   handleListBeans,
   handleListDrippers,
   handleListGrinders,
@@ -427,6 +428,17 @@ const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'review_recipe',
+    title: '레시피 검토',
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    description: '레시피 계보와 각 버전의 변경점, 피드백, 추출 기록을 근거로 반환하고 고정 규칙 검사를 제공합니다. rawComment는 운영자가 직접 쓴 문장이고 comment는 에이전트 요약일 수 있습니다. 다음 변경은 호출자가 판단합니다.',
+    inputSchema: {
+      type: 'object',
+      properties: { code: { type: 'string', description: '레시피 코드 COF-NNNN' } },
+      required: ['code']
+    }
+  },
+  {
     name: 'create_feedback',
 
     title: 'Create Feedback',
@@ -556,6 +568,7 @@ export function createBrewdialMcpServer(
         case 'list_drippers': result = await handleListDrippers(api, a); break;
         case 'get_recent_context': result = await handleGetRecentContext(api, a); break;
         case 'get_recipe_context': result = await handleGetRecipeContext(api, a); break;
+        case 'review_recipe': result = await handleReviewRecipe(api, a); break;
         case 'list_brews': result = await handleListBrews(api, a); break;
         case 'get_brew': result = await handleGetBrew(api, a); break;
         case 'link_xbloom_recipe': result = await handleLinkXBloomRecipe(api, a); break;

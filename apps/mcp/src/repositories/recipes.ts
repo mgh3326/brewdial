@@ -66,6 +66,16 @@ export async function getRecipeByCode(
   }
 }
 
+export async function listRecipeChildren(
+  config: ApiConfig,
+  parentCode: RecipeCode,
+  fetchImpl: typeof fetch = fetch
+): Promise<RecipeDoc[]> {
+  const query = new URLSearchParams({ parentCode }).toString();
+  const rows = await getJson<RecipeRow[]>(config, `/api/agent/recipes?${query}`, '', fetchImpl);
+  return (Array.isArray(rows) ? rows : []).map(rowToRecipe);
+}
+
 export async function listRecentRecipes(
   config: ApiConfig,
   limit: number = DEFAULT_LIMIT,
