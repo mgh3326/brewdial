@@ -51,7 +51,12 @@ test('backslash escapes inside string literals are honored', () => {
 
 test('migrations split into statements with no client directives left', async () => {
   const names = await listMysqlMigrations(migrationsDir)
-  expect(names).toEqual(['001_baseline.sql', '002_feedback_recipe_snapshot.sql', '003_xbloom_brews.sql'])
+  expect(names).toEqual([
+    '001_baseline.sql',
+    '002_feedback_recipe_snapshot.sql',
+    '003_xbloom_brews.sql',
+    '004_registry_xbloom.sql',
+  ])
   const scripts = await Promise.all(names.map((name) => readFile(path.join(migrationsDir, name), 'utf8')))
   const statements = scripts.map(splitMysqlScript)
   expect(statements.flat().some((s) => /^delimiter/i.test(s))).toBe(false)
@@ -60,6 +65,7 @@ test('migrations split into statements with no client directives left', async ()
   expect(statements[0].filter((s) => /^create sql security invoker view bean_summaries/i.test(s))).toHaveLength(1)
   expect(statements[1]).toHaveLength(1)
   expect(statements[2]).toHaveLength(2)
+  expect(statements[3]).toHaveLength(2)
 })
 
 test('checksums are stable and content-sensitive', () => {
