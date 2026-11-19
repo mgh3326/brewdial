@@ -200,12 +200,6 @@ export interface Grinders {
   zero_ref: string | null;
 }
 
-export interface Pgmigrations {
-  id: Generated<number>;
-  name: string;
-  run_on: Timestamp;
-}
-
 export interface Preferences {
   created_at: Generated<Timestamp>;
   default_params: Generated<Json>;
@@ -292,7 +286,6 @@ export interface DB {
   feedback: Feedback;
   grinder_calibration: GrinderCalibration;
   grinders: Grinders;
-  pgmigrations: Pgmigrations;
   preferences: Preferences;
   recipes: Recipes;
   saved_beans: SavedBeans;

@@ -20,7 +20,7 @@ Deployed and operated by the author with restricted web access:
 | HTTP API | `api.brewdial.robinco.dev` | `GET /api/health` is public; most routes need identity or agent token |
 | App-in-Toss mini-app | (same domain/API layer) | Built; store/public launch is **not** complete |
 
-Continuous Integration (typecheck, lint, tests with a Postgres service container)
+Continuous Integration (typecheck, lint, tests with a MySQL 8.4 service container)
 runs on pull requests. Continuous **deployment** automation is still being built.
 
 ## Architecture
@@ -42,7 +42,7 @@ flowchart LR
 
   subgraph origin [Origin API host]
     API["apps/api — Node / Hono<br/>/api/* and /* dual mount"]
-    DB[(HeatWave MySQL in production; PostgreSQL also supported)]
+    DB[(HeatWave MySQL)]
   end
 
   subgraph packages [Shared libraries]
@@ -60,7 +60,7 @@ flowchart LR
   AGENT --> MCP
   MCP -->|Bearer AGENT_TOKEN<br/>/api/agent/*| CF_TUNNEL
   CF_TUNNEL --> API
-  API --> PG
+  API --> DB
   API -. parity fixtures .- SHARED
   MINI --> SHARED
   MCP --> SHARED
@@ -79,7 +79,7 @@ BrewDial did not start here. Each move was a deliberate cut of a trust boundary:
    into storage.
 3. **Own API + origin isolation (current)** — An API of its own now owns every write
    path. Clients no longer hold database credentials. The API process and
-   Postgres bind to localhost on the origin host; **Cloudflare Tunnel** is the
+   bind to localhost on the origin host; **Cloudflare Tunnel** is the
    only ingress. Edge auth (Cloudflare Access for humans), **user identity** on
    `/me/*`, and a separate **agent bearer token** on `/api/agent/*` are different
    gates — an agent cannot impersonate a user session, and a browser cannot call
@@ -98,7 +98,7 @@ apps/
   mcp/        # @brewdial/mcp — MCP server over stdio (13 tools)
   miniapp/    # @brewdial/miniapp — React + Vite SPA (+ App-in-Toss build)
 packages/
-  db/         # @brewdial/db — Kysely repositories + node-pg-migrate SQL
+  db/         # @brewdial/db — Kysely repositories + MySQL migrations (migrations-mysql/)
   shared/     # @brewdial/shared — shared types, schemas, pure domain logic
 ```
 
@@ -107,7 +107,7 @@ Notable API details:
 - Routes are mounted at **both** `/api/*` and `/*`. MCP and ops use the `/api`
   prefix; the mini-app/web client base URL omits it.
 - `GET /api/health` — process liveness (no DB).
-- `GET /api/db/health` — `SELECT 1` against Postgres.
+- `GET /api/db/health` — `SELECT 1` against MySQL.
 - `/api/agent/*` — agent/admin writes; requires `Authorization: Bearer <AGENT_TOKEN>`.
 
 MCP tools (stdio): `create_recipe`, `update_recipe`, `archive_recipe`,
@@ -136,14 +136,14 @@ behave the same way, and CI checks both:
   `pnpm domain:sync` and commit the result. `pnpm domain:check` fails CI when the
   copy is stale.
 - **HTTP contract.** The Vitest suites in `apps/api/src/routes` run against the
-  Node API on PostgreSQL and MySQL.
+  Node API on MySQL 8.4.
 
 ## Requirements
 
 - Node.js ≥ 22
 - pnpm 10.33.2 (pinned via `packageManager` in root `package.json`)
-- PostgreSQL 17 for API/DB integration tests and local API runs
-  (`DATABASE_URL` must point at a migrated database)
+- MySQL 8.4 for API/DB integration tests and local API runs
+  (`DATABASE_URL` must be a `mysql://` URL pointing at a migrated database)
 
 ## Local development
 
@@ -182,7 +182,7 @@ commit real secrets):
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `DATABASE_URL` | api, db migrations/tests | Database connection string (MySQL in production; PostgreSQL also supported) |
+| `DATABASE_URL` | api, db migrations/tests | MySQL connection string, `mysql://` only (HeatWave in production) |
 | `PORT` | api | Listen port (default `3020`) |
 | `HOST` | api | Bind address (default `127.0.0.1`) |
 | `AGENT_TOKEN` | api (`/api/agent/*`), mcp | Bearer token for the agent surface |
@@ -192,7 +192,7 @@ commit real secrets):
 Apply migrations before integration tests or a local API that hits the DB:
 
 ```bash
-export DATABASE_URL='postgres://USER@localhost:5432/brewdial_test'
+export DATABASE_URL='mysql://USER@localhost:3306/brewdial_test'
 pnpm db:migrate
 ```
 
@@ -235,7 +235,7 @@ pnpm --filter @brewdial/shared build
 pnpm --filter @brewdial/db build
 
 # 2) Schema for integration tests
-export DATABASE_URL='postgres://USER@localhost:5432/brewdial_test'
+export DATABASE_URL='mysql://USER@localhost:3306/brewdial_test'
 pnpm db:migrate
 
 # 3) Gate commands (same shape as CI)
@@ -249,7 +249,7 @@ pnpm test     # Vitest across workspaces
 creation — unit tests in `@brewdial/shared`, `@brewdial/mcp`, and much of the
 mini-app still run.
 
-CI (`.github/workflows/ci.yml` on `main`) provisions Postgres 17, runs
+CI (`.github/workflows/ci.yml` on `main`) provisions MySQL 8.4, runs
 `pnpm db:migrate`, then `pnpm check` / `pnpm lint` / `pnpm test` on every PR.
 
 Targeted commands:
@@ -259,7 +259,7 @@ pnpm --filter @brewdial/shared test
 pnpm --filter @brewdial/mcp test
 pnpm --filter @brewdial/miniapp test
 
-export DATABASE_URL='postgres://USER@localhost:5432/brewdial_test'
+export DATABASE_URL='mysql://USER@localhost:3306/brewdial_test'
 pnpm --filter @brewdial/shared build
 pnpm --filter @brewdial/db build
 pnpm db:test

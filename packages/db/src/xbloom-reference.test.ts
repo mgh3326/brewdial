@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { sql } from 'kysely'
 import { parse } from 'yaml'
 import { fromXBloomYaml } from '@brewdial/shared'
-import { closeDb, getDb, dbVendor } from './db.js'
+import { closeDb, getDb } from './db.js'
 import { withOwnerWrites } from './owner-writes.js'
 import {
   assertReferenceStatusSupported,
@@ -48,13 +48,9 @@ interface Row {
 }
 
 async function rowsFor(site: XBloomMockSite): Promise<Row[]> {
-  const r = dbVendor() === 'mysql'
-    ? await sql<Row>`select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
+  const r = await sql<Row>`select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
       from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${site.origin}/%`}
       order by json_unquote(json_extract(bean_snapshot, '$.sourceUrl'))`.execute(db)
-    : await sql<Row>`select code, title, status, created_by, is_official, owner_id, bean_id, notes, params, bean_snapshot
-      from recipes where bean_snapshot->>'sourceUrl' like ${`${site.origin}/%`}
-      order by bean_snapshot->>'sourceUrl'`.execute(db)
   return r.rows
 }
 
@@ -67,8 +63,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const s of sites) {
-    if (dbVendor() === 'mysql') await sql`delete from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${s.origin}/%`}`.execute(db)
-    else await sql`delete from recipes where bean_snapshot->>'sourceUrl' like ${`${s.origin}/%`}`.execute(db)
+    await sql`delete from recipes where json_unquote(json_extract(bean_snapshot, '$.sourceUrl')) like ${`${s.origin}/%`}`.execute(db)
     await s.close()
   }
   await rm(cacheDir, { recursive: true, force: true })
@@ -112,12 +107,12 @@ describe('normalizeSourceUrl — the idempotency key is deterministic', () => {
 
 describe('describeDatabaseUrl — the CLI local-DB guard', () => {
   it.each([
-    ['unix socket via ?host=', 'postgres://robin@localhost/db?host=/tmp&port=5433', true],
-    ['localhost', 'postgres://u:p@localhost:5432/db', true],
-    ['127.0.0.1', 'postgres://u:p@127.0.0.1/db', true],
-    ['remote host', 'postgres://u:p@db.example.com:5432/db', false],
-    ['?host= overrides a localhost hostname', 'postgres://localhost/app?host=db.prod.example.com', false],
-    ['?host= socket overrides a remote hostname', 'postgres://db.example.com/app?host=/var/run/postgresql', true],
+    ['unix socket via ?host=', 'mysql://robin@localhost/db?host=/tmp&port=5433', true],
+    ['localhost', 'mysql://u:p@localhost:3306/db', true],
+    ['127.0.0.1', 'mysql://u:p@127.0.0.1/db', true],
+    ['remote host', 'mysql://u:p@db.example.com:3306/db', false],
+    ['?host= overrides a localhost hostname', 'mysql://localhost/app?host=db.prod.example.com', false],
+    ['?host= socket overrides a remote hostname', 'mysql://db.example.com/app?host=/var/run/mysqld', true],
   ])('%s', (_l, url, local) => {
     expect(describeDatabaseUrl(url).local).toBe(local)
   })
@@ -190,9 +185,7 @@ describe('load + storage rules', () => {
     expect(rows).toHaveLength(3)
     const names = rows.map((r) => r.bean_snapshot.name)
     const roasters = rows.map((r) => r.bean_snapshot.roaster)
-    const beans = dbVendor() === 'mysql'
-      ? await sql<{ n: number }>`select count(*) as n from beans where name in (${sql.join(names.map((name) => sql`${name}`))}) or roaster in (${sql.join(roasters.map((roaster) => sql`${roaster}`))})`.execute(db)
-      : await sql<{ n: number }>`select count(*)::int as n from beans where name = any(${names}::text[]) or roaster = any(${roasters}::text[])`.execute(db)
+    const beans = await sql<{ n: number | string }>`select count(*) as n from beans where name in (${sql.join(names.map((name) => sql`${name}`))}) or roaster in (${sql.join(roasters.map((roaster) => sql`${roaster}`))})`.execute(db)
     expect(Number(beans.rows[0].n)).toBe(0)
   })
 
@@ -293,8 +286,7 @@ describe('load + storage rules', () => {
         return legacy
       })
       const json = JSON.stringify(legacySteps)
-      if (dbVendor() === 'mysql') await sql`update recipes set steps = cast(${json} as json) where code = ${code}`.execute(db)
-      else await sql`update recipes set steps = ${json}::jsonb where code = ${code}`.execute(db)
+      await sql`update recipes set steps = cast(${json} as json) where code = ${code}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast(), expect: 3 })
       expect(v.items.filter((item) => !item.ok)).toEqual([])
       expect(v).toMatchObject({ passed: 3, failed: 0, exitCode: 0 })
@@ -302,8 +294,7 @@ describe('load + storage rules', () => {
 
     it('fails a row whose params drifted, naming the field', async () => {
       const code = firstCodes[0]
-      if (dbVendor() === 'mysql') await sql`update recipes set params = json_set(params, '$.doseG', 99) where code = ${code}`.execute(db)
-      else await sql`update recipes set params = jsonb_set(params, '{doseG}', '99') where code = ${code}`.execute(db)
+      await sql`update recipes set params = json_set(params, '$.doseG', 99) where code = ${code}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast() })
       expect(v).toMatchObject({ passed: 2, failed: 1, exitCode: 1 })
       const bad = v.items.find((i) => i.code === code)!
@@ -313,14 +304,12 @@ describe('load + storage rules', () => {
 
     it('fails a row with a drifted step, storage rule, or missing source lines', async () => {
       const [a, b, c] = firstCodes
-      if (dbVendor() === 'mysql') await sql`update recipes set steps = json_set(steps, '$[1].waterG', 999) where code = ${a}`.execute(db)
-      else await sql`update recipes set steps = jsonb_set(steps, '{1,waterG}', '999') where code = ${a}`.execute(db)
+      await sql`update recipes set steps = json_set(steps, '$[1].waterG', 999) where code = ${a}`.execute(db)
       await withOwnerWrites(db, async (trx) => {
         // guard trigger: is_official is only writable with the owner-write flag
         await sql`update recipes set is_official = true where code = ${b}`.execute(trx)
       })
-      if (dbVendor() === 'mysql') await sql`update recipes set notes = regexp_replace(notes, concat(char(10), 'YAML: .*$'), '') where code = ${c}`.execute(db)
-      else await sql`update recipes set notes = regexp_replace(notes, '\nYAML: .*$', '') where code = ${c}`.execute(db)
+      await sql`update recipes set notes = regexp_replace(notes, concat(char(10 using utf8mb4), 'YAML: .*$') collate utf8mb4_0900_as_cs, '') where code = ${c}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast() })
       expect(v).toMatchObject({ passed: 0, failed: 3, exitCode: 3 })
       const reasons = Object.fromEntries(v.items.map((i) => [i.code, i.reasons.join(' | ')]))

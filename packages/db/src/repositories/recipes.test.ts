@@ -12,10 +12,9 @@ import {
 } from './recipes.js'
 import { saveRecipe } from './saved.js'
 
-// Regression: jsonb columns (steps/params/bean_snapshot) must be JSON-serialized
-// before insert. pg turns a top-level JS array (steps) into a Postgres array
-// literal, which a jsonb column rejects with 22P02 "invalid input syntax for type
-// json". This test inserts a recipe with a NON-EMPTY steps array against the real DB.
+// Regression: json columns (steps/params/bean_snapshot) must be JSON-serialized
+// before insert. mysql2 expands a top-level JS array (steps) into a SQL list, which a
+// json column rejects. This test inserts a recipe with a NON-EMPTY steps array against the real DB.
 
 const db = getDb()
 
@@ -24,10 +23,10 @@ afterAll(async () => {
 })
 
 describe('insertManualRecipe — jsonb serialization', () => {
-  it('stores a non-empty steps array (no 22P02) and round-trips it as an array', async () => {
+  it('stores a non-empty steps array (no json type error) and round-trips it as an array', async () => {
     const row = await insertManualRecipe(db, {
       method: 'v60',
-      title: '__jsonb_regression_test__',
+      title: '__json_regression_test__',
       params: { doseG: 20, waterG: 320 },
       steps: [
         { atSec: 0, waterG: 50, note: 'Bloom' },
@@ -41,8 +40,8 @@ describe('insertManualRecipe — jsonb serialization', () => {
       expect((row.steps as Array<{ note: string }>)[0].note).toBe('Bloom')
       expect((row.params as { doseG: number }).doseG).toBe(20)
 
-      // Read back through a fresh select to confirm it persisted as jsonb (not a
-      // Postgres array literal or stringified text).
+      // Read back through a fresh select to confirm it persisted as json (not a
+      // SQL list or stringified text).
       const back = await getRecipeAnyStatus(db, row.code)
       expect(Array.isArray(back?.steps)).toBe(true)
       expect((back?.steps as unknown[]).length).toBe(2)
@@ -62,8 +61,8 @@ describe("status='reference' list exclusion", () => {
   let userCreated = false
 
   afterAll(async () => {
-    await sql`delete from saved_recipes where app_user_id = ${appUserId}::uuid`.execute(db)
-    if (userCreated) await sql`delete from app_users where id = ${appUserId}::uuid`.execute(db)
+    await sql`delete from saved_recipes where app_user_id = ${appUserId}`.execute(db)
+    if (userCreated) await sql`delete from app_users where id = ${appUserId}`.execute(db)
     await sql`delete from recipes where code = ${refCode}`.execute(db)
     await sql`delete from beans where id = ${beanId}`.execute(db)
   })
@@ -89,14 +88,14 @@ describe("status='reference' list exclusion", () => {
   })
 
   it('saveRecipe writes no saved_recipes row for a reference recipe', async () => {
-    await sql`insert into app_users (id) values (${appUserId}::uuid)`.execute(db)
+    await sql`insert into app_users (id) values (${appUserId})`.execute(db)
     userCreated = true
 
     await saveRecipe(db, appUserId, refCode)
-    const rows = await sql<{ n: number }>`
-      select count(*)::int as n from saved_recipes
-      where app_user_id = ${appUserId}::uuid and recipe_code = ${refCode}`.execute(db)
-    expect(rows.rows[0].n).toBe(0)
+    const rows = await sql<{ n: number | string }>`
+      select count(*) as n from saved_recipes
+      where app_user_id = ${appUserId} and recipe_code = ${refCode}`.execute(db)
+    expect(Number(rows.rows[0].n)).toBe(0)
   })
 
   it('setRecipeStatus accepts reference and still rejects junk', async () => {

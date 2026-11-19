@@ -59,22 +59,22 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      postgres:
-        image: postgres:17
+      mysql:
+        # OCI HeatWave runs the MySQL 8.4 LTS line.
+        image: mysql:8.4
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgrespassword
-          POSTGRES_DB: brewdial_test
+          MYSQL_ROOT_PASSWORD: mysqlpassword
+          MYSQL_DATABASE: brewdial_test
         ports:
-          - 5432:5432
+          - 3306:3306
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysqlpassword"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
     env:
-      DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/brewdial_test
+      DATABASE_URL: mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test
 
     steps:
       - name: Checkout repository
@@ -111,7 +111,7 @@ jobs:
         run: pnpm --filter @brewdial/api test:http
 
   api-tests-mysql:
-    # Same PR trigger as `ci`. The PostgreSQL job above is unchanged.
+    # Same PR trigger as `ci`. Runs the API suite on the MySQL 8.4 service.
     name: API tests (MySQL 8.4, Node)
     if: github.event_name != 'workflow_dispatch' || inputs.stage == 'pr'
     runs-on: ubuntu-latest

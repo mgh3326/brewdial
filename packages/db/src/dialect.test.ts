@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 const createPool = vi.hoisted(() => vi.fn())
 vi.mock('mysql2', () => ({ createPool }))
 
-import { closeDb, dbVendor, getDb, getPool, mysqlPoolOptions } from './db.js'
+import { closeDb, dbVendor, getDb, mysqlPoolOptions } from './db.js'
 import { vendorFromUrl } from './vendor.js'
 
 const savedUrl = process.env.DATABASE_URL
@@ -23,18 +23,26 @@ afterEach(async () => {
   else process.env.DATABASE_URL = savedUrl
 })
 
-test('postgres:// and postgresql:// both select the PostgreSQL vendor', () => {
-  expect(vendorFromUrl('postgres://u:p@localhost:5432/db')).toBe('postgresql')
-  expect(vendorFromUrl('postgresql://u:p@localhost:5432/db')).toBe('postgresql')
+test('postgres:// and postgresql:// are refused with a message that names PostgreSQL and hides the password', () => {
+  for (const url of ['postgres://u:secret@localhost:5432/db', 'postgresql://u:secret@localhost:5432/db']) {
+    expect(() => vendorFromUrl(url)).toThrow(/PostgreSQL, which is no longer supported; use a mysql:\/\/ URL/)
+    let message = ''
+    try {
+      vendorFromUrl(url)
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).not.toContain('secret')
+  }
 })
 
 test('mysql:// selects the MySQL vendor', () => {
   expect(vendorFromUrl('mysql://u:p@127.0.0.1:3306/db')).toBe('mysql')
 })
 
-test('any other scheme throws, names the accepted schemes, and does not echo the URL', () => {
+test('any other scheme throws, names the accepted scheme, and does not echo the URL', () => {
   const url = 'sqlite://user:secret@host/db'
-  expect(() => vendorFromUrl(url)).toThrow(/postgres:\/\/, postgresql:\/\/, mysql:\/\//)
+  expect(() => vendorFromUrl(url)).toThrow(/use mysql:\/\//)
   expect(() => vendorFromUrl(url)).toThrow(/"sqlite"/)
   let message = ''
   try {
@@ -72,23 +80,16 @@ test('getDb() with a mysql:// URL builds a mysql2 pool with a UTC session', asyn
   expect(conn.destroy).toHaveBeenCalledTimes(1)
 })
 
-test('getDb() with a postgres:// URL uses PostgreSQL and never creates a mysql2 pool', () => {
+test('getDb() with a postgres:// URL throws before any driver is created', () => {
   process.env.DATABASE_URL = 'postgres://postgres:pw@localhost:5432/brewdial_test'
-  expect(dbVendor()).toBe('postgresql')
-  expect(getDb()).toBeDefined()
-  expect(getPool()).toBeDefined()
+  expect(() => getDb()).toThrow(/PostgreSQL, which is no longer supported/)
   expect(createPool).not.toHaveBeenCalled()
 })
 
 test('getDb() rejects an unsupported scheme before any driver is created', () => {
   process.env.DATABASE_URL = 'redis://localhost:6379/0'
-  expect(() => getDb()).toThrow(/postgres:\/\/, postgresql:\/\/, mysql:\/\//)
+  expect(() => getDb()).toThrow(/use mysql:\/\//)
   expect(createPool).not.toHaveBeenCalled()
-})
-
-test('getPool() refuses a mysql:// URL instead of handing it to pg', () => {
-  process.env.DATABASE_URL = 'mysql://root:pw@127.0.0.1:3306/brewdial_test'
-  expect(() => getPool()).toThrow(/PostgreSQL-only/)
 })
 
 test('mysql2 typeCast turns tinyint(1) into booleans and leaves other columns alone', () => {

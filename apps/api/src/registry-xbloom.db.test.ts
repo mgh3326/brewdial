@@ -1,6 +1,5 @@
 // Migration 004 seeds the xBloom Studio grinder and two drippers. Runs the real
 // `db:migrate` entry point twice against the MySQL in CI, then reads the rows back.
-// Skipped unless DATABASE_URL is a mysql:// URL, so the Postgres job does not run it.
 
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
@@ -20,7 +19,7 @@ function runMigrations(): string {
   })
 }
 
-describe.skipIf(!process.env.DATABASE_URL?.startsWith('mysql://'))('migration 004 registry rows', () => {
+describe('migration 004 registry rows', () => {
   afterAll(() => closeDb())
 
   test('running all migrations twice leaves one row per new name with the expected class and geometry', async () => {

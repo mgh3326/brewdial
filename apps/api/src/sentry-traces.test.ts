@@ -154,11 +154,8 @@ describe('the shiftgate DB health probe is not sent as a transaction', () => {
   }, CHILD_TIMEOUT_MS)
 })
 
-// CI's Typecheck job also sets DATABASE_URL, but to Postgres. Only the API MySQL job
-// (mysql:// URL, MySQL 8.4 service) can run the db-span assertions.
-const hasMysql = process.env.DATABASE_URL?.startsWith('mysql://') ?? false
-
-describe.skipIf(!hasMysql)('performance traces against MySQL', () => {
+// Every CI job that sets DATABASE_URL points it at MySQL 8.4, so the db-span assertions run.
+describe('performance traces against MySQL', () => {
   test(
     'one transaction per request, named by route pattern, with mysql2 db spans and no inlined parameters',
     async () => {
