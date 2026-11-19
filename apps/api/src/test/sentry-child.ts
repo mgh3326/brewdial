@@ -7,6 +7,7 @@
 // Output: one stdout line, prefixed SENTRY_CHILD_RESULT=, with whether a Sentry client
 // exists and the response status of each request.
 
+import type { Server } from 'node:http'
 import { serve, type ServerType } from '@hono/node-server'
 import * as Sentry from '@sentry/node'
 import { createApp } from '../app.js'
@@ -33,7 +34,10 @@ for (const req of requests) {
 }
 
 const initialised = Boolean(Sentry.getClient())
+// Close the keep-alive sockets and wait for the server to close, so every request's
+// span has ended before the flush sends the transactions.
+;(server as Server).closeAllConnections()
+await new Promise<void>((resolve) => server.close(() => resolve()))
 await Sentry.flush(5000)
-server.close()
 process.stdout.write(`SENTRY_CHILD_RESULT=${JSON.stringify({ initialised, statuses })}\n`)
 process.exit(0)

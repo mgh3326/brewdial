@@ -105,6 +105,19 @@ function transactions(): SentryTransaction[] {
   return out
 }
 
+// Item types of every envelope item, for diagnosing a run that sent no transaction.
+function itemTypes(): string[] {
+  const types: string[] = []
+  for (const body of envelopes) {
+    const lines = body.split('\n')
+    for (let i = 1; i < lines.length; i += 2) {
+      const header = parseJson(lines[i]) as { type?: string } | undefined
+      if (header?.type) types.push(header.type)
+    }
+  }
+  return types
+}
+
 function parseJson(line: string | undefined): unknown {
   if (!line) return undefined
   try {
@@ -138,9 +151,12 @@ describe.skipIf(!hasMysql)('performance traces against MySQL', () => {
         { path: '/api/recipes/trace-check-code', headers: { Authorization: `Bearer ${SECRET}` } },
       ])
       expect(result.initialised).toBe(true)
+      expect(result.statuses, 'unknown recipe code, served by the MySQL-backed route').toEqual([404])
 
       const names = transactions().map((t) => t.transaction)
-      expect(names).toEqual(['GET /api/recipes/:code'])
+      expect(names, `envelope item types: ${itemTypes().join(',') || 'none'}`).toEqual([
+        'GET /api/recipes/:code',
+      ])
       const [named] = transactions()
       const dbSpans = (named.spans ?? []).filter((s) => s.op === 'db')
       expect(dbSpans.length).toBeGreaterThan(0)
