@@ -147,19 +147,22 @@ describe.skipIf(!hasMysql)('performance traces against MySQL', () => {
   test(
     'one transaction per request, named by route pattern, with mysql2 db spans and no inlined parameters',
     async () => {
+      // A 200 on a DB-backed route. The SDK drops transactions for 401 and 404 by default
+      // (httpServerSpansIntegration ignoreStatusCodes), so an unknown recipe code would send nothing.
       const result = await runChild({ SENTRY_DSN: dsn(), SENTRY_TRACES_SAMPLE_RATE: '1' }, [
-        { path: '/api/recipes/trace-check-code', headers: { Authorization: `Bearer ${SECRET}` } },
+        { path: '/api/beans/trace-check-code/purchase-links', headers: { Authorization: `Bearer ${SECRET}` } },
       ])
       expect(result.initialised).toBe(true)
-      expect(result.statuses, 'unknown recipe code, served by the MySQL-backed route').toEqual([404])
+      expect(result.statuses, 'purchase links of an unknown bean: 200 with an empty list').toEqual([200])
 
       const names = transactions().map((t) => t.transaction)
       expect(names, `envelope item types: ${itemTypes().join(',') || 'none'}`).toEqual([
-        'GET /api/recipes/:code',
+        'GET /api/beans/:id/purchase-links',
       ])
       const [named] = transactions()
+      const spanOps = (named.spans ?? []).map((s) => s.op)
       const dbSpans = (named.spans ?? []).filter((s) => s.op === 'db')
-      expect(dbSpans.length).toBeGreaterThan(0)
+      expect(dbSpans.length, `span ops: ${spanOps.join(',') || 'none'}`).toBeGreaterThan(0)
       expect(JSON.stringify(dbSpans)).not.toContain('trace-check-code')
     },
     CHILD_TIMEOUT_MS,
@@ -167,7 +170,7 @@ describe.skipIf(!hasMysql)('performance traces against MySQL', () => {
 
   test('the Authorization header value never reaches Sentry', async () => {
     await runChild({ SENTRY_DSN: dsn(), SENTRY_TRACES_SAMPLE_RATE: '1' }, [
-      { path: '/api/recipes/trace-check-code', headers: { Authorization: `Bearer ${SECRET}` } },
+      { path: '/api/beans/trace-check-code/purchase-links', headers: { Authorization: `Bearer ${SECRET}` } },
     ])
     expect(envelopes.length).toBeGreaterThan(0)
     expect(envelopes.join('\n')).not.toContain(SECRET)
