@@ -1,12 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '../types.js'
-import { dbVendor } from '../db.js'
 
 export async function resolveAppUser(db: Kysely<DB>, provider: string, externalKey: string): Promise<string> {
-  if (dbVendor() !== 'mysql') {
-    const r = await sql<{ resolve_app_user: string }>`select resolve_app_user(${provider}, ${externalKey}) as resolve_app_user`.execute(db)
-    return r.rows[0].resolve_app_user
-  }
   if (!['toss_anon', 'web_local'].includes(provider)) throw new Error('resolve_app_user: v1 RPC accepts only toss_anon|web_local')
   if (!externalKey.trim() || externalKey.length < 16) throw new Error('resolve_app_user: external_key too short')
   const existing = await db.selectFrom('user_identities').select('app_user_id')

@@ -1,15 +1,13 @@
-// `pnpm db:migrate` entry point: dispatches on the DATABASE_URL scheme.
-//   postgres:// | postgresql://  → node-pg-migrate over migrations/ (unchanged behavior)
-//   mysql://                      → migrations-mysql/ via migrate-mysql.ts
+// `pnpm db:migrate` entry point. The database is MySQL only: DATABASE_URL must be a
+// mysql:// URL. Any other scheme (postgres:// included) fails here, before any connection.
+//   mysql://  → migrations-mysql/ via migrate-mysql.ts
 
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { vendorFromUrl } from '../src/vendor.js'
 import { migrateMysql } from './migrate-mysql.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const pgMigrations = 'migrations'
 const mysqlMigrations = path.join(here, '..', 'migrations-mysql')
 
 async function main(): Promise<number> {
@@ -18,14 +16,7 @@ async function main(): Promise<number> {
     console.error('DATABASE_URL is not set')
     return 1
   }
-  const vendor = vendorFromUrl(url)
-  if (vendor === 'postgresql') {
-    const run = spawnSync('node-pg-migrate', ['-m', pgMigrations, '-j', 'sql', 'up'], {
-      stdio: 'inherit',
-      env: process.env,
-    })
-    return run.status ?? 1
-  }
+  vendorFromUrl(url) // throws for postgres:// and every other non-mysql scheme
   await migrateMysql(url, mysqlMigrations)
   return 0
 }
