@@ -39,5 +39,7 @@ const initialised = Boolean(Sentry.getClient())
 ;(server as Server).closeAllConnections()
 await new Promise<void>((resolve) => server.close(() => resolve()))
 await Sentry.flush(5000)
-process.stdout.write(`SENTRY_CHILD_RESULT=${JSON.stringify({ initialised, statuses })}\n`)
-process.exit(0)
+// A pipe's stdout write is asynchronous, so exit only after the line is written.
+process.stdout.write(`SENTRY_CHILD_RESULT=${JSON.stringify({ initialised, statuses })}\n`, () =>
+  process.exit(0),
+)
