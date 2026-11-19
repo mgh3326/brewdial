@@ -14,7 +14,7 @@ const TABLES = ['recipes','feedback','preferences','beans','app_users','user_ide
 
 test('all core tables exist after migration', async () => {
   const { rows } = await sql<{ table_name: string }>`
-    select table_name from information_schema.tables where table_schema = database()`.execute(getDb())
+    select table_name as table_name from information_schema.tables where table_schema = database()`.execute(getDb())
   const names = new Set(rows.map(r => r.table_name))
   for (const t of TABLES) expect(names.has(t), `missing table ${t}`).toBe(true)
 })
