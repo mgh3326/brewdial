@@ -63,4 +63,6 @@ EXPOSE 3020
 
 # DATABASE_URL is required at boot (loadConfig throws without it) — supplied
 # by the k8s Secret. SENTRY_DSN/GIT_SHA optional (ConfigMap placeholders).
-CMD ["node", "/app/dist/server.js"]
+# --import preloads the Sentry instrument before the app so the SDK can patch hono and
+# mysql2 in ESM. shiftgate's `args` in services.yaml overrides this CMD in production.
+CMD ["node", "--import", "/app/dist/instrument.js", "/app/dist/server.js"]

@@ -11,6 +11,7 @@ import { identityMiddleware } from './middleware/identity.js'
 import { agentAuth } from './middleware/agent-auth.js'
 import { agentRouter } from './routes/agent.js'
 import { createMcpRoute } from './routes/mcp.js'
+import * as Sentry from '@sentry/node'
 import type { JWTVerifyGetKey } from 'jose'
 
 // Toss mini-app WebView calls cross-origin from these EXACT origins and rejects
@@ -66,6 +67,23 @@ export function createApp(options: AppOptions = {}): Hono {
 
   // Request log (method, path, status, duration) → journald. No headers/body, so no secret leak.
   app.use('*', logger())
+
+  // Only when Sentry was initialised (SENTRY_DSN set): without it the app is unchanged.
+  if (Sentry.getClient()) {
+    // Captures unhandled 5xx route errors. Registered before the routes so it wraps them.
+    Sentry.setupHonoErrorHandler(app, {
+      shouldHandleError: (c) => c.error !== undefined && c.res.status >= 500,
+    })
+    // Name each request's transaction by the matched route pattern (GET /api/recipes/:code),
+    // not the concrete URL. The SDK builds the name from the http.route attribute, and Hono
+    // knows the pattern only after routing, so set it after next(). Registered after the
+    // error handler, so error events captured there carry the same name.
+    app.use('*', async (c, next) => {
+      await next()
+      const active = Sentry.getActiveSpan()
+      if (active) Sentry.getRootSpan(active).setAttribute('http.route', c.req.routePath)
+    })
+  }
 
   // /mcp is registered before the API mounts, so the sub-app's CORS and
   // identity middleware never run for it. Its tool calls re-enter this app.
