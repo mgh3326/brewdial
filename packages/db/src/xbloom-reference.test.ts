@@ -309,7 +309,7 @@ describe('load + storage rules', () => {
         // guard trigger: is_official is only writable with the owner-write flag
         await sql`update recipes set is_official = true where code = ${b}`.execute(trx)
       })
-      await sql`update recipes set notes = regexp_replace(notes, concat(char(10 using utf8mb4), 'YAML: .*$'), '') where code = ${c}`.execute(db)
+      await sql`update recipes set notes = regexp_replace(notes, concat(char(10 using utf8mb4), 'YAML: .*$') collate utf8mb4_0900_as_cs, '') where code = ${c}`.execute(db)
       const v = await verifyXBloomReferences(db, { siteUrl: site.url, fetcher: fast() })
       expect(v).toMatchObject({ passed: 0, failed: 3, exitCode: 3 })
       const reasons = Object.fromEntries(v.items.map((i) => [i.code, i.reasons.join(' | ')]))
