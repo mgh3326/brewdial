@@ -126,7 +126,11 @@ describe('Sentry is off without SENTRY_DSN', () => {
   }, CHILD_TIMEOUT_MS)
 })
 
-describe.skipIf(!process.env.DATABASE_URL)('performance traces against MySQL', () => {
+// CI's Typecheck job also sets DATABASE_URL, but to Postgres. Only the API MySQL job
+// (mysql:// URL, MySQL 8.4 service) can run the db-span assertions.
+const hasMysql = process.env.DATABASE_URL?.startsWith('mysql://') ?? false
+
+describe.skipIf(!hasMysql)('performance traces against MySQL', () => {
   test(
     'one transaction per request, named by route pattern, with mysql2 db spans and no inlined parameters',
     async () => {
@@ -135,9 +139,10 @@ describe.skipIf(!process.env.DATABASE_URL)('performance traces against MySQL', (
       ])
       expect(result.initialised).toBe(true)
 
-      const named = transactions().filter((t) => t.transaction === 'GET /api/recipes/:code')
-      expect(named).toHaveLength(1)
-      const dbSpans = (named[0].spans ?? []).filter((s) => s.op === 'db')
+      const names = transactions().map((t) => t.transaction)
+      expect(names).toEqual(['GET /api/recipes/:code'])
+      const [named] = transactions()
+      const dbSpans = (named.spans ?? []).filter((s) => s.op === 'db')
       expect(dbSpans.length).toBeGreaterThan(0)
       expect(JSON.stringify(dbSpans)).not.toContain('trace-check-code')
     },
