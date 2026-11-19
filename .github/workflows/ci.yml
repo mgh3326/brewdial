@@ -205,7 +205,7 @@ jobs:
             --env DATABASE_URL=mysql://root:mysqlpassword@127.0.0.1:3306/brewdial_test \
             --env HOST=127.0.0.1 --env NODE_ENV=production \
             brewdial-api-image-check \
-            sh -c 'node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js'
+            sh -c 'node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node --import /app/dist/instrument.js /app/dist/server.js'
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:3020/api/db/health; then
               printf '\n/api/db/health returned 200\n'

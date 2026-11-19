@@ -33,7 +33,7 @@ services:
     network: host
     env_files: [/etc/shiftgate/brewdial-api-mysql.env]
     env: {HOST: "127.0.0.1", NODE_ENV: production}
-    args: ["sh", "-c", "node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node /app/dist/server.js"]
+    args: ["sh", "-c", "node /migrate/node_modules/tsx/dist/cli.mjs /migrate/scripts/migrate.ts && exec node --import /app/dist/instrument.js /app/dist/server.js"]
     run_args: ["--memory=512m"]
     health: {http: /api/db/health, expect_status: 200, timeout: 90s, interval: 2s}
     check: {inter: 5s, fall: 2, rise: 1}

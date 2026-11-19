@@ -137,10 +137,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build shared and database packages
+      - name: Build shared, database and MCP packages
         run: |
           pnpm --filter @brewdial/shared build
           pnpm --filter @brewdial/db build
+          pnpm --filter @brewdial/mcp build
 
       - name: Apply the migrations
         run: pnpm db:migrate
