@@ -17,6 +17,8 @@ export function sentryInitOptions(
     sendDefaultPii: false,
     // mysql2 query spans under each request. Route-pattern naming is in app.ts (Hono integration not used).
     integrations: [Sentry.mysql2Integration()],
+    // shiftgate polls the DB health route every few seconds; those probes are not traces.
+    ignoreTransactions: ['GET /api/db/health'],
   }
 }
 

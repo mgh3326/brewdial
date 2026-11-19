@@ -12,6 +12,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 const CHILD = fileURLToPath(new URL('./test/sentry-child.ts', import.meta.url))
 const INSTRUMENT = pathToFileURL(fileURLToPath(new URL('./instrument.ts', import.meta.url))).href
 const API_ROOT = fileURLToPath(new URL('..', import.meta.url))
+// The child is plain Node (tsx), so it does not get vitest's alias for @brewdial/mcp/server.
+// This tsconfig maps that import to the MCP source, so the child needs no MCP build output.
+const CHILD_TSCONFIG = fileURLToPath(new URL('./test/sentry-child.tsconfig.json', import.meta.url))
 const CHILD_TIMEOUT_MS = 90_000
 const SECRET = 'sentry-trace-test-authorization-value'
 const RESULT_PREFIX = 'SENTRY_CHILD_RESULT='
@@ -60,6 +63,7 @@ function runChild(
     else childEnv[key] = value
   }
   childEnv.SENTRY_CHILD_REQUESTS = JSON.stringify(requests)
+  childEnv.TSX_TSCONFIG_PATH = CHILD_TSCONFIG
 
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -136,6 +140,17 @@ describe('Sentry is off without SENTRY_DSN', () => {
     ])
     expect(result).toEqual({ initialised: false, statuses: [200] })
     expect(envelopes).toHaveLength(0)
+  }, CHILD_TIMEOUT_MS)
+})
+
+describe('the shiftgate DB health probe is not sent as a transaction', () => {
+  test('GET /api/db/health is dropped while GET /api/health is still traced', async () => {
+    const result = await runChild({ SENTRY_DSN: dsn(), SENTRY_TRACES_SAMPLE_RATE: '1' }, [
+      { path: '/api/health' },
+      { path: '/api/db/health' },
+    ])
+    expect(result.initialised).toBe(true)
+    expect(transactions().map((t) => t.transaction)).toEqual(['GET /api/health'])
   }, CHILD_TIMEOUT_MS)
 })
 
