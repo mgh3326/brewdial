@@ -11,14 +11,16 @@ let recipeCode: string;
 
 beforeAll(async () => {
   const db = getDb();
-  const u = await db.insertInto('app_users').defaultValues().returning('id').executeTakeFirstOrThrow();
-  appUserId = u.id;
-  const b = await db.insertInto('beans').values({ name: `SigBean ${SEED}`, roast_level_ord: 5, acidity: 1, body: 4, flavor_categories: ['nutty_cocoa', 'sweet'], attrs_source: 'ai_extracted' }).returning('id').executeTakeFirstOrThrow();
-  beanId = b.id;
+  // MySQL has no RETURNING: ids and the recipe code are chosen here. JSON columns are
+  // serialized because mysql2 would expand a JS array into a SQL list.
+  appUserId = randomUUID();
+  await db.insertInto('app_users').values({ id: appUserId }).execute();
+  beanId = randomUUID();
+  await db.insertInto('beans').values({ id: beanId, name: `SigBean ${SEED}`, roast_level_ord: 5, acidity: 1, body: 4, flavor_categories: JSON.stringify(['nutty_cocoa', 'sweet']) as any, attrs_source: 'ai_extracted' }).execute();
   await db.insertInto('saved_beans').values({ app_user_id: appUserId, bean_id: beanId }).execute();
-  const r = await db.insertInto('recipes').values({ method: 'v60', title: `SigRec ${SEED}`, bean_id: beanId, owner_id: null }).returning('code').executeTakeFirstOrThrow();
-  recipeCode = r.code;
-  await db.insertInto('feedback').values({ recipe_code: recipeCode, bean_id: beanId, owner_id: appUserId, ratings: { overall: 5 } }).execute();
+  recipeCode = `T-SIG-${SEED}`;
+  await db.insertInto('recipes').values({ code: recipeCode, method: 'v60', title: `SigRec ${SEED}`, bean_id: beanId, owner_id: null }).execute();
+  await db.insertInto('feedback').values({ recipe_code: recipeCode, bean_id: beanId, owner_id: appUserId, ratings: JSON.stringify({ overall: 5 }) as any }).execute();
 });
 
 afterAll(async () => {

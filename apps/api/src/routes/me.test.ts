@@ -120,25 +120,19 @@ test('POST /me/saved-recipes pins snapshot keys and value shapes across vendors'
 
 test('owner-write flag is scoped to its transaction and cleared on a reused pooled connection', async () => {
   const db = getDb()
-  const mysql = dbVendor() === 'mysql'
   const ownerId = randomUUID()
   const ownerRecipeTitle = `owner-write-pool-${SEED_SUFFIX}`
-  const connectionId = mysql ? 'select connection_id() as id' : 'select pg_backend_pid()::text as id'
-  const before = await sql<{ id: string }>`select ${sql.raw(connectionId.slice('select '.length))}`.execute(db)
+  const before = await sql<{ id: string }>`select connection_id() as id`.execute(db)
   await db.insertInto('app_users').values({ id: ownerId }).execute()
   try {
     const inside = await withOwnerWrites(db, async (trx) => {
       await trx.insertInto('recipes').values({
         method: 'v60', title: ownerRecipeTitle, owner_id: ownerId, created_by: 'manual',
       }).execute()
-      const result = mysql
-        ? await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(trx)
-        : await sql<{ id: string; flag: string | null }>`select pg_backend_pid()::text as id, current_setting('bd.owner_write_ok', true) as flag`.execute(trx)
+      const result = await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(trx)
       return result.rows[0]
     })
-    const after = mysql
-      ? await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(db)
-      : await sql<{ id: string; flag: string | null }>`select pg_backend_pid()::text as id, current_setting('bd.owner_write_ok', true) as flag`.execute(db)
+    const after = await sql<{ id: string; flag: string | null }>`select connection_id() as id, @bd_owner_write_ok as flag`.execute(db)
 
     expect(inside.id).toBe(before.rows[0].id)
     expect(after.rows[0].id).toBe(inside.id)

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { getDb, closeDb, getRecipeAnyStatus, insertAgentRecipe } from '@brewdial/db'
 
 // PATCH /api/agent/recipes/:code — params merge, expectedVersion and dryRun.
-// The in-process run covers these on PostgreSQL and MySQL 8.4 in CI. Blackbox runs
+// The in-process run covers these on MySQL 8.4 in CI. Blackbox runs
 // (API_TEST_BASE_URL) skip them; the external server contract does not cover merge.
 const test = baseTest.skipIf(!!process.env.API_TEST_BASE_URL)
 
