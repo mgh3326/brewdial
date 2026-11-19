@@ -4,7 +4,7 @@
 #
 # Layout in the final image:
 #   /app       — @brewdial/api prod deploy (dist + prod node_modules)
-#   /migrate   — @brewdial/db deploy incl. migration runners + SQL migrations
+#   /migrate   — @brewdial/db deploy incl. the migration runner + MySQL migrations
 #                (run before the server via shiftgate `args` in
 #                deploy/oci/shiftgate/services.yaml)
 
@@ -50,7 +50,6 @@ FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a55
 WORKDIR /app
 COPY --from=build /out/api /app
 COPY --from=build /out/db /migrate
-COPY packages/db/migrations /migrate/migrations
 
 ENV NODE_ENV=production
 # Sentry release. deploy-oci.yml passes --build-arg GIT_SHA=<short sha>; a
