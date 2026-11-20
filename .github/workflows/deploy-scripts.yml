@@ -35,7 +35,13 @@ jobs:
         run: >-
           shellcheck -x -e SC1091 -s bash
           deploy/oci/heatwave-client.sh deploy/oci/test/heatwave-client-test.sh deploy/oci/backup-heatwave.sh
-          deploy/oci/verify-restore-heatwave.sh deploy/mac/pull-backups.sh
+          deploy/oci/verify-restore-heatwave.sh deploy/oci/restore-compare.sh
+          deploy/oci/test/restore-compare-test.sh deploy/mac/pull-backups.sh
 
       - name: Credentials reach the MySQL option file unchanged
         run: bash deploy/oci/test/heatwave-client-test.sh
+
+      - name: Restore comparison against throwaway MySQL 8.4 containers
+        env:
+          REQUIRE_DOCKER: "1"
+        run: bash deploy/oci/test/restore-compare-test.sh
