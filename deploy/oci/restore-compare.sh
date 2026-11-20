@@ -18,6 +18,12 @@
 # That is not data loss. 1e-12 is still thousands of ULPs at the magnitudes here.
 JSON_NUMBER_REL_TOLERANCE=1e-12
 
+# A number pair compares by exact value (not through DOUBLE) when either side is outside
+# +-2^53, or when both sides are whole numbers and one has more than this many integer
+# digits. Other pairs, including fractions near 10^15 where one ULP is a fraction, keep
+# the tolerance. See dec_update_sql for how the exact value is taken.
+JSON_EXACT_INTEGER_DIGITS=15
+
 # Token pattern for JSON text as MySQL prints it: a string, a number, a literal or one
 # punctuation mark. \x5c (backslash) and \x5b (open bracket) are used so that no
 # backslash enters the SQL literal. The shell single quotes keep "\\x5c" as written,
@@ -45,6 +51,40 @@ int_norm() {
   echo "concat(if($x like '-%' and $d <> '0', '-', ''), $d)"
 }
 
+# dec_update_sql: SQL that fills four columns of _jtok for every numeric token (a token
+# that starts with a digit or a minus sign). Digits stay text; the casts are only the
+# exponent and the double value.
+#   pos     point position P, so |value| = 0.D x 10^P with D the significant digits
+#           (no leading or trailing zeros); 0 for zero.
+#   intval  1 when the value is a whole number.
+#   big     1 when |value| >= 2^53. Every double that large is a whole number.
+#   exact   the value as sign, P and D text ('+16:9007199254740992'), so two tokens
+#           are equal exactly when the values are. A double is printed in shortest
+#           round-trip form, which is not its stored value (1.000000000000001e18 is
+#           1000000000000001024), so a whole-number double takes its exact value
+#           from the double itself. Other tokens use their printed digits.
+dec_update_sql() {
+  local u="if(left(tok, 1) = '-', substring(tok, 2), tok)"
+  local lu="lower($u)"
+  local m="substring_index($lu, 'e', 1)"
+  local e="if(locate('e', $lu) > 0, cast(substring_index($lu, 'e', -1) as signed), 0)"
+  local ip="substring_index($m, '.', 1)"
+  local fp="if(locate('.', $m) > 0, substring_index($m, '.', -1), '')"
+  local d0="concat($ip, $fp)"
+  local d2="trim(trailing '0' from trim(leading '0' from $d0))"
+  local p="(char_length($ip) + $e - (char_length($d0) - char_length(trim(leading '0' from $d0))))"
+  local dv="cast(tok as double)"
+  local ab="abs($dv)"
+  # The exact integer of a whole double below 2^64, without an UNSIGNED cast (which fails
+  # above 2^63): half of it, floored, fits a signed integer; twice that plus the parity
+  # bit is exact in DECIMAL. The clamp keeps the cast in range for any other value.
+  local h="least(floor($ab / 2), 9223372036854774784)"
+  local t="cast(cast(cast($h as signed) as decimal(65, 0)) * 2 + cast(mod($ab, 2) as signed) as char)"
+  local td="trim(trailing '0' from $t)"
+  echo "update \`_jtok\` set pos = if($d2 = '', 0, $p), intval = if($d2 = '' or $p >= char_length($d2), 1, 0), big = if($ab >= 9007199254740992, 1, 0) where tok regexp '^-?[0-9]';"
+  echo "update \`_jtok\` set exact = if(tok regexp '^-?[0-9]+\$' or intval = 0 or $ab >= 18446744073709551616.0, if($d2 = '', '0', concat(if(left(tok, 1) = '-', '-', '+'), pos, ':', $d2)), if($td = '', '0', concat(if($dv < 0, '-', '+'), char_length($t), ':', $td))) where tok regexp '^-?[0-9]';"
+}
+
 # compare_json_columns <table> <json column names, one per line>
 #
 # Scratch tables on the restored server (regular tables, so they outlive the separate
@@ -52,7 +92,8 @@ int_norm() {
 # collation pads or folds, and two valid ids can differ only in trailing spaces.
 #   _jkey  one row per (side, row key). side 1 = live, 2 = restored
 #   _jsrc  one row per (side, JSON column, row key) with the JSON text. NULL is no row
-#   _jtok  the tokens of each _jsrc text, in order (seq), from JSON_TOKEN_PATTERN
+#   _jtok  the tokens of each _jsrc text, in order (seq), from JSON_TOKEN_PATTERN;
+#          pos, intval, big and exact for numeric tokens (see dec_update_sql)
 compare_json_columns() {
   local table="$1" json_cols="$2" pk_cols first_pk="" key_live="" key_restored=""
   local n=0 i=0 c select_live sql out label count idx col rows=0 tol pat tok_eq rk_restored
@@ -79,7 +120,7 @@ compare_json_columns() {
     printf 'drop table if exists `_jtok`, `_jsrc`, `_jkey`;\n'
     printf 'create table `_jkey` (src tinyint not null, rk varbinary(512) not null, primary key (src, rk));\n'
     printf 'create table `_jsrc` (src tinyint not null, col smallint not null, rk varbinary(512) not null, txt longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk));\n'
-    printf 'create table `_jtok` (src tinyint not null, col smallint not null, rk varbinary(512) not null, seq int not null, tok longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk, seq));\n'
+    printf 'create table `_jtok` (src tinyint not null, col smallint not null, rk varbinary(512) not null, seq int not null, tok longtext character set utf8mb4 collate utf8mb4_bin not null, pos int, intval tinyint, big tinyint, exact longtext character set utf8mb4 collate utf8mb4_bin, primary key (src, col, rk, seq));\n'
   } | restored_load 2>/dev/null || { note_fail "$table: scratch tables could not be created (MySQL error text withheld)"; return 0; }
 
   # 2. Live side, read-only: one row per live row, the key then one token per JSON column.
@@ -137,14 +178,17 @@ compare_json_columns() {
     printf ")\n"
     printf "select w.src, w.col, w.rk, w.seq, regexp_substr(s.txt, '%s', w.p) from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk\n" "$pat"
     printf "  where case when w.p <= char_length(s.txt) then regexp_instr(s.txt, '%s', w.p) else 0 end > 0;\n" "$pat"
+    dec_update_sql
   } | restored_load 2>/dev/null || { note_fail "$table: the JSON tokens could not be built (error text withheld)"; return 0; }
 
   # 5. Counts only. A JSON value differs when its token count differs, or when a token
   #    pair differs. Two integer tokens (no point or exponent) compare exactly, as
-  #    normalized strings, because a DOUBLE cast loses digits above 2^53. Any other
-  #    number pair compares within the tolerance. Everything else compares exactly.
+  #    normalized strings, because a DOUBLE cast loses digits above 2^53. A number pair
+  #    compares by exact value (exact) when either side is at or above 2^53, or when both
+  #    are whole numbers and one has more than JSON_EXACT_INTEGER_DIGITS integer digits.
+  #    Any other number pair compares within the tolerance. Everything else compares exactly.
   tol="$JSON_NUMBER_REL_TOLERANCE"
-  tok_eq="case when a.tok regexp '^-?[0-9]+\$' and b.tok regexp '^-?[0-9]+\$' then $(int_norm a.tok) = $(int_norm b.tok) when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' then abs(cast(a.tok as double) - cast(b.tok as double)) <= $tol * greatest(abs(cast(a.tok as double)), abs(cast(b.tok as double))) else a.tok = b.tok end"
+  tok_eq="case when a.tok regexp '^-?[0-9]+\$' and b.tok regexp '^-?[0-9]+\$' then $(int_norm a.tok) = $(int_norm b.tok) when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' and (greatest(a.big, b.big) = 1 or (a.intval = 1 and b.intval = 1 and greatest(a.pos, b.pos) > $JSON_EXACT_INTEGER_DIGITS)) then a.exact = b.exact when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' then abs(cast(a.tok as double) - cast(b.tok as double)) <= $tol * greatest(abs(cast(a.tok as double)), abs(cast(b.tok as double))) else a.tok = b.tok end"
   sql="select 'rows', count(*) from \`_jkey\` where src = 1
     union all select 'live_row_missing', count(*) from \`_jkey\` l where l.src = 1 and not exists (select 1 from \`_jkey\` r where r.src = 2 and r.rk = l.rk)
     union all select 'restored_row_extra', count(*) from \`_jkey\` r where r.src = 2 and not exists (select 1 from \`_jkey\` l where l.src = 1 and l.rk = r.rk)"
