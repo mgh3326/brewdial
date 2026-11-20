@@ -218,6 +218,55 @@ case_setup \
 compare_table items
 check "O 40 vs 40.0 passes" NONE
 
+# The double 1.000000000000001e18 is stored as 1000000000000001024, not as the value its
+# printed text names (1000000000000001000). Compare the stored value, both directions.
+# Case P: the integer 1000000000000001024 is the double's exact value. Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1000000000000001024]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1.000000000000001e18]]}', NULL);"
+compare_table items
+check "P integer equal to the double's stored value passes" NONE
+
+# Case Q: the integer 1000000000000001000 is not that double. Must fail (restored side is double).
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1000000000000001000]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1.000000000000001e18]]}', NULL);"
+compare_table items
+check "Q integer 1000000000000001000 vs the double fails, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case Q2: the same pair with the sides swapped (live is the double). Must fail.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1.000000000000001e18]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1000000000000001000]]}', NULL);"
+compare_table items
+check "Q2 the double vs integer 1000000000000001000 fails, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case R: adjacent doubles in [1e15, 2^53), one ULP = 0.125 at 1e15. The 1-ULP drift
+# that the tolerance exists for. Fractions stay on the tolerance path. Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1000000000000000.0]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1000000000000000.125]]}', NULL);"
+compare_table items
+check "R adjacent doubles below 2^53 with a fraction pass" NONE
+
+# Case S: adjacent doubles with a quarter-unit ULP near 1.5e15. Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1500000000000000.25]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1500000000000000.5]]}', NULL);"
+compare_table items
+check "S adjacent doubles near 1.5e15 pass" NONE
+
+# Case T: whole numbers in [1e15, 2^53) that differ by one, one side a decimal. Both are
+# whole numbers with more than 15 digits, so the exact branch must fail it.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[9000000000000001]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[9000000000000000.0]]}', NULL);"
+compare_table items
+check "T whole numbers below 2^53 differing by one fail, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
 if [ "$failures" -eq 0 ]; then
   printf 'PASS %s restore comparison cases\n' "$passed"
 else
