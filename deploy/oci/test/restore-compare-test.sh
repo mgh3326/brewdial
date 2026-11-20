@@ -184,6 +184,37 @@ case_setup \
 compare_table items
 check "K same integer 40 on both sides passes" NONE
 
+# Case L: an integer above 2^53 against a decimal one step lower. The pair takes the exact
+# branch (16 integer digits), so it must fail. The DOUBLE rule would pass it.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740992.0]]}', NULL);"
+compare_table items
+check "L integer above 2^53 vs a decimal one lower fails, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case M: a 19-digit integer against 1e+19 (one more digit, as an exponent). Must fail.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[9999999999999999999]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1e+19]]}', NULL);"
+compare_table items
+check "M 9999999999999999999 vs 1e+19 fails, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case N: the same value above 2^53 written as an integer and as a decimal. Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993.0]]}', NULL);"
+compare_table items
+check "N equal values above 2^53 written differently pass" NONE
+
+# Case O: 40 against 40.0 (equal decimals inside 2^53). Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[40]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[40.0]]}', NULL);"
+compare_table items
+check "O 40 vs 40.0 passes" NONE
+
 if [ "$failures" -eq 0 ]; then
   printf 'PASS %s restore comparison cases\n' "$passed"
 else
