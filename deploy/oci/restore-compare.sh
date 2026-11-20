@@ -105,7 +105,9 @@ compare_json_columns() {
 
   # 4. Tokenize every _jsrc text. A walk row is (token number, search position); each
   #    step finds the next token at or after the position and moves past it. The
-  #    recursion limit is raised because a long curve has thousands of tokens.
+  #    position after the last token is length + 1, and MySQL's regex functions reject
+  #    a start beyond the end, so each call is guarded by a CASE on the position.
+  #    The recursion limit is raised because a long curve has thousands of tokens.
   pat="$JSON_TOKEN_PATTERN"
   {
     printf 'set session cte_max_recursion_depth = 10000000;\n'
@@ -114,9 +116,10 @@ compare_json_columns() {
     printf "  union all\n"
     printf "  select w.src, w.col, w.rk, w.seq + 1, regexp_instr(s.txt, '%s', w.p) + char_length(regexp_substr(s.txt, '%s', w.p))\n" "$pat" "$pat"
     printf "  from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk\n"
-    printf "  where regexp_instr(s.txt, '%s', w.p) > 0\n" "$pat"
+    printf "  where case when w.p <= char_length(s.txt) then regexp_instr(s.txt, '%s', w.p) else 0 end > 0\n" "$pat"
     printf ")\n"
-    printf "select w.src, w.col, w.rk, w.seq, regexp_substr(s.txt, '%s', w.p) from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk;\n" "$pat"
+    printf "select w.src, w.col, w.rk, w.seq, regexp_substr(s.txt, '%s', w.p) from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk\n" "$pat"
+    printf "  where case when w.p <= char_length(s.txt) then regexp_instr(s.txt, '%s', w.p) else 0 end > 0;\n" "$pat"
   } | restored_load
 
   # 5. Counts only. A JSON value differs when its token count differs, or when a token
