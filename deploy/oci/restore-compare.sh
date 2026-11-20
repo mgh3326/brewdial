@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # SQL identifiers in backticks sit in single quotes on purpose.
 # Per-table comparison of the restored copy with live. Sourced by
 # verify-restore-heatwave.sh and by deploy/oci/test/restore-compare-test.sh, so the
 # test runs the code the gate runs. The caller defines:
@@ -8,11 +9,19 @@
 #   q_restored <sql>     query on the restored copy, batch output
 #   restored_load        reads SQL on stdin and runs it on the restored copy
 # Logs carry table, column and row counts only. No value is ever printed.
-#
-# JSON columns are left out of the row checksum. Each one is compared by value:
-# live streams (primary key, JSON text) into a scratch table on the restored server,
-# and the restored server parses both sides as JSON. MySQL compares JSON numbers as
-# numbers, so 1.0 and 1 match, while a changed element, key or NULL-vs-value does not.
+
+# A JSON number matches when |a - b| <= JSON_NUMBER_REL_TOLERANCE * max(|a|, |b|).
+# Only numbers get this slack. Strings, booleans, null, keys and the shape of arrays
+# and objects compare exactly. Reason: restoring a HeatWave 26.10 dump into MySQL 8.4
+# moves some doubles by one ULP (e.g. 12.399999618530273 becomes 12.399999618530272).
+# That is not data loss. 1e-12 is still thousands of ULPs at the magnitudes here.
+JSON_NUMBER_REL_TOLERANCE=1e-12
+
+# Token pattern for JSON text as MySQL prints it: a string, a number, a literal or one
+# punctuation mark. \x5c (backslash) and \x5b (open bracket) are used so that no
+# backslash enters the SQL literal. The shell single quotes keep "\\x5c" as written,
+# and the SQL literal turns "\\" into one backslash.
+JSON_TOKEN_PATTERN='"(?:[^"\\x5c]|\\x5c.)*"|-?[0-9]+(?:[.][0-9]+)?(?:[eE][-+]?[0-9]+)?|true|false|null|[{}\\x5b\\x5d,:]'
 
 # compare_table <table>: the row count and a checksum over the non-JSON columns, as
 # before, then each JSON column by value when the table has any.
@@ -28,9 +37,15 @@ compare_table() {
 }
 
 # compare_json_columns <table> <json column names, one per line>
+#
+# Scratch tables on the restored server (regular tables, so they outlive the separate
+# sessions used below; dropped at the end):
+#   _jkey  one row per (side, row key). side 1 = live, 2 = restored
+#   _jsrc  one row per (side, JSON column, row key) with the JSON text. NULL is no row
+#   _jtok  the tokens of each _jsrc text, in order (seq), from JSON_TOKEN_PATTERN
 compare_json_columns() {
-  local table="$1" json_cols="$2" pk_cols first_pk="" key_live="" key_restored="" select_live
-  local n=0 i=0 c rk sql out label count idx col rows=0
+  local table="$1" json_cols="$2" pk_cols first_pk="" key_live="" key_restored=""
+  local n=0 i=0 c select_live sql out label count idx col rows=0 tol pat tok_eq
 
   pk_cols="$(q_live "select column_name from information_schema.key_column_usage where table_schema = database() and table_name = '$table' and constraint_name = 'PRIMARY' order by ordinal_position")"
   if [ -z "$pk_cols" ]; then
@@ -43,49 +58,87 @@ compare_json_columns() {
     key_live="$key_live, cast(\`$c\` as char)"
     key_restored="$key_restored, cast(r.\`$c\` as char)"
   done <<<"$pk_cols"
-
-  # Live side, read-only: one row per live row, the key then one token per JSON column.
-  select_live="select hex(concat_ws(char(31 using utf8mb4)$key_live))"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     n=$((n + 1))
+  done <<<"$json_cols"
+
+  # 1. Scratch tables, created fresh.
+  {
+    printf 'drop table if exists `_jtok`, `_jsrc`, `_jkey`;\n'
+    printf 'create table `_jkey` (src tinyint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, primary key (src, rk));\n'
+    printf 'create table `_jsrc` (src tinyint not null, col smallint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, txt longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk));\n'
+    printf 'create table `_jtok` (src tinyint not null, col smallint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, seq int not null, tok longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk, seq));\n'
+  } | restored_load
+
+  # 2. Live side, read-only: one row per live row, the key then one token per JSON column.
+  #    Each value is hex, so no tab, newline or quote reaches the SQL text.
+  select_live="select hex(concat_ws(char(31 using utf8mb4)$key_live))"
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
     select_live="$select_live, coalesce(concat('v', hex(cast(\`$c\` as char))), 'n')"
   done <<<"$json_cols"
   select_live="$select_live from \`$table\`"
 
-  # Scratch table on the restored server, outside the restored data. Regular table,
-  # not TEMPORARY, so it survives between the separate sessions used below.
-  {
-    printf "drop table if exists \`_jv_%s\`;\n" "$table"
-    printf "create table \`_jv_%s\` (k varchar(512) character set utf8mb4 collate utf8mb4_bin not null primary key" "$table"
-    for ((i = 1; i <= n; i++)); do printf ', j%d longtext' "$i"; done
-    printf ');\n'
-  } | restored_load
-
-  q_live "$select_live" | awk -v tbl="_jv_$table" -v n="$n" '
+  q_live "$select_live" | awk -v n="$n" '
     NF == 0 { next }
     {
-      s = "insert into `" tbl "` values (convert(unhex(\047" $1 "\047) using utf8mb4)"
-      for (i = 2; i <= n + 1; i++)
-        s = s (($i == "n") ? ", NULL" : ", convert(unhex(\047" substr($i, 2) "\047) using utf8mb4)")
-      print s ");"
+      key = "convert(unhex(\047" $1 "\047) using utf8mb4)"
+      printf "insert into `_jkey` values (1, %s);\n", key
+      for (i = 2; i <= n + 1; i++) {
+        if ($i == "n") continue
+        printf "insert into `_jsrc` values (1, %d, %s, convert(unhex(\047%s\047) using utf8mb4));\n", i - 1, key, substr($i, 2)
+      }
     }' | restored_load
 
-  # Join key on the restored side, computed the same way as the live key.
-  rk="concat_ws(char(31 using utf8mb4)$key_restored) collate utf8mb4_bin"
-  sql="select 'rows', count(*) from \`_jv_$table\`
-    union all select 'live_row_missing', count(*) from \`_jv_$table\` t left join \`$table\` r on t.k = $rk where r.\`$first_pk\` is null
-    union all select 'restored_row_extra', count(*) from \`$table\` r left join \`_jv_$table\` t on t.k = $rk where t.k is null"
+  # 3. Restored side: the same keys and the same JSON columns, as the server prints them.
+  {
+    printf 'insert into `_jkey` select 2, concat_ws(char(31 using utf8mb4)%s) collate utf8mb4_bin from `%s` r;\n' "$key_restored" "$table"
+    i=0
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      i=$((i + 1))
+      printf 'insert into `_jsrc` select 2, %d, concat_ws(char(31 using utf8mb4)%s) collate utf8mb4_bin, cast(r.`%s` as char) from `%s` r where r.`%s` is not null;\n' \
+        "$i" "$key_restored" "$c" "$table" "$c"
+    done <<<"$json_cols"
+  } | restored_load
+
+  # 4. Tokenize every _jsrc text. A walk row is (token number, search position); each
+  #    step finds the next token at or after the position and moves past it. The
+  #    recursion limit is raised because a long curve has thousands of tokens.
+  pat="$JSON_TOKEN_PATTERN"
+  {
+    printf 'set session cte_max_recursion_depth = 10000000;\n'
+    printf 'insert into `_jtok` (src, col, rk, seq, tok) with recursive walk (src, col, rk, seq, p) as (\n'
+    printf "  select s.src, s.col, s.rk, 1, 1 from \`_jsrc\` s where regexp_instr(s.txt, '%s', 1) > 0\n" "$pat"
+    printf "  union all\n"
+    printf "  select w.src, w.col, w.rk, w.seq + 1, regexp_instr(s.txt, '%s', w.p) + char_length(regexp_substr(s.txt, '%s', w.p))\n" "$pat" "$pat"
+    printf "  from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk\n"
+    printf "  where regexp_instr(s.txt, '%s', w.p) > 0\n" "$pat"
+    printf ")\n"
+    printf "select w.src, w.col, w.rk, w.seq, regexp_substr(s.txt, '%s', w.p) from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk;\n" "$pat"
+  } | restored_load
+
+  # 5. Counts only. A JSON value differs when its token count differs, or when a token
+  #    pair differs: numbers within the tolerance, anything else exactly.
+  tol="$JSON_NUMBER_REL_TOLERANCE"
+  tok_eq="case when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' then abs(cast(a.tok as double) - cast(b.tok as double)) <= $tol * greatest(abs(cast(a.tok as double)), abs(cast(b.tok as double))) else a.tok = b.tok end"
+  sql="select 'rows', count(*) from \`_jkey\` where src = 1
+    union all select 'live_row_missing', count(*) from \`_jkey\` l where l.src = 1 and not exists (select 1 from \`_jkey\` r where r.src = 2 and r.rk = l.rk)
+    union all select 'restored_row_extra', count(*) from \`_jkey\` r where r.src = 2 and not exists (select 1 from \`_jkey\` l where l.src = 1 and l.rk = r.rk)"
   i=0
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     i=$((i + 1))
     sql="$sql
-    union all select 'json:$i', count(*) from \`_jv_$table\` t join \`$table\` r on t.k = $rk where not (r.\`$c\` <=> cast(t.j$i as json))"
+    union all select 'json:$i', count(*) from \`_jkey\` k where k.src = 1 and exists (select 1 from \`_jkey\` k2 where k2.src = 2 and k2.rk = k.rk) and not (
+      (select count(*) from \`_jtok\` a where a.src = 1 and a.col = $i and a.rk = k.rk) = (select count(*) from \`_jtok\` b where b.src = 2 and b.col = $i and b.rk = k.rk)
+      and not exists (select 1 from \`_jtok\` a join \`_jtok\` b on b.col = a.col and b.rk = a.rk and b.seq = a.seq
+        where a.src = 1 and b.src = 2 and a.col = $i and a.rk = k.rk and not ($tok_eq)))"
   done <<<"$json_cols"
 
   out="$(q_restored "$sql")"
-  q_restored "drop table if exists \`_jv_$table\`" >/dev/null
+  q_restored 'drop table if exists `_jtok`, `_jsrc`, `_jkey`' >/dev/null
 
   while IFS=$'\t' read -r label count; do
     case "$label" in
@@ -99,5 +152,5 @@ compare_json_columns() {
         ;;
     esac
   done <<<"$out"
-  log "  json $table ($rows rows, $n JSON column(s) compared by value)"
+  log "  json $table ($rows rows, $n JSON column(s) compared by value, numbers within $tol)"
 }

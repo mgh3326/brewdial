@@ -68,8 +68,8 @@ case_setup() {
   : >"$work/mismatches"
 }
 
-# check <name> <expected mismatches as one regex, each message ended by ;>
-# NONE means the table must match. Messages are joined with ';' for the match.
+# check <name> <expected>: NONE means the table must match. Otherwise the mismatch
+# messages, each ended by ';', must match the regex in full.
 check() {
   local name="$1" expected="$2" got=""
   if [ -s "$work/mismatches" ]; then got="$(tr '\n' ';' <"$work/mismatches")"; fi
@@ -77,7 +77,7 @@ check() {
     if [ -z "$got" ]; then
       printf 'ok   %s\n' "$name"; passed=$((passed + 1))
     else
-      printf 'FAIL %s: unexpected mismatch(es)\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: unexpected mismatch(es) [%s]\n' "$name" "$got"; failures=$((failures + 1))
     fi
   elif [[ "$got" =~ ^$expected$ ]]; then
     printf 'ok   %s: %s\n' "$name" "$got"; passed=$((passed + 1))
@@ -86,12 +86,15 @@ check() {
   fi
 }
 
-# Case A: same JSON values, only the number text differs (1.0 on live, 1 on the restored
-# copy). Must pass. The old whole-row checksum must see the difference, so the case is
-# not vacuous.
+BASE='{"curve": [[1.0, 2.5]]}'
+
+# Case A: same JSON values, only the text differs. The number 1.0 on live is 1 on the
+# restored copy, and a 1-ULP pair (12.399999618530273 vs 12.399999618530272) is inside
+# the tolerance. Must pass. The old whole-row checksum must see the text difference, so
+# the case is not vacuous.
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL);" \
-  "insert into items values ('a', 'x', '{\"curve\": [[1, 2.5]]}', NULL);"
+  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 12.399999618530273]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1, 12.399999618530272]]}', NULL);"
 old_sql="select concat(count(*), '|', coalesce(bit_xor(cast(conv(substr(md5(json_array(\`id\`, \`label\`, \`payload\`, \`note\`)), 1, 16), 16, 10) as unsigned)), 0)) from \`items\`"
 if [ "$(q_live "$old_sql")" = "$(q_restored "$old_sql")" ]; then
   printf 'FAIL case A is vacuous: the old whole-row checksum does not see the text difference\n'
@@ -99,35 +102,59 @@ if [ "$(q_live "$old_sql")" = "$(q_restored "$old_sql")" ]; then
 fi
 compare_table items
 compare_table plain
-check "A formatting-only JSON difference passes" NONE
+check "A text-only and 1-ULP number differences pass" NONE
 
-# Case B: one array element changed. Must fail and name items.payload, and nothing else.
+# Case B: a number changed by 1e-6 relative (2.5 to 2.500003). Must fail and name payload.
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL);" \
-  "insert into items values ('a', 'x', '{\"curve\": [[1, 3]]}', NULL);"
+  "insert into items values ('a', 'x', '$BASE', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1, 2.500003]]}', NULL);"
 compare_table items
-check "B changed JSON element fails, names table and column" \
+check "B relative 1e-6 number change fails, names table and column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case F: a number changed just outside the 1e-12 tolerance (relative 1.2e-12). Must fail.
+case_setup \
+  "insert into items values ('a', 'x', '$BASE', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1, 2.500000000003]]}', NULL);"
+compare_table items
+check "F number just outside the 1e-12 tolerance fails" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case G: a string value changed inside the JSON. Strings compare exactly. Must fail.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]], \"tag\": \"a\"}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1, 2.5]], \"tag\": \"b\"}', NULL);"
+compare_table items
+check "G string change inside JSON fails, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case H: a key renamed inside the JSON. Keys compare exactly. Must fail.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]], \"tag\": \"a\"}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curv\": [[1, 2.5]], \"tag\": \"a\"}', NULL);"
+compare_table items
+check "H key rename inside JSON fails, names column" \
   'items\.payload: 1 row\(s\) differ in JSON value;'
 
 # Case C: a non-JSON column changed, JSON equal. Must fail through the whole-row checksum.
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL);" \
-  "insert into items values ('a', 'y', '{\"curve\": [[1.0, 2.5]]}', NULL);"
+  "insert into items values ('a', 'x', '$BASE', NULL);" \
+  "insert into items values ('a', 'y', '$BASE', NULL);"
 compare_table items
 check "C non-JSON change fails, names table" 'items live=\[[^]]*\] restored=\[[^]]*\];'
 
-# Case D: a nullable JSON value present on live and NULL on the restored copy. A plain <>
-# would give NULL here and let it pass; <=> must catch it.
+# Case D: a nullable JSON value present on live and NULL on the restored copy. A plain
+# comparison gives NULL here and lets it pass; the token check must catch it.
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', '[1]');" \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL);"
+  "insert into items values ('a', 'x', '$BASE', '[1]');" \
+  "insert into items values ('a', 'x', '$BASE', NULL);"
 compare_table items
 check "D NULL-vs-value JSON fails, names column" 'items\.note: 1 row\(s\) differ in JSON value;'
 
 # Case E: a live row missing from the restored copy. Must fail on count and on the row.
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL), ('b', 'z', '{\"curve\": []}', NULL);" \
-  "insert into items values ('a', 'x', '{\"curve\": [[1.0, 2.5]]}', NULL);"
+  "insert into items values ('a', 'x', '$BASE', NULL), ('b', 'z', '{\"curve\": []}', NULL);" \
+  "insert into items values ('a', 'x', '$BASE', NULL);"
 compare_table items
 check "E missing live row fails" \
   'items live=\[[^]]*\] restored=\[[^]]*\];items: 1 live row\(s\) not found in the restored copy;'
