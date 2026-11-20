@@ -75,7 +75,11 @@ dec_update_sql() {
   local p="(char_length($ip) + $e - (char_length($d0) - char_length(trim(leading '0' from $d0))))"
   local dv="cast(tok as double)"
   local ab="abs($dv)"
-  local t="cast(cast($ab as unsigned) as char)"
+  # The exact integer of a whole double below 2^64, without an UNSIGNED cast (which fails
+  # above 2^63): half of it, floored, fits a signed integer; twice that plus the parity
+  # bit is exact in DECIMAL. The clamp keeps the cast in range for any other value.
+  local h="least(floor($ab / 2), 9223372036854774784)"
+  local t="cast(cast(cast($h as signed) as decimal(65, 0)) * 2 + cast(mod($ab, 2) as signed) as char)"
   local td="trim(trailing '0' from $t)"
   echo "update \`_jtok\` set pos = if($d2 = '', 0, $p), intval = if($d2 = '' or $p >= char_length($d2), 1, 0), big = if($ab >= 9007199254740992, 1, 0) where tok regexp '^-?[0-9]';"
   echo "update \`_jtok\` set exact = if(tok regexp '^-?[0-9]+\$' or intval = 0 or $ab >= 18446744073709551616.0, if($d2 = '', '0', concat(if(left(tok, 1) = '-', '-', '+'), pos, ':', $d2)), if($td = '', '0', concat(if($dv < 0, '-', '+'), char_length($t), ':', $td))) where tok regexp '^-?[0-9]';"
