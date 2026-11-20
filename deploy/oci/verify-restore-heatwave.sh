@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # BrewDial restore verification for HeatWave. Restores a dump into a throwaway
 # MySQL container with no network and compares every table with the live schema:
-# row count and a whole-row checksum. It also requires recipe_code_seq to stay
-# ahead of the highest COF- code. Any mismatch exits non-zero and pings /fail.
+# row count and a whole-row checksum over the non-JSON columns, and each JSON column
+# by value (restore-compare.sh), so number formatting alone does not fail it. It also
+# requires recipe_code_seq to stay ahead of the highest COF- code. Any mismatch exits
+# non-zero and pings /fail.
 #
 #   verify-restore-heatwave.sh             # take a fresh consistent dump, restore, compare
 #   verify-restore-heatwave.sh <dump.sql.gz>  # a stored artifact; rows written since then show as mismatches
@@ -14,6 +16,8 @@ set -Eeuo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=heatwave-client.sh
 . "$here/heatwave-client.sh"
+# shellcheck source=restore-compare.sh
+. "$here/restore-compare.sh"
 
 CONFIG="${BREWDIAL_BACKUP_ENV:-/etc/brewdial/backup.env}"
 # shellcheck source=/dev/null
@@ -46,6 +50,7 @@ heatwave_load "$HEATWAVE_ENV"
 
 q_live() { heatwave_client mysql -N -B "$HEATWAVE_DB" -e "$1"; }
 q_restored() { docker exec -i "$CONTAINER" mysql -uroot --default-character-set=utf8mb4 -N -B "$RESTORE_DB" -e "$1"; }
+restored_load() { docker exec -i "$CONTAINER" mysql -uroot --default-character-set=utf8mb4 "$RESTORE_DB"; }
 
 if [ -n "${1:-}" ]; then
   DUMP="$1"
@@ -79,13 +84,7 @@ log "restore OK"
 
 tables="$(q_live "select table_name from information_schema.tables where table_schema = database() and table_type = 'BASE TABLE' order by table_name")"
 [ -n "$tables" ] || { log "the live schema has no tables"; false; }
-for table in $tables; do
-  columns="$(q_live "set session group_concat_max_len = 1000000; select group_concat(concat('\`', column_name, '\`') order by ordinal_position) from information_schema.columns where table_schema = database() and table_name = '$table'")"
-  sql="select concat(count(*), '|', coalesce(bit_xor(cast(conv(substr(md5(json_array($columns)), 1, 16), 16, 10) as unsigned)), 0)) from \`$table\`"
-  live="$(q_live "$sql")"
-  restored="$(q_restored "$sql")"
-  if [ "$live" = "$restored" ]; then log "  ok $table ($live)"; else note_fail "$table live=[$live] restored=[$restored]"; fi
-done
+for table in $tables; do compare_table "$table"; done
 
 # Every API write path relies on these. A dump user without the TRIGGER grant
 # silently drops the triggers from the dump and from its own view of the live schema.
