@@ -201,10 +201,13 @@ compare_table items
 check "M 9999999999999999999 vs 1e+19 fails, names column" \
   'items\.payload: 1 row\(s\) differ in JSON value;'
 
-# Case N: the same value above 2^53 written as an integer and as a decimal. Must pass.
+# Case N: the same value 10^19 written as an integer and as an exponent. Equal values
+# outside 2^53 take the exact branch and must pass. (A decimal point is not used here:
+# MySQL stores a JSON number with a point as a DOUBLE, so 9007199254740993.0 would
+# already be a different value on the restored side.)
 case_setup \
-  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993]]}', NULL);" \
-  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993.0]]}', NULL);"
+  "insert into items values ('a', 'x', '{\"curve\": [[10000000000000000000]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[1e+19]]}', NULL);"
 compare_table items
 check "N equal values above 2^53 written differently pass" NONE
 
