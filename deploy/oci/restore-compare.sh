@@ -37,6 +37,14 @@ compare_table() {
   if [ -n "$json_cols" ]; then compare_json_columns "$table" "$json_cols"; fi
 }
 
+# int_norm <sql expr>: SQL for an integer token in canonical form, so 007 and 7 match
+# and -0 and 0 match. Digits stay a string, so no value is ever cast to a number.
+int_norm() {
+  local x="$1" d
+  d="coalesce(nullif(trim(leading '0' from replace($x, '-', '')), ''), '0')"
+  echo "concat(if($x like '-%' and $d <> '0', '-', ''), $d)"
+}
+
 # compare_json_columns <table> <json column names, one per line>
 #
 # Scratch tables on the restored server (regular tables, so they outlive the separate
@@ -132,9 +140,11 @@ compare_json_columns() {
   } | restored_load 2>/dev/null || { note_fail "$table: the JSON tokens could not be built (error text withheld)"; return 0; }
 
   # 5. Counts only. A JSON value differs when its token count differs, or when a token
-  #    pair differs: numbers within the tolerance, anything else exactly.
+  #    pair differs. Two integer tokens (no point or exponent) compare exactly, as
+  #    normalized strings, because a DOUBLE cast loses digits above 2^53. Any other
+  #    number pair compares within the tolerance. Everything else compares exactly.
   tol="$JSON_NUMBER_REL_TOLERANCE"
-  tok_eq="case when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' then abs(cast(a.tok as double) - cast(b.tok as double)) <= $tol * greatest(abs(cast(a.tok as double)), abs(cast(b.tok as double))) else a.tok = b.tok end"
+  tok_eq="case when a.tok regexp '^-?[0-9]+\$' and b.tok regexp '^-?[0-9]+\$' then $(int_norm a.tok) = $(int_norm b.tok) when a.tok regexp '^-?[0-9]' and b.tok regexp '^-?[0-9]' then abs(cast(a.tok as double) - cast(b.tok as double)) <= $tol * greatest(abs(cast(a.tok as double)), abs(cast(b.tok as double))) else a.tok = b.tok end"
   sql="select 'rows', count(*) from \`_jkey\` where src = 1
     union all select 'live_row_missing', count(*) from \`_jkey\` l where l.src = 1 and not exists (select 1 from \`_jkey\` r where r.src = 2 and r.rk = l.rk)
     union all select 'restored_row_extra', count(*) from \`_jkey\` r where r.src = 2 and not exists (select 1 from \`_jkey\` l where l.src = 1 and l.rk = r.rk)"

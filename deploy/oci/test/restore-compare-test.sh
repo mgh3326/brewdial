@@ -168,6 +168,22 @@ compare_table items
 check "I trailing-space and empty ids match byte for byte" \
   'items\.payload: 1 row\(s\) differ in JSON value;'
 
+# Case J: two different integers above 2^53. A DOUBLE cast would call them equal, so the
+# integer rule must catch this. Must fail and name payload.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740993]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[9007199254740992]]}', NULL);"
+compare_table items
+check "J integers above 2^53 that differ fail, names column" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
+# Case K: the same integer on both sides. Must pass.
+case_setup \
+  "insert into items values ('a', 'x', '{\"curve\": [[40]]}', NULL);" \
+  "insert into items values ('a', 'x', '{\"curve\": [[40]]}', NULL);"
+compare_table items
+check "K same integer 40 on both sides passes" NONE
+
 if [ "$failures" -eq 0 ]; then
   printf 'PASS %s restore comparison cases\n' "$passed"
 else
