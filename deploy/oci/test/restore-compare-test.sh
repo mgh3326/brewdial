@@ -159,6 +159,15 @@ compare_table items
 check "E missing live row fails" \
   'items live=\[[^]]*\] restored=\[[^]]*\];items: 1 live row\(s\) not found in the restored copy;'
 
+# Case I: ids that differ only in trailing spaces, and an empty id. The keys must match
+# byte for byte, so only the changed row ('a ') is reported.
+case_setup \
+  "insert into items values ('', 'x', '$BASE', NULL), ('a', 'x', '$BASE', NULL), ('a ', 'x', '$BASE', NULL);" \
+  "insert into items values ('', 'x', '$BASE', NULL), ('a', 'x', '$BASE', NULL), ('a ', 'x', '{\"curve\": [[1, 9]]}', NULL);"
+compare_table items
+check "I trailing-space and empty ids match byte for byte" \
+  'items\.payload: 1 row\(s\) differ in JSON value;'
+
 if [ "$failures" -eq 0 ]; then
   printf 'PASS %s restore comparison cases\n' "$passed"
 else

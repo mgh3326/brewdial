@@ -2,13 +2,14 @@
 # shellcheck disable=SC2016 # SQL identifiers in backticks sit in single quotes on purpose.
 # Per-table comparison of the restored copy with live. Sourced by
 # verify-restore-heatwave.sh and by deploy/oci/test/restore-compare-test.sh, so the
-# test runs the code the gate runs. The caller defines:
+# test runs the code the gate runs. The caller runs with pipefail and defines:
 #   log <message>        prints one line
 #   note_fail <message>  records one mismatch
 #   q_live <sql>         read-only query on the live schema, batch output
 #   q_restored <sql>     query on the restored copy, batch output
 #   restored_load        reads SQL on stdin and runs it on the restored copy
-# Logs carry table, column and row counts only. No value is ever printed.
+# Logs carry table, column and row counts only. No value is ever printed. A failed
+# scratch load is reported without MySQL's error text, which can echo a key value.
 
 # A JSON number matches when |a - b| <= JSON_NUMBER_REL_TOLERANCE * max(|a|, |b|).
 # Only numbers get this slack. Strings, booleans, null, keys and the shape of arrays
@@ -39,13 +40,14 @@ compare_table() {
 # compare_json_columns <table> <json column names, one per line>
 #
 # Scratch tables on the restored server (regular tables, so they outlive the separate
-# sessions used below; dropped at the end):
+# sessions used below; dropped at the end). Keys are byte-exact varbinary: a text
+# collation pads or folds, and two valid ids can differ only in trailing spaces.
 #   _jkey  one row per (side, row key). side 1 = live, 2 = restored
 #   _jsrc  one row per (side, JSON column, row key) with the JSON text. NULL is no row
 #   _jtok  the tokens of each _jsrc text, in order (seq), from JSON_TOKEN_PATTERN
 compare_json_columns() {
   local table="$1" json_cols="$2" pk_cols first_pk="" key_live="" key_restored=""
-  local n=0 i=0 c select_live sql out label count idx col rows=0 tol pat tok_eq
+  local n=0 i=0 c select_live sql out label count idx col rows=0 tol pat tok_eq rk_restored
 
   pk_cols="$(q_live "select column_name from information_schema.key_column_usage where table_schema = database() and table_name = '$table' and constraint_name = 'PRIMARY' order by ordinal_position")"
   if [ -z "$pk_cols" ]; then
@@ -62,17 +64,19 @@ compare_json_columns() {
     [ -n "$c" ] || continue
     n=$((n + 1))
   done <<<"$json_cols"
+  rk_restored="cast(concat_ws(char(31 using utf8mb4)$key_restored) as binary)"
 
   # 1. Scratch tables, created fresh.
   {
     printf 'drop table if exists `_jtok`, `_jsrc`, `_jkey`;\n'
-    printf 'create table `_jkey` (src tinyint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, primary key (src, rk));\n'
-    printf 'create table `_jsrc` (src tinyint not null, col smallint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, txt longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk));\n'
-    printf 'create table `_jtok` (src tinyint not null, col smallint not null, rk varchar(512) character set utf8mb4 collate utf8mb4_bin not null, seq int not null, tok longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk, seq));\n'
-  } | restored_load
+    printf 'create table `_jkey` (src tinyint not null, rk varbinary(512) not null, primary key (src, rk));\n'
+    printf 'create table `_jsrc` (src tinyint not null, col smallint not null, rk varbinary(512) not null, txt longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk));\n'
+    printf 'create table `_jtok` (src tinyint not null, col smallint not null, rk varbinary(512) not null, seq int not null, tok longtext character set utf8mb4 collate utf8mb4_bin not null, primary key (src, col, rk, seq));\n'
+  } | restored_load 2>/dev/null || { note_fail "$table: scratch tables could not be created (MySQL error text withheld)"; return 0; }
 
   # 2. Live side, read-only: one row per live row, the key then one token per JSON column.
-  #    Each value is hex, so no tab, newline or quote reaches the SQL text.
+  #    Each value is hex, so no tab, newline or quote reaches the SQL text. The key may
+  #    be empty, so the fields are split on tabs only, and the field count is checked.
   select_live="select hex(concat_ws(char(31 using utf8mb4)$key_live))"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
@@ -80,28 +84,33 @@ compare_json_columns() {
   done <<<"$json_cols"
   select_live="$select_live from \`$table\`"
 
-  q_live "$select_live" | awk -v n="$n" '
+  if ! q_live "$select_live" | awk -v n="$n" '
+    BEGIN { FS = "\t" }
     NF == 0 { next }
+    NF != n + 1 { exit 3 }
     {
-      key = "convert(unhex(\047" $1 "\047) using utf8mb4)"
+      key = "unhex(\047" $1 "\047)"
       printf "insert into `_jkey` values (1, %s);\n", key
       for (i = 2; i <= n + 1; i++) {
         if ($i == "n") continue
         printf "insert into `_jsrc` values (1, %d, %s, convert(unhex(\047%s\047) using utf8mb4));\n", i - 1, key, substr($i, 2)
       }
-    }' | restored_load
+    }' | restored_load 2>/dev/null; then
+    note_fail "$table: the live rows could not be loaded into the scratch tables (error text withheld)"
+    return 0
+  fi
 
   # 3. Restored side: the same keys and the same JSON columns, as the server prints them.
   {
-    printf 'insert into `_jkey` select 2, concat_ws(char(31 using utf8mb4)%s) collate utf8mb4_bin from `%s` r;\n' "$key_restored" "$table"
+    printf 'insert into `_jkey` select 2, %s from `%s` r;\n' "$rk_restored" "$table"
     i=0
     while IFS= read -r c; do
       [ -n "$c" ] || continue
       i=$((i + 1))
-      printf 'insert into `_jsrc` select 2, %d, concat_ws(char(31 using utf8mb4)%s) collate utf8mb4_bin, cast(r.`%s` as char) from `%s` r where r.`%s` is not null;\n' \
-        "$i" "$key_restored" "$c" "$table" "$c"
+      printf 'insert into `_jsrc` select 2, %d, %s, cast(r.`%s` as char) from `%s` r where r.`%s` is not null;\n' \
+        "$i" "$rk_restored" "$c" "$table" "$c"
     done <<<"$json_cols"
-  } | restored_load
+  } | restored_load 2>/dev/null || { note_fail "$table: the restored rows could not be loaded into the scratch tables (error text withheld)"; return 0; }
 
   # 4. Tokenize every _jsrc text. A walk row is (token number, search position); each
   #    step finds the next token at or after the position and moves past it. The
@@ -120,7 +129,7 @@ compare_json_columns() {
     printf ")\n"
     printf "select w.src, w.col, w.rk, w.seq, regexp_substr(s.txt, '%s', w.p) from walk w join \`_jsrc\` s on s.src = w.src and s.col = w.col and s.rk = w.rk\n" "$pat"
     printf "  where case when w.p <= char_length(s.txt) then regexp_instr(s.txt, '%s', w.p) else 0 end > 0;\n" "$pat"
-  } | restored_load
+  } | restored_load 2>/dev/null || { note_fail "$table: the JSON tokens could not be built (error text withheld)"; return 0; }
 
   # 5. Counts only. A JSON value differs when its token count differs, or when a token
   #    pair differs: numbers within the tolerance, anything else exactly.
