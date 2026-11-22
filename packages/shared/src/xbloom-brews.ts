@@ -66,7 +66,7 @@ function finite(value: unknown): value is number {
 }
 
 function mapPattern(value: unknown): XBloomBrewPour['pattern'] {
-  const pattern = ({ 0: 'center', 1: 'ring', 2: 'spiral' } as Record<number, XBloomBrewPour['pattern']>)[Number(value ?? 2)]
+  const pattern = ({ 1: 'center', 2: 'spiral', 3: 'ring' } as Record<number, XBloomBrewPour['pattern']>)[Number(value ?? 2)]
   if (!pattern) throw new TypeError('pour pattern must be the xBloom center, ring, or spiral code')
   return pattern
 }

@@ -37,11 +37,27 @@ describe('xBloom brew records', () => {
   })
 
   it('maps xBloom pattern codes to the shared step names', () => {
-    for (const [code, pattern] of [[0, 'center'], [1, 'ring'], [2, 'spiral']] as const) {
+    for (const [code, pattern] of [[1, 'center'], [2, 'spiral'], [3, 'ring']] as const) {
       const raw = rawRecord()
       raw.recipeVo.pourList[0]!.pattern = code
       const parsed = parseXBloomBrewRecord(raw)
       expect(parsed.ok && parsed.value.recipeSnapshot.pours[0]?.pattern).toBe(pattern)
+    }
+  })
+
+  it('reads a multi-pour recipe with spiral, ring, ring, spiral codes', () => {
+    const raw = rawRecord()
+    raw.recipeVo.pourCount = 4
+    raw.recipeVo.pourList = [2, 3, 3, 2].map((pattern, index) => ({ ...raw.recipeVo.pourList[0]!, pattern, tableId: index + 1 }))
+    const parsed = parseXBloomBrewRecord(raw)
+    expect(parsed.ok && parsed.value.recipeSnapshot.pours.map((pour) => pour.pattern)).toEqual(['spiral', 'ring', 'ring', 'spiral'])
+  })
+
+  it('rejects pour pattern codes outside 1-3', () => {
+    for (const code of [0, 4]) {
+      const raw = rawRecord()
+      raw.recipeVo.pourList[0]!.pattern = code
+      expect(() => parseXBloomBrewRecord(raw)).toThrow('pour pattern must be the xBloom center, ring, or spiral code')
     }
   })
 
