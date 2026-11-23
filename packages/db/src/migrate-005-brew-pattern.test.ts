@@ -156,7 +156,18 @@ beforeAll(async () => {
     .where('xbloom_brew_id', 'in', Object.values(ids))
     .execute()
   expect(existing, 'fixture brew id already exists').toEqual([])
-  await db.insertInto('brews').values(Object.values(fixtures)).execute()
+  // JSON columns go in as text, as insertXBloomBrews does: mysql2 formats a JS object
+  // parameter as `key` = value, which is not a JSON literal.
+  await db
+    .insertInto('brews')
+    .values(
+      Object.values(fixtures).map((row) => ({
+        ...row,
+        recipe_snapshot: JSON.stringify(row.recipe_snapshot),
+        curve: JSON.stringify(row.curve),
+      })),
+    )
+    .execute()
 })
 
 afterAll(async () => {
