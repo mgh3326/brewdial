@@ -1,0 +1,104 @@
+name: schema-doc
+
+# tbls schema documentation for the brewdial MySQL schema.
+#
+# The schema is built from scratch to head by the repo's own entry point
+# (`pnpm db:migrate`) on a throwaway mysql:8.4 service container, then
+# documented by tbls. No operating database is touched and no secrets are used.
+# mysql:8.4 is the CI stand-in for production (MySQL 26.10.0-cloud).
+# This workflow is separate from ci.yml and never runs on pull_request.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/db/migrations-mysql/**'
+      - 'packages/db/scripts/migrate.ts'
+      - '.github/workflows/schema-doc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema-doc:
+    name: tbls schema doc (MySQL 8.4)
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        # CI stand-in for production MySQL 26.10.0-cloud (HeatWave).
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: brewdial
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: mysql://root@127.0.0.1:3306/brewdial
+      TBLS_VERSION: 1.97.0
+      TBLS_SHA256: 43c81f408495d9b626d0265a6ebb57c6d1c4a5e072d3eecc3e88825cc6c64e9a
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build schema to head with pnpm db:migrate
+        run: pnpm db:migrate
+
+      - name: Record MySQL server version
+        shell: bash
+        run: |
+          set -euo pipefail
+          mysql_version="$(mysql --protocol=TCP -h 127.0.0.1 -P 3306 -u root -N -B -e 'SELECT VERSION()')"
+          echo "MySQL server version: ${mysql_version}"
+          echo "MYSQL_VERSION=${mysql_version}" >> "$GITHUB_ENV"
+
+      - name: Install tbls v1.97.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="${RUNNER_TEMP}/tbls.tar.gz"
+          curl -sSfL -o "${tarball}" "https://github.com/k1LoW/tbls/releases/download/v${TBLS_VERSION}/tbls_v${TBLS_VERSION}_linux_amd64.tar.gz"
+          echo "${TBLS_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" -C "${RUNNER_TEMP}" tbls
+          sudo install -m 0755 "${RUNNER_TEMP}/tbls" /usr/local/bin/tbls
+          tbls version
+
+      - name: Generate schema documentation with tbls
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_sec=$(date +%s)
+          tbls doc --er-format mermaid
+          tbls out -t json -o schema-doc/schema.json
+          end_sec=$(date +%s)
+          echo "tbls step took $(( end_sec - start_sec )) seconds"
+
+      - name: Upload schema doc artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: brewdial-schema-doc
+          path: schema-doc/
+          if-no-files-found: error
