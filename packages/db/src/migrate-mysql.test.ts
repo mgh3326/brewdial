@@ -56,6 +56,7 @@ test('migrations split into statements with no client directives left', async ()
     '002_feedback_recipe_snapshot.sql',
     '003_xbloom_brews.sql',
     '004_registry_xbloom.sql',
+    '005_brew_snapshot_pattern_center.sql',
   ])
   const scripts = await Promise.all(names.map((name) => readFile(path.join(migrationsDir, name), 'utf8')))
   const statements = scripts.map(splitMysqlScript)
@@ -66,6 +67,7 @@ test('migrations split into statements with no client directives left', async ()
   expect(statements[1]).toHaveLength(1)
   expect(statements[2]).toHaveLength(2)
   expect(statements[3]).toHaveLength(2)
+  expect(statements[4]).toHaveLength(2)
 })
 
 test('checksums are stable and content-sensitive', () => {
