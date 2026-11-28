@@ -46,7 +46,20 @@ function toBrew(row: Record<string, unknown>, includeCurve: boolean): BrewRow {
 export async function insertXBloomBrews(db: Kysely<DB>, brews: XBloomBrew[]): Promise<BrewInsertResult> {
   const inserted: string[] = []
   const duplicate: string[] = []
+  if (brews.length === 0) return { inserted, duplicate }
+
+  // One existence lookup for every distinct id in the call; `known` also records ids this
+  // call inserts, so a repeated id later in the call is a duplicate without another SELECT.
+  const ids = [...new Set(brews.map((brew) => brew.xbloomBrewId))]
+  const stored = await db.selectFrom('brews').select('xbloom_brew_id')
+    .where('xbloom_brew_id', 'in', ids).execute()
+  const known = new Set(stored.map((row) => String(row.xbloom_brew_id)))
+
   for (const brew of brews) {
+    if (known.has(brew.xbloomBrewId)) {
+      duplicate.push(brew.xbloomBrewId)
+      continue
+    }
     const metrics = deriveXBloomBrewMetrics(brew)
     const values = {
       xbloom_brew_id: brew.xbloomBrewId, brewed_at: new Date(brew.brewedAt), brew_time_sec: brew.brewTimeSec,
@@ -57,12 +70,7 @@ export async function insertXBloomBrews(db: Kysely<DB>, brews: XBloomBrew[]): Pr
       },
       recipe_snapshot: JSON.stringify(brew.recipeSnapshot), curve: JSON.stringify(brew.curve)
     }
-    const existing = await db.selectFrom('brews').select('xbloom_brew_id')
-      .where('xbloom_brew_id', '=', brew.xbloomBrewId).executeTakeFirst()
-    if (existing) {
-      duplicate.push(brew.xbloomBrewId)
-      continue
-    }
+    known.add(brew.xbloomBrewId)
     try {
       await db.insertInto('brews').values(values).executeTakeFirst()
       inserted.push(brew.xbloomBrewId)
